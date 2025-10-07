@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"C:/projects/emwave-c/build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

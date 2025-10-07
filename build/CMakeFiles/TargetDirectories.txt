@@ -1,7 +1,0 @@
-C:/projects/emwave-c/build/CMakeFiles/emwave.dir
-C:/projects/emwave-c/build/CMakeFiles/edit_cache.dir
-C:/projects/emwave-c/build/CMakeFiles/rebuild_cache.dir
-C:/projects/emwave-c/build/CMakeFiles/list_install_components.dir
-C:/projects/emwave-c/build/CMakeFiles/install.dir
-C:/projects/emwave-c/build/CMakeFiles/install/local.dir
-C:/projects/emwave-c/build/CMakeFiles/install/strip.dir

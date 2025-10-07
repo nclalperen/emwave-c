@@ -1,1 +1,0 @@
-C:/projects/emwave-c/dist/./emwave.exe
