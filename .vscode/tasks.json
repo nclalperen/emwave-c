@@ -2,29 +2,17 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "cppbuild",
-			"label": "C/C++: gcc build for debug",
-			"command": "/usr/bin/gcc",
-			"args": [
-				"-g",
-				"${file}",
-				"-o",
-				"${fileDirname}/emwave_debug",
-				"-lSDL2",
-				"-lSDL2_ttf",
-				"-lm"
-			],
+			"label": "Build emwave (MSVC)",
+			"type": "shell",
+			"command": ".\\scripts\\build_msvc.bat",
 			"options": {
-				"cwd": "${fileDirname}"
+				"cwd": "${workspaceFolder}"
 			},
-			"problemMatcher": [
-				"$gcc"
-			],
 			"group": {
 				"kind": "build",
 				"isDefault": true
 			},
-			"detail": "Compiler: /usr/bin/gcc"
+			"problemMatcher": []
 		}
 	]
 }

@@ -2,29 +2,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch FDTD Sim",
-            "type": "cppdbg",
+            "name": "Launch emwave (MSVC)",
+            "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/emwave_debug",
+            "program": "${workspaceFolder}/build/Release/emwave.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [
-                {
-                    "name": "DISPLAY",
-                    "value": ":0"
-                }
-            ],
+            "cwd": "${workspaceFolder}/build/Release",
+            "environment": [],
             "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ],
-            "preLaunchTask": "C/C++: gcc build for debug"
+            "preLaunchTask": "Build emwave (MSVC)"
         }
     ]
 }
