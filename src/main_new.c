@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    int render_width = sim->nx * 2 + 260;
-    int render_height = sim->ny * 2 + 90;
+    int render_width = sim->nx * RENDER_DEFAULT_SCALE + RENDER_DEFAULT_SIDE_PANEL;
+    int render_height = sim->ny * RENDER_DEFAULT_SCALE + RENDER_DEFAULT_UI_HEIGHT;
     RenderContext* render = render_init("emwave-c (modular)", render_width, render_height);
     if (!render) {
         fprintf(stderr, "Failed to initialize SDL renderer\n");

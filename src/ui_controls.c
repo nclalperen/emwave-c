@@ -5,6 +5,7 @@
 #include "ui_controls.h"
 
 #include "config.h"
+#include "ui_layout.h"
 #include "fdtd_core.h"
 #include "materials.h"
 #include "sources.h"
@@ -47,9 +48,9 @@ UIState* ui_state_init(void) {
     ui->sweep_points = 0;
     ui->sweep_steps_per_point = 2000;
     ui->steps_per_frame = STEPS_PER_FRAME;
-    ui->scale = 2;
-    ui->ui_height = 90;
-    ui->side_panel_width = 240;
+    ui->scale = RENDER_DEFAULT_SCALE;
+    ui->ui_height = RENDER_DEFAULT_UI_HEIGHT;
+    ui->side_panel_width = RENDER_DEFAULT_SIDE_PANEL;
     ui->log_probe = 0;
 
     ui->freq_slider.minv = 0.0;

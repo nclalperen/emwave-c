@@ -55,6 +55,7 @@ set(EMWAVE_CORE_SOURCES
 set(EMWAVE_UI_SOURCES
     src/ui_controls.c
     src/ui_render.c
+    src/ui_layout.c
 )
 
 # Build the SDL front-end only if SDL2 dependencies are present
@@ -74,6 +75,12 @@ endif()
 # Headless CLI target always builds
 add_executable(emwave_cli src/main_cli.c ${EMWAVE_CORE_SOURCES})
 target_include_directories(emwave_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+
+add_executable(render_layout_test
+    src/render_layout_test.c
+    src/ui_layout.c
+)
+target_include_directories(render_layout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # Link OpenMP if available
 if(OpenMP_C_FOUND)
