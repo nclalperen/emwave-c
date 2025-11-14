@@ -3,6 +3,8 @@ project(EmWaveC C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+enable_testing()
+
 # Find OpenMP for parallel processing
 find_package(OpenMP)
 
@@ -65,22 +67,23 @@ set(EMWAVE_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/jsmn")
 
+add_library(emwave_core STATIC ${EMWAVE_CORE_SOURCES})
+target_include_directories(emwave_core PUBLIC ${EMWAVE_INCLUDE_DIRS})
+
 if (EMWAVE_UI_AVAILABLE)
     add_executable(emwave
         src/main_new.c
-        ${EMWAVE_CORE_SOURCES}
         ${EMWAVE_UI_SOURCES}
     )
-    target_include_directories(emwave PRIVATE ${EMWAVE_INCLUDE_DIRS})
     target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(emwave PRIVATE SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+    target_link_libraries(emwave PRIVATE emwave_core SDL2::SDL2 SDL2_ttf::SDL2_ttf)
 else()
     message(WARNING "SDL2 UI disabled - emwave target will not be built")
 endif()
 
 # Headless CLI target always builds
-add_executable(emwave_cli src/main_cli.c ${EMWAVE_CORE_SOURCES})
-target_include_directories(emwave_cli PRIVATE ${EMWAVE_INCLUDE_DIRS})
+add_executable(emwave_cli src/main_cli.c)
+target_link_libraries(emwave_cli PRIVATE emwave_core)
 
 add_executable(render_layout_test
     src/render_layout_test.c
@@ -90,10 +93,7 @@ target_include_directories(render_layout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DI
 
 # Link OpenMP if available
 if(OpenMP_C_FOUND)
-    if (TARGET emwave)
-        target_link_libraries(emwave PRIVATE OpenMP::OpenMP_C)
-    endif()
-    target_link_libraries(emwave_cli PRIVATE OpenMP::OpenMP_C)
+    target_link_libraries(emwave_core PUBLIC OpenMP::OpenMP_C)
     message(STATUS "OpenMP found - parallel processing enabled")
 else()
     message(STATUS "OpenMP not found - sequential processing only")
@@ -101,19 +101,18 @@ endif()
 
 # libm is required when using GCC/Clang on Linux/Unix
 if(NOT MSVC)
-    if (TARGET emwave)
-        target_link_libraries(emwave PRIVATE m)
-    endif()
-    target_link_libraries(emwave_cli PRIVATE m)
+    target_link_libraries(emwave_core PUBLIC m)
 endif()
 
 # Warnings and MSVC-specific settings
 if (MSVC)
+  target_compile_options(emwave_core PRIVATE /W4 /permissive-)
   if (TARGET emwave)
     target_compile_options(emwave PRIVATE /W4 /permissive-)
   endif()
   target_compile_options(emwave_cli PRIVATE /W4 /permissive-)
   # Disable fopen deprecation warnings
+  target_compile_definitions(emwave_core PRIVATE _CRT_SECURE_NO_WARNINGS)
   if (TARGET emwave)
     target_compile_definitions(emwave PRIVATE _CRT_SECURE_NO_WARNINGS)
   endif()
@@ -126,6 +125,7 @@ if (MSVC)
     target_compile_options(emwave_cli PRIVATE /wd4849 /openmp:llvm)
   endif()
 else()
+  target_compile_options(emwave_core PRIVATE -Wall -Wextra -Wno-unused-parameter)
   if (TARGET emwave)
     target_compile_options(emwave PRIVATE -Wall -Wextra -Wno-unused-parameter)
   endif()
@@ -148,4 +148,8 @@ if (WIN32 AND TARGET emwave)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "C:/Windows/Fonts/arial.ttf"
       "$<TARGET_FILE_DIR:emwave>/DejaVuSans.ttf")
+endif()
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/CMakeLists.txt")
+  add_subdirectory(tests/unit)
 endif()

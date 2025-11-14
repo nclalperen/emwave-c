@@ -446,6 +446,11 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg) {
     return 1;
 }
 
+int config_loader_parse_file(const char* path, SimulationConfig* cfg) {
+    if (!cfg) return 0;
+    return config_overlay_from_json(path, cfg);
+}
+
 void config_clamp_to_limits(SimulationConfig* cfg) {
     if (!cfg) return;
     if (cfg->nx < SIM_MIN_DIM) cfg->nx = SIM_MIN_DIM;
@@ -579,7 +584,7 @@ int config_load_from_args(int argc, char** argv, SimulationConfig* out_config) {
 
     const char* config_path = extract_config_path(argc, argv);
     if (config_path && config_path[0] != '\0') {
-        if (!config_overlay_from_json(config_path, out_config)) {
+        if (!config_loader_parse_file(config_path, out_config)) {
             return 0;
         }
     }
