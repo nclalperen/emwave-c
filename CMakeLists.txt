@@ -6,9 +6,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # Find OpenMP for parallel processing
 find_package(OpenMP)
 
-# Use MSYS2 config packages
-find_package(SDL2 CONFIG REQUIRED)
-find_package(SDL2_ttf CONFIG REQUIRED)
+# Prefer config packages when available but fall back to module Find scripts
+find_package(SDL2 REQUIRED)
+find_package(SDL2_ttf REQUIRED)
 
 # Source files for modular build
 set(EMWAVE_CORE_SOURCES
