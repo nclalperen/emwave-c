@@ -51,11 +51,6 @@ int scope_init(Scope* scope, int width) {
     double* buf = (double*)analysis_checked_calloc((size_t)buffer_len, sizeof(double));
     if (!buf) {
         fprintf(stderr, "Warning: Failed to allocate scope buffer\n");
-        scope->on = 0;
-        scope->head = 0;
-        scope->last = 0.0;
-        scope->rolling_absmax = 0.0;
-        scope->rolling_generation = 0;
         return 0;
     }
 
@@ -203,10 +198,6 @@ int ports_init(Port* ports, int nx, int ny) {
         int y1 = clampi_local((3 * ny) / 4, y0 + 1, safe_y_hi + 1);
         if (y1 < y0) y1 = y0;
 
-        ports[p].y0 = y0;
-        ports[p].y1 = y1;
-        ports[p].len = ports[p].y1 - ports[p].y0 + 1;
-        ports[p].n = PORT_SIGNAL_LENGTH;
         double* vbuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
         double* ibuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
         if (!vbuf || !ibuf) {
@@ -216,6 +207,10 @@ int ports_init(Port* ports, int nx, int ny) {
             ports_free(ports);
             return 0;
         }
+        ports[p].y0 = y0;
+        ports[p].y1 = y1;
+        ports[p].len = ports[p].y1 - ports[p].y0 + 1;
+        ports[p].n = PORT_SIGNAL_LENGTH;
         ports[p].V = vbuf;
         ports[p].I = ibuf;
         ports[p].head = 0;
