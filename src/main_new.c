@@ -53,7 +53,13 @@ int main(int argc, char** argv) {
     ui_state_sync_with_sim(ui, sim);
 
     Scope scope = (Scope){0};
-    scope_init(&scope, sim->nx * render->scale);
+    if (!scope_init(&scope, sim->nx * render->scale)) {
+        fprintf(stderr, "Failed to initialize oscilloscope buffer\n");
+        render_free(render);
+        ui_state_free(ui);
+        fdtd_free(sim);
+        return 1;
+    }
 
     SimulationRunnerOptions runner_opts;
     simulation_runner_options_from_config(&runner_opts, &bootstrap.config);
