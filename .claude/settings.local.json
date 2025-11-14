@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(cmake:*)",
+      "Bash(where:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File build-msvc.ps1 -Clean)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
