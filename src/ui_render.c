@@ -70,16 +70,39 @@ RenderContext* render_init(const char* title, int width, int height) {
         return NULL;
     }
 
-    const char* font_paths[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "DejaVuSans.ttf",
-        NULL
-    };
+    const char* bundled_relative_font = "assets/fonts/DejaVuSans.ttf";
+    char* base_path = SDL_GetBasePath();
+    char* bundled_font_path = NULL;
+    if (base_path) {
+        size_t len = strlen(base_path) + strlen(bundled_relative_font) + 1;
+        bundled_font_path = (char*)malloc(len);
+        if (bundled_font_path) {
+            snprintf(bundled_font_path, len, "%s%s", base_path, bundled_relative_font);
+        }
+        SDL_free(base_path);
+    } else {
+        size_t len = strlen(bundled_relative_font) + 1;
+        bundled_font_path = (char*)malloc(len);
+        if (bundled_font_path) {
+            memcpy(bundled_font_path, bundled_relative_font, len);
+        }
+    }
 
-    for (int i = 0; font_paths[i]; ++i) {
+    const char* font_paths[5] = {0};
+    int font_count = 0;
+    if (bundled_font_path) {
+        font_paths[font_count++] = bundled_font_path;
+    }
+    font_paths[font_count++] = bundled_relative_font;
+    font_paths[font_count++] = "DejaVuSans.ttf";
+    font_paths[font_count++] = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+
+    for (int i = 0; i < font_count; ++i) {
         ctx->font = TTF_OpenFont(font_paths[i], 14);
         if (ctx->font) break;
     }
+
+    free(bundled_font_path);
 
     if (!ctx->font) {
         fprintf(stderr, "TTF_OpenFont failed: %s\n", TTF_GetError());

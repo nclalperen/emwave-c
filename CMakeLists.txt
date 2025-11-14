@@ -142,13 +142,18 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/assets")
   install(DIRECTORY assets/ DESTINATION assets)
 endif()
 
-# Copy a system font so TTF_OpenFont("DejaVuSans.ttf", ...) works on Windows
-if (WIN32 AND TARGET emwave)
+set(EMWAVE_BUNDLED_FONT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+
+if (TARGET emwave)
+  set(_EMWAVE_FONT_RUNTIME_DIR "$<TARGET_FILE_DIR:emwave>/assets/fonts")
   add_custom_command(TARGET emwave POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_EMWAVE_FONT_RUNTIME_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "C:/Windows/Fonts/arial.ttf"
-      "$<TARGET_FILE_DIR:emwave>/DejaVuSans.ttf")
+      "${EMWAVE_BUNDLED_FONT}"
+      "${_EMWAVE_FONT_RUNTIME_DIR}/DejaVuSans.ttf")
 endif()
+
+install(FILES "${EMWAVE_BUNDLED_FONT}" DESTINATION assets/fonts)
 
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/CMakeLists.txt")
   add_subdirectory(tests/unit)
