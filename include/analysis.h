@@ -18,7 +18,7 @@ void scope_clear(Scope* scope);
 int dump_scope_fft_csv(const Scope* scope, const char* path, double dt, int Nfft_requested);
 
 /* Port management */
-void ports_init(Port* ports);
+void ports_init(Port* ports, int nx, int ny);
 void ports_free(Port* ports);
 void ports_sample(SimulationState* state, double dx, double dy);
 

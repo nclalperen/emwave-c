@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 /* Initialize oscilloscope */
 void scope_init(Scope* scope, int width) {
@@ -115,13 +116,33 @@ int dump_scope_fft_csv(const Scope* scope, const char* path, double dt, int Nfft
     return 1;
 }
 
+static inline int clampi_local(int v, int lo, int hi) {
+    if (lo > hi) {
+        int tmp = lo;
+        lo = hi;
+        hi = tmp;
+    }
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
 /* Initialize ports */
-void ports_init(Port* ports) {
+void ports_init(Port* ports, int nx, int ny) {
+    int safe_x_lo = 1;
+    int safe_x_hi = (nx > 1) ? nx - 2 : 0;
+    int safe_y_lo = 1;
+    int safe_y_hi = (ny > 1) ? ny - 2 : 0;
+
     for (int p = 0; p < MAX_PORTS; p++) {
         ports[p].active = 0;
-        ports[p].x = (p == 0) ? NX/4 : 3*NX/4;  /* Default positions */
-        ports[p].y0 = NY/4;
-        ports[p].y1 = 3*NY/4;
+        int target_x = (p == 0) ? nx / 4 : (3 * nx) / 4;
+        ports[p].x = clampi_local(target_x, safe_x_lo, safe_x_hi);
+
+        int y0 = clampi_local(ny / 4, safe_y_lo, safe_y_hi);
+        int y1 = clampi_local((3 * ny) / 4, y0 + 1, safe_y_hi + 1);
+        if (y1 < y0) y1 = y0;
+
+        ports[p].y0 = y0;
+        ports[p].y1 = y1;
         ports[p].len = ports[p].y1 - ports[p].y0 + 1;
         ports[p].n = PORT_SIGNAL_LENGTH;
         ports[p].V = (double*)calloc(PORT_SIGNAL_LENGTH, sizeof(double));
@@ -154,19 +175,21 @@ void ports_sample(SimulationState* state, double dx, double dy) {
     for (int p = 0; p < MAX_PORTS; p++) {
         if (!state->ports[p].active) continue;
 
+        int px = state->ports[p].x;
+        if (px <= 0 || px >= state->nx) continue;
+
+        int y0 = clampi_local(state->ports[p].y0, 0, state->ny - 1);
+        int y1 = clampi_local(state->ports[p].y1, y0, state->ny - 1);
+
         double Vsum = 0.0;
         double Isum = 0.0;
 
-        /* Voltage = integral of Ez along port */
-        for (int yy = state->ports[p].y0; yy <= state->ports[p].y1; yy++) {
-            Vsum += state->Ez[state->ports[p].x][yy];
+        for (int yy = y0; yy <= y1; yy++) {
+            Vsum += state->Ez[px][yy];
+            Isum += state->Hy[px][yy];
         }
-        Vsum *= dy;
 
-        /* Current = integral of Hy along port */
-        for (int yy = state->ports[p].y0; yy <= state->ports[p].y1; yy++) {
-            Isum += state->Hy[state->ports[p].x][yy];
-        }
+        Vsum *= dy;
         Isum *= dx;
 
         state->ports[p].V[state->ports[p].head] = Vsum;

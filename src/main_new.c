@@ -12,6 +12,7 @@
 #include "analysis.h"
 #include "ui_render.h"
 #include "ui_controls.h"
+#include "config_loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +21,15 @@
 #include <omp.h>
 #endif
 
-int main(void) {
+int main(int argc, char** argv) {
+    SimulationConfig config;
+    if (!config_load_from_args(argc, argv, &config)) {
+        return 0;
+    }
+    config_print_summary(&config);
+
     /* Initialize all subsystems */
-    SimulationState* sim = fdtd_init();
+    SimulationState* sim = fdtd_init(&config);
     if (!sim) {
         fprintf(stderr, "Failed to initialize simulation\n");
         return 1;
@@ -35,8 +42,10 @@ int main(void) {
         return 1;
     }
 
+    int render_width = sim->nx * 2 + 260;
+    int render_height = sim->ny * 2 + 80;
     RenderContext* render = render_init("FDTD Electromagnetic Simulator",
-                                        NX * 2 + 260, NY * 2 + 80);
+                                        render_width, render_height);
     if (!render) {
         fprintf(stderr, "Failed to initialize rendering\n");
         ui_state_free(ui);
@@ -45,7 +54,7 @@ int main(void) {
     }
 
     Scope scope = {0};
-    scope_init(&scope, NX * 2);
+    scope_init(&scope, sim->nx * 2);
 
     FILE* probe_log = probe_open("probe.txt");
 

@@ -6,7 +6,7 @@
 #define EMWAVE_TYPES_H
 
 #include <stddef.h>
-#include "config.h"  /* For NX, NY */
+#include "config.h"
 
 /* Source types */
 typedef enum {
@@ -77,25 +77,50 @@ typedef struct {
 
 /* Simulation state structure */
 typedef struct {
+    SimulationConfig config;
+
+    /* Runtime grid */
+    int nx, ny;
+    double lx, ly;
+    double cfl_safety;
+    double dx, dy, dt;
+
+    /* Sweep configuration */
+    int sweep_points;
+    double sweep_start_hz;
+    double sweep_stop_hz;
+    int sweep_steps_per_point;
+
     /* Field arrays */
-    double (*Ez)[NY];
-    double (*Hx)[NY];
-    double (*Hy)[NY];
-    double (*Ez_old)[NY];
+    double **Ez;
+    double **Hx;
+    double **Hy;
+    double **Ez_old;
+
+    double *Ez_data;
+    double *Hx_data;
+    double *Hy_data;
+    double *Ez_old_data;
 
     /* CPML auxiliary fields */
-    double (*psi_Ezx)[NY];
-    double (*psi_Ezy)[NY];
-    double (*psi_Hyx)[NY];
-    double (*psi_Hxy)[NY];
+    double **psi_Ezx;
+    double **psi_Ezy;
+    double **psi_Hyx;
+    double **psi_Hxy;
+
+    double *psi_Ezx_data;
+    double *psi_Ezy_data;
+    double *psi_Hyx_data;
+    double *psi_Hxy_data;
 
     /* Material properties */
-    double epsr[NX][NY];
-    double sigma_map[NX][NY];
-    unsigned char tag_grid[NX][NY];  /* 0=dielectric, 1=PEC, 2=PMC */
+    double **epsr;
+    double **sigma_map;
+    unsigned char **tag_grid;  /* 0=dielectric, 1=PEC, 2=PMC */
 
-    /* Grid parameters */
-    double dx, dy, dt;
+    double *epsr_data;
+    double *sigma_map_data;
+    unsigned char *tag_grid_data;
 
     /* Sources */
     Source sources[MAX_SRC];

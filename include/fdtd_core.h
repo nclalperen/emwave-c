@@ -8,7 +8,7 @@
 #include "types.h"
 
 /* Initialization and cleanup */
-SimulationState* fdtd_init(void);
+SimulationState* fdtd_init(const SimulationConfig* cfg);
 void fdtd_free(SimulationState* state);
 
 /* Simulation control */
@@ -17,7 +17,7 @@ void fdtd_reset(SimulationState* state);
 void fdtd_clear_fields(SimulationState* state);
 
 /* Grid and timestep management */
-double fdtd_compute_dt(double dx, double dy);
+double fdtd_compute_dt(double dx, double dy, double cfl_safety);
 void fdtd_update_grid_for_freq(SimulationState* state, double freq);
 
 /* Material access */

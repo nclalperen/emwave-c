@@ -6,9 +6,18 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # Find OpenMP for parallel processing
 find_package(OpenMP)
 
-# Prefer config packages when available but fall back to module Find scripts
-find_package(SDL2 REQUIRED)
-find_package(SDL2_ttf REQUIRED)
+option(EMWAVE_ENABLE_UI "Build SDL-based visualization front-ends" ON)
+set(EMWAVE_UI_AVAILABLE OFF)
+if (EMWAVE_ENABLE_UI)
+    # Prefer config packages when available but fall back to module Find scripts
+    find_package(SDL2 QUIET)
+    find_package(SDL2_ttf QUIET)
+    if (SDL2_FOUND AND SDL2_TTF_FOUND)
+        set(EMWAVE_UI_AVAILABLE ON)
+    else()
+        message(WARNING "SDL2 or SDL2_ttf not found - building headless CLI target only")
+    endif()
+endif()
 
 # Source files for modular build
 set(EMWAVE_CORE_SOURCES
@@ -17,23 +26,36 @@ set(EMWAVE_CORE_SOURCES
     src/sources.c
     src/materials.c
     src/analysis.c
+    src/config_loader.c
 )
 
-# Executable (still using monolithic main.c until UI extraction complete)
-add_executable(emwave src/main.c ${EMWAVE_CORE_SOURCES})
+# Executables
+if (EMWAVE_UI_AVAILABLE)
+    add_executable(emwave src/main.c ${EMWAVE_CORE_SOURCES})
+    add_executable(emwave_modular src/main_new.c ${EMWAVE_CORE_SOURCES})
 
-# Include directory for header files
-target_include_directories(emwave PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_include_directories(emwave PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_include_directories(emwave_modular PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-# Keep normal int main(...) (no SDL2main shim)
-target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
+    target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
+    target_compile_definitions(emwave_modular PRIVATE SDL_MAIN_HANDLED)
 
-# Link ONLY SDL2 + SDL2_ttf (no SDL2main)
-target_link_libraries(emwave PRIVATE SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+    target_link_libraries(emwave PRIVATE SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+    target_link_libraries(emwave_modular PRIVATE SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+endif()
+
+add_executable(emwave_cli src/main_cli.c ${EMWAVE_CORE_SOURCES})
+target_include_directories(emwave_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # Link OpenMP if available
 if(OpenMP_C_FOUND)
-    target_link_libraries(emwave PRIVATE OpenMP::OpenMP_C)
+    if (TARGET emwave)
+        target_link_libraries(emwave PRIVATE OpenMP::OpenMP_C)
+    endif()
+    if (TARGET emwave_modular)
+        target_link_libraries(emwave_modular PRIVATE OpenMP::OpenMP_C)
+    endif()
+    target_link_libraries(emwave_cli PRIVATE OpenMP::OpenMP_C)
     message(STATUS "OpenMP found - parallel processing enabled")
 else()
     message(STATUS "OpenMP not found - sequential processing only")
@@ -41,24 +63,61 @@ endif()
 
 # libm is required when using GCC/Clang on Linux/Unix
 if(NOT MSVC)
-    target_link_libraries(emwave PRIVATE m)
+    if (TARGET emwave)
+        target_link_libraries(emwave PRIVATE m)
+    endif()
+    if (TARGET emwave_modular)
+        target_link_libraries(emwave_modular PRIVATE m)
+    endif()
+    target_link_libraries(emwave_cli PRIVATE m)
 endif()
 
 # Warnings and MSVC-specific settings
 if (MSVC)
-  target_compile_options(emwave PRIVATE /W4 /permissive-)
+  if (TARGET emwave)
+    target_compile_options(emwave PRIVATE /W4 /permissive-)
+  endif()
+  if (TARGET emwave_modular)
+    target_compile_options(emwave_modular PRIVATE /W4 /permissive-)
+  endif()
+  target_compile_options(emwave_cli PRIVATE /W4 /permissive-)
   # Disable fopen deprecation warnings
-  target_compile_definitions(emwave PRIVATE _CRT_SECURE_NO_WARNINGS)
+  if (TARGET emwave)
+    target_compile_definitions(emwave PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  if (TARGET emwave_modular)
+    target_compile_definitions(emwave_modular PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endif()
+  target_compile_definitions(emwave_cli PRIVATE _CRT_SECURE_NO_WARNINGS)
   # Disable OpenMP collapse warnings and use experimental LLVM OpenMP for better support
   if(OpenMP_C_FOUND)
-    target_compile_options(emwave PRIVATE /wd4849 /openmp:experimental)
+    if (TARGET emwave)
+      target_compile_options(emwave PRIVATE /wd4849 /openmp:experimental)
+    endif()
+    if (TARGET emwave_modular)
+      target_compile_options(emwave_modular PRIVATE /wd4849 /openmp:experimental)
+    endif()
+    target_compile_options(emwave_cli PRIVATE /wd4849 /openmp:experimental)
   endif()
 else()
-  target_compile_options(emwave PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  if (TARGET emwave)
+    target_compile_options(emwave PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  endif()
+  if (TARGET emwave_modular)
+    target_compile_options(emwave_modular PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  endif()
+  target_compile_options(emwave_cli PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
 
 # Install to make a portable dist/
-install(TARGETS emwave RUNTIME DESTINATION .)
+if (TARGET emwave)
+  install(TARGETS emwave RUNTIME DESTINATION .)
+endif()
+if (TARGET emwave_modular)
+  install(TARGETS emwave_modular RUNTIME DESTINATION .)
+endif()
+install(TARGETS emwave_cli RUNTIME DESTINATION .)
+
 if (EXISTS "${CMAKE_SOURCE_DIR}/assets")
   install(DIRECTORY assets/ DESTINATION assets)
 endif()

@@ -8,8 +8,12 @@
 #include "types.h"
 
 /* CPML coefficient arrays (global state) */
-extern double kx[NX], bx[NX], cx[NX];
-extern double ky[NY], by[NY], cy[NY];
+extern double* kx;
+extern double* bx;
+extern double* cx;
+extern double* ky;
+extern double* by;
+extern double* cy;
 
 /* CPML control */
 extern int cpml_on;
@@ -23,8 +27,8 @@ extern const CpmlPreset CPML_PRESETS[3];
 
 /* CPML functions */
 void cpml_zero_psi(SimulationState* state);
-void cpml_build_coeffs(double dt);
-void cpml_apply_preset(int idx, double dt);
+void cpml_build_coeffs(const SimulationState* state);
+void cpml_apply_preset(int idx, const SimulationState* state);
 
 /* Mur boundary application */
 void apply_mur_boundaries(SimulationState* state);

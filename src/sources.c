@@ -7,7 +7,7 @@
 #include <math.h>
 
 /* Initialize all sources with default parameters */
-void sources_init(Source* sources) {
+void sources_init(Source* sources, int nx, int ny) {
     for (int k = 0; k < MAX_SRC; k++) {
         sources[k].active = (k == 0) ? 1 : 0;  /* Only first source active by default */
         sources[k].type = SRC_CW;
@@ -16,14 +16,15 @@ void sources_init(Source* sources) {
         sources[k].sigma2 = 4.0;  /* Spatial footprint */
 
         /* Default positions - spread them out */
-        sources[k].ix = NX/2 + (k - MAX_SRC/2) * NX/8;
-        sources[k].iy = NY/2;
+        sources[k].ix = nx/2 + (k - MAX_SRC/2) * (nx/8);
+        sources[k].iy = ny/2;
 
         /* Clamp to valid range */
-        if (sources[k].ix < 10) sources[k].ix = 10;
-        if (sources[k].ix >= NX-10) sources[k].ix = NX-10;
-        if (sources[k].iy < 10) sources[k].iy = 10;
-        if (sources[k].iy >= NY-10) sources[k].iy = NY-10;
+        int pad = 2;
+        if (sources[k].ix < pad) sources[k].ix = pad;
+        if (sources[k].ix >= nx - pad) sources[k].ix = (nx > pad) ? nx - pad - 1 : 0;
+        if (sources[k].iy < pad) sources[k].iy = pad;
+        if (sources[k].iy >= ny - pad) sources[k].iy = (ny > pad) ? ny - pad - 1 : 0;
 
         source_reparam(&sources[k]);
     }
@@ -84,11 +85,11 @@ double source_time_value(const Source* s, int t, double dt) {
 }
 
 /* Inject a single source into Ez field */
-void inject_source_into_Ez(Source* s, double (*Ez)[NY], int t, double dt) {
+void inject_source_into_Ez(Source* s, SimulationState* state, double dt) {
     if (!s->active) return;
 
     /* Compute source amplitude at this timestep */
-    double A = source_time_value(s, t, dt);
+    double A = source_time_value(s, state->timestep, dt);
 
     /* Soft source injection with spatial Gaussian footprint */
     for (int di = -2; di <= 2; di++) {
@@ -97,13 +98,13 @@ void inject_source_into_Ez(Source* s, double (*Ez)[NY], int t, double dt) {
             int j = s->iy + dj;
 
             /* Bounds check */
-            if (i > 0 && i < NX && j > 0 && j < NY) {
+            if (i > 0 && i < state->nx && j > 0 && j < state->ny) {
                 double r2 = (double)(di*di + dj*dj);
                 double w = exp(-r2 / s->sigma2);
                 double val = A * w;
 
                 /* Saturating injection to reduce reflections */
-                Ez[i][j] += val / (1.0 + fabs(val) * 0.1);
+                state->Ez[i][j] += val / (1.0 + fabs(val) * 0.1);
             }
         }
     }
@@ -112,7 +113,7 @@ void inject_source_into_Ez(Source* s, double (*Ez)[NY], int t, double dt) {
 /* Inject all active sources */
 void inject_all_sources(SimulationState* state) {
     for (int k = 0; k < MAX_SRC; k++) {
-        inject_source_into_Ez(&state->sources[k], state->Ez, state->timestep, state->dt);
+        inject_source_into_Ez(&state->sources[k], state, state->dt);
     }
 }
 
