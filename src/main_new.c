@@ -9,6 +9,7 @@
 #include "app_bootstrap.h"
 #include "ui_render.h"
 #include "ui_controls.h"
+#include "cli_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +55,12 @@ int main(int argc, char** argv) {
     Scope scope = (Scope){0};
     scope_init(&scope, sim->nx * render->scale);
 
-    FILE* probe_file = probe_open("probe.txt");
+    SimulationRunnerOptions runner_opts;
+    simulation_runner_options_from_config(&runner_opts, &bootstrap.config);
+    runner_opts.progress_interval = 0;  /* UI handles its own status */
+    SimulationRunner runner;
+    simulation_runner_init(&runner, &runner_opts);
+    simulation_runner_reset_progress(&runner, 0);
 
     /* Print OpenMP status */
 #ifdef _OPENMP
@@ -86,12 +92,7 @@ int main(int argc, char** argv) {
                 fdtd_step(sim);
                 double probe_val = fdtd_get_Ez(sim, ui->probe_x, ui->probe_y);
                 scope_push(&scope, probe_val);
-                if (ui->log_probe && probe_file) {
-                    probe_log(probe_file, sim->timestep, probe_val);
-                }
-                if (sim->ports_on) {
-                    ports_sample(sim, sim->dx, sim->dy);
-                }
+                simulation_runner_on_step(&runner, sim, probe_val, ui->log_probe);
             }
         }
 
@@ -119,7 +120,7 @@ int main(int argc, char** argv) {
         SDL_Delay(UI_DELAY_MS);
     }
 
-    if (probe_file) fclose(probe_file);
+    simulation_runner_shutdown(&runner);
     scope_free(&scope);
     render_free(render);
     ui_state_free(ui);

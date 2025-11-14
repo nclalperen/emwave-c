@@ -26,6 +26,19 @@ void ports_sample(SimulationState* state, double dx, double dy);
 double compute_s21(const Port* ports, double freq, double dt);
 
 /* Probe logging */
+typedef struct {
+    FILE* file;
+    char* buffer;
+    size_t capacity;
+    size_t size;
+} ProbeLogWriter;
+
+int probe_writer_open(ProbeLogWriter* writer, const char* path);
+void probe_writer_flush(ProbeLogWriter* writer);
+void probe_writer_close(ProbeLogWriter* writer);
+void probe_writer_append(ProbeLogWriter* writer, int timestep, double value);
+int probe_writer_is_open(const ProbeLogWriter* writer);
+
 FILE* probe_open(const char* filename);
 void probe_log(FILE* f, int timestep, double value);
 

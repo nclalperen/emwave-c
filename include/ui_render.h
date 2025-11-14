@@ -28,7 +28,7 @@ RenderContext* render_init(const char* title, int width, int height);
 void render_free(RenderContext* ctx);
 
 /* Main rendering function */
-void render_frame(RenderContext* ctx, const SimulationState* state, const UIState* ui,
+void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
                   const Scope* scope, double fps_avg);
 
 /* Individual rendering components */
