@@ -8,14 +8,14 @@
 #include "types.h"
 
 /* Source initialization and management */
-void sources_init(Source* sources);
+void sources_init(Source* sources, int nx, int ny);
 void source_reparam(Source* s);
 void sources_set_freq(Source* sources, double f);
 void sources_cycle_type(Source* sources);
 
 /* Source injection */
 double source_time_value(const Source* s, int t, double dt);
-void inject_source_into_Ez(Source* s, double (*Ez)[NY], int t, double dt);
+void inject_source_into_Ez(Source* s, SimulationState* state, double dt);
 void inject_all_sources(SimulationState* state);
 
 /* Source interaction (for UI) */

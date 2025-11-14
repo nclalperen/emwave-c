@@ -14,9 +14,24 @@
 /* Simulation parameters */
 #define STEPS_PER_FRAME 2
 
-/* Grid dimensions (must come before BASE_DX/BASE_DY) */
-#define NX 400
-#define NY 400
+/* Runtime grid defaults */
+#define NX_DEFAULT 400
+#define NY_DEFAULT 400
+#define LX_DEFAULT 0.6
+#define LY_DEFAULT 0.6
+
+/* Hard limits to guard against GPU/CPU exhaustion */
+#define SIM_MIN_DIM 64
+#define SIM_MAX_DIM 4096
+#define SIM_MAX_CELLS (4096 * 2048)  /* ~8.3 million cells */
+
+/* Preserve legacy macros for older monolithic builds */
+#ifndef NX
+#define NX NX_DEFAULT
+#endif
+#ifndef NY
+#define NY NY_DEFAULT
+#endif
 
 /* Physical constants */
 static const double c0   = 299792458.0;              /* m/s */
@@ -24,8 +39,8 @@ static const double MU0  = 1.256637061435917295e-6;  /* H/m (4π×1e-7) */
 static const double EPS0 = 8.8541878128e-12;         /* F/m */
 
 /* Physical domain (FIXED mode geometry) */
-#define Lx 0.6        /* meters */
-#define Ly 0.6        /* meters */
+#define Lx LX_DEFAULT        /* meters */
+#define Ly LY_DEFAULT        /* meters */
 #define BASE_DX (Lx / NX)
 #define BASE_DY (Ly / NY)
 
@@ -58,5 +73,20 @@ static const double SIGMA_BLOCK = 0.0;
 /* Frequency range for UI */
 #define FREQ_MIN 1e6
 #define FREQ_MAX 5e9
+
+typedef struct {
+    int nx;
+    int ny;
+    double lx;
+    double ly;
+    double cfl_safety;
+    int steps_per_frame;
+    int sweep_points;
+    double sweep_start_hz;
+    double sweep_stop_hz;
+    int sweep_steps_per_point;
+} SimulationConfig;
+
+extern const SimulationConfig SIM_CONFIG_DEFAULTS;
 
 #endif /* EMWAVE_CONFIG_H */

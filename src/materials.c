@@ -4,20 +4,21 @@
 
 #include "materials.h"
 #include "config.h"
+#include <math.h>
 
 /* Initialize material properties to defaults */
 void materials_init(SimulationState* state) {
     materials_reset_to_defaults(state);
 
     /* Set up central dielectric block (example geometry) */
-    int bx0 = NX/2 - NX/10;
-    int bx1 = NX/2 + NX/10;
-    int by0 = NY/2 - NY/20;
-    int by1 = NY/2 + NY/20;
+    int bx0 = state->nx/2 - state->nx/10;
+    int bx1 = state->nx/2 + state->nx/10;
+    int by0 = state->ny/2 - state->ny/20;
+    int by1 = state->ny/2 + state->ny/20;
 
     for (int i = bx0; i <= bx1; i++) {
         for (int j = by0; j <= by1; j++) {
-            if (i >= 0 && i < NX && j >= 0 && j < NY) {
+            if (i >= 0 && i < state->nx && j >= 0 && j < state->ny) {
                 state->epsr[i][j] = EPSR_MAX_SCENE;  /* Dielectric block */
                 state->sigma_map[i][j] = SIGMA_BLOCK;
             }
@@ -27,8 +28,8 @@ void materials_init(SimulationState* state) {
 
 /* Reset all materials to vacuum/background */
 void materials_reset_to_defaults(SimulationState* state) {
-    for (int i = 0; i < NX; i++) {
-        for (int j = 0; j < NY; j++) {
+    for (int i = 0; i < state->nx; i++) {
+        for (int j = 0; j < state->ny; j++) {
             state->epsr[i][j] = 1.0;  /* Vacuum */
             state->sigma_map[i][j] = SIGMA_BG;
             state->tag_grid[i][j] = 0;  /* Dielectric */
@@ -39,7 +40,7 @@ void materials_reset_to_defaults(SimulationState* state) {
 /* Paint material at a specific location (for interactive editing) */
 void paint_material_at(SimulationState* state, int i, int j, int paint_type, double paint_eps) {
     /* Bounds check */
-    if (i < 0 || i >= NX || j < 0 || j >= NY) return;
+    if (i < 0 || i >= state->nx || j < 0 || j >= state->ny) return;
 
     switch (paint_type) {
         case 1:  /* PEC (Perfect Electric Conductor) */
