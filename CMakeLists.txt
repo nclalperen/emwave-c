@@ -43,6 +43,7 @@ endif()
 
 # Source files for modular build
 set(EMWAVE_CORE_SOURCES
+    src/app_bootstrap.c
     src/fdtd_core.c
     src/boundary.c
     src/sources.c

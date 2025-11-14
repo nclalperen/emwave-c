@@ -1,5 +1,12 @@
 # Compilation Status - MSVC on Windows
 
+> **Status update:** The modular SDL front-end (`src/main_new.c`) is now the only
+> UI entry point that participates in the build. The legacy monolithic
+> implementation has been archived at
+> [src/legacy/main_monolithic.c](src/legacy/main_monolithic.c) for historical
+> reference and is no longer compiled. The notes below are preserved for context
+> on the retired file.
+
 ## Current State
 
 ### ✅ Completed Fixes
