@@ -1,66 +1,126 @@
 # emwave-c
 
-Real-time 2D FDTD EM simulator (C + SDL2). Cross-platform via CMake.
+Real-time 2D finite-difference time-domain (FDTD) electromagnetic simulator written in portable C with an SDL2 UI. Builds cleanly on Windows (MSVC, MSYS2), Linux, and macOS via CMake.
 
-## Key achievements
-- Real-time 512x512 @ 60-120 FPS; 1024x768 @ 30-60 FPS; <16 ms UI latency.
-- CPML with presets + manual tuning; reflections < -60 dB at target f.
-- Instrumentation: dual probes, scope + FFT, Auto-P99/Peak/Hold, paint/edit tools.
-- Portable Windows .exe (~1-2 MB), reproducible builds (Linux/Windows).
+## Highlights
+- 512x512 grids sustain 60-120 FPS on modern CPUs and remain interactive down to <16 ms UI latency.
+- CPML and Mur boundary presets deliver <-60 dB reflections at the target frequency, plus knobs for manual tuning.
+- Built-in instrumentation: dual probes, live scope/FFT panes, Auto-P99/Peak/Hold display modes, paint/edit tools, and CSV exports.
+- Reproducible builds: MSVC flow uses the bundled vcpkg manifest (SDL2, SDL2_ttf, OpenMP); Linux/macOS use upstream packages with the same CMake configuration.
+- Portable outputs: a self-contained Windows `emwave.exe` (~1-2 MB plus SDL DLLs) and a cross-platform `build/emwave`.
 
-## Building
+## Quick start
 
-### Windows (MSVC + vcpkg)
-
-```
+### Windows (Visual Studio + vcpkg)
+```powershell
 cd C:\projects\emwave-c
-.\build-msvc.ps1 -Clean   # optional
+.\scripts\setup.ps1    # one-time dependency helper, optional if vcpkg already installed
+.\build-msvc.ps1       # add -Clean for a fresh configure
+.\build\Release\emwave.exe
 ```
+The PowerShell wrapper locates Visual Studio, loads the MSVC environment, configures CMake with the local `vcpkg.json`, and produces `build\Release\emwave.exe` along with the required SDL DLLs and the bundled font.
 
-The script:
-- Detects your Visual Studio install and sets up the MSVC environment
-- Configures with CMake using the bundled vcpkg manifest (SDL2/SDL2_ttf/OpenMP)
-- Builds `build\Release\emwave.exe`
-
-Run the freshly built binary from `build\Release`.
+### Windows (MSYS2 / MinGW-w64)
+```bash
+pacman -Syu --needed base-devel mingw-w64-x86_64-toolchain \
+  mingw-w64-x86_64-cmake mingw-w64-x86_64-SDL2 mingw-w64-x86_64-SDL2_ttf
+cd /c/projects/emwave-c
+./scripts/build_msys2.sh        # or run the cmake commands below manually
+./build/emwave.exe
+```
+The helper script configures with `-G "MinGW Makefiles"` in Release mode and copies the font asset automatically.
 
 ### Linux / macOS
-
-Install dependencies (Ubuntu example):
-
-```
-sudo apt-get update
-sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-ttf-dev
-```
-
-Configure and build:
-
-```
+```bash
+sudo apt-get install -y cmake ninja-build libsdl2-dev libsdl2-ttf-dev   # Ubuntu example
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+./build/emwave
 ```
+macOS users can substitute Homebrew (`brew install cmake ninja sdl2 sdl2_ttf`) with the same CMake invocation.
 
-The executable is `build/emwave`. On macOS you can use Homebrew packages with the same CMake invocation.
+For deeper troubleshooting or alternative env setups, see `QUICK_START_WINDOWS.md` and `BUILDING_WINDOWS.md`.
 
-### Bundled font assets
+## Detailed build notes
 
-The SDL GUI now ships with the [DejaVu Sans](https://dejavu-fonts.github.io/) typeface to avoid relying on host-specific font locations. The font binary lives in `third_party/fonts/DejaVuSans.ttf` together with its Bitstream Vera-derived license and is copied into `assets/fonts/DejaVuSans.ttf` during the build/install steps. At runtime the renderer always loads from that assets directory, so the UI is consistent across Windows, macOS, and Linux.
+### Visual Studio (manual CMake flow)
+```powershell
+cd C:\projects\emwave-c
+mkdir build
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake
+cmake --build build --config Release
+```
+OpenMP is detected automatically; if you see `OpenMP not found` ensure the Desktop C++ workload is installed.
 
-### Sample configurations
-
-Runtime parameters, material layouts, and source placements can be scripted via
-JSON. The schema is documented in [`configs/SCHEMA.md`](configs/SCHEMA.md).
-
-Two ready-to-run examples are included:
-
+### MSYS2 manual commands
 ```bash
-./build/emwave --config configs/waveguide.json
-./build/emwave --config configs/cpw_filter.json
+cd /c/projects/emwave-c
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/emwave.exe
+```
+Run the *MSYS2 MinGW 64-bit* shell (not the MSYS shell) so GCC, SDL2, and OpenMP headers resolve correctly.
+
+### Linux/macOS options
+- **Ninja (recommended):**
+  ```bash
+  cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+  ```
+- **Makefiles:**
+  ```bash
+  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
+  ```
+Set `-DUSE_OPENMP=OFF` if building on a toolchain without OpenMP.
+
+## Running the simulator
+After building, launch from the build directory or project root:
+```powershell
+.\build\Release\emwave.exe     # Windows
+```
+```bash
+./build/emwave                 # Linux/macOS/MSYS2
 ```
 
-Command-line overrides always win, so `--nx=768 --config=...` scales an existing
-scene without editing the JSON file.
+### Configuration-driven runs
+- JSON scenes live under `configs/`. The schema is documented in `configs/SCHEMA.md`.
+- Override runtime parameters from the CLI; flags always win over JSON values.
+  ```bash
+  ./build/emwave --config configs/waveguide.json
+  ./build/emwave --config configs/cpw_filter.json --nx=768 --ny=512 --tmax=2000
+  ```
+- Output artifacts:
+  - `probe.txt` - probe samples for each timestep.
+  - `probe_fft.csv` / `scope_fft.csv` - FFT/export triggered from the UI.
+  - `sweep_s21.csv` - generated when running the S-parameter sweep tool.
 
-### CI status
+### Controls at a glance
+- `Space` pause/resume, `R` reset, `C` clear fields.
+- `M` toggle Mur vs CPML boundaries.
+- Mouse click/drag places or moves sources; numeric keys enter paint modes for PEC/PMC/dielectrics.
+- `F` cycles source types (CW, Gaussian, Ricker). Arrow keys adjust frequency when paused; `[`/`]` (or +/-) tweak update speed.
+- `L` toggles the on-screen legend; `H` freezes the color scale; `S` freezes the scope scale.
 
-GitHub Actions runs the same CMake/Ninja flow on `ubuntu-latest`, ensuring SDL2/SDL2_ttf + OpenMP builds succeed on each push/PR.
+## Assets and fonts
+- The UI ships with DejaVu Sans (`third_party/fonts/DejaVuSans.ttf`). The build copies it into `assets/fonts/DejaVuSans.ttf` so runtime never relies on system fonts.
+- Windows builds drop SDL2/SDL2_ttf DLLs plus the font next to the executable; copying `build/Release` (or the `dist` folder) to another machine keeps the app portable.
+
+## Repository layout
+- `src/` - simulation core (FDTD updates, CPML, material system), instrumentation, and SDL2 UI.
+- `include/` - headers shared between modules.
+- `configs/` - JSON scene templates plus the schema.
+- `scripts/` - helper PowerShell/Bash scripts for setup and builds.
+- `tests/` - regression checks for solver math and config parsing.
+- `third_party/` - vendored assets such as fonts and small libraries.
+- `build/` - generated binaries and intermediate files (ignored by Git).
+
+## Additional documentation
+- `QUICK_START_WINDOWS.md` - step-by-step PowerShell/MSYS2 instructions.
+- `BUILDING_WINDOWS.md` - exhaustive Windows toolchain coverage.
+- `MODULAR_ARCHITECTURE_SUMMARY.md` and `MODULAR_BUILD_STATUS.md` - deeper context on the code layout and refactors.
+- `UI_OVERHAUL_GUIDE.md` - notes on potential UI replacements and future improvements.
+- `COMPILATION_STATUS.md` & `BUILD_SUCCESS.md` - recent validation reports.
+
+emwave-c is actively developed; feel free to file issues or PRs with improvements, scenes, and instrumentation ideas.
