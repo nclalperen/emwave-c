@@ -9,6 +9,7 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,14 @@ const SimulationConfig SIM_CONFIG_DEFAULTS = {
 };
 
 #define JSON_TOKEN_START 256
+
+static void set_error(char* errbuf, size_t errbuf_len, const char* fmt, ...) {
+    if (!errbuf || errbuf_len == 0 || !fmt) return;
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(errbuf, errbuf_len, fmt, args);
+    va_end(args);
+}
 
 static int parse_int_arg(const char* value, int* out) {
     if (!value || !out) return 0;
@@ -353,30 +362,50 @@ static void json_apply_sources(const char* json, const jsmntok_t* tokens, int to
     }
 }
 
-static char* read_file(const char* path, size_t* out_len) {
+static char* read_file(const char* path, size_t* out_len, char* errbuf, size_t errbuf_len) {
+    if (!path) {
+        set_error(errbuf, errbuf_len, "No config file specified");
+        return NULL;
+    }
     FILE* f = fopen(path, "rb");
-    if (!f) return NULL;
+    if (!f) {
+        set_error(errbuf, errbuf_len, "Unable to open %s", path);
+        return NULL;
+    }
     if (fseek(f, 0, SEEK_END) != 0) {
+        set_error(errbuf, errbuf_len, "Failed to seek in %s", path);
         fclose(f);
         return NULL;
     }
     long len = ftell(f);
     if (len < 0) {
+        set_error(errbuf, errbuf_len, "Failed to determine size of %s", path);
+        fclose(f);
+        return NULL;
+    }
+    if ((unsigned long)len > (unsigned long)CONFIG_LOADER_MAX_FILE_BYTES) {
+        double limit_mb = (double)CONFIG_LOADER_MAX_FILE_BYTES / (1024.0 * 1024.0);
+        set_error(errbuf, errbuf_len,
+                  "Config file %s is too large (%.2f MB limit)", path, limit_mb);
         fclose(f);
         return NULL;
     }
     if (fseek(f, 0, SEEK_SET) != 0) {
+        set_error(errbuf, errbuf_len, "Failed to rewind %s", path);
         fclose(f);
         return NULL;
     }
-    char* buf = (char*)malloc((size_t)len + 1);
+    size_t alloc = (size_t)len;
+    char* buf = (char*)malloc(alloc + 1);
     if (!buf) {
+        set_error(errbuf, errbuf_len, "Out of memory reading %s", path);
         fclose(f);
         return NULL;
     }
-    size_t read_len = fread(buf, 1, (size_t)len, f);
+    size_t read_len = fread(buf, 1, alloc, f);
     fclose(f);
-    if (read_len != (size_t)len) {
+    if (read_len != alloc) {
+        set_error(errbuf, errbuf_len, "Failed to read config file %s", path);
         free(buf);
         return NULL;
     }
@@ -385,12 +414,18 @@ static char* read_file(const char* path, size_t* out_len) {
     return buf;
 }
 
-static int config_overlay_from_json(const char* path, SimulationConfig* cfg) {
-    if (!path || !cfg) return 0;
+static int config_overlay_from_json(const char* path, SimulationConfig* cfg,
+                                    char* errbuf, size_t errbuf_len) {
+    if (!path || !cfg) {
+        set_error(errbuf, errbuf_len, "Invalid arguments");
+        return 0;
+    }
     size_t len = 0;
-    char* data = read_file(path, &len);
+    char* data = read_file(path, &len, errbuf, errbuf_len);
     if (!data) {
-        fprintf(stderr, "Failed to read config file %s\n", path);
+        if (!errbuf || errbuf_len == 0 || errbuf[0] == '\0') {
+            fprintf(stderr, "Failed to read config file %s\n", path);
+        }
         return 0;
     }
 
@@ -413,7 +448,12 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg) {
             continue;
         }
         if (parsed_tokens < 0) {
-            fprintf(stderr, "Failed to parse JSON in %s (error %d)\n", path, parsed_tokens);
+            if (errbuf && errbuf_len) {
+                set_error(errbuf, errbuf_len,
+                          "Failed to parse JSON in %s (error %d)", path, parsed_tokens);
+            } else {
+                fprintf(stderr, "Failed to parse JSON in %s (error %d)\n", path, parsed_tokens);
+            }
             free(tokens);
             free(data);
             return 0;
@@ -422,7 +462,11 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg) {
     }
 
     if (parsed_tokens == 0 || tokens[0].type != JSMN_OBJECT) {
-        fprintf(stderr, "Config file %s must contain a JSON object\n", path);
+        if (errbuf && errbuf_len) {
+            set_error(errbuf, errbuf_len, "Config file %s must contain a JSON object", path);
+        } else {
+            fprintf(stderr, "Config file %s must contain a JSON object\n", path);
+        }
         free(tokens);
         free(data);
         return 0;
@@ -446,9 +490,16 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg) {
     return 1;
 }
 
-int config_loader_parse_file(const char* path, SimulationConfig* cfg) {
-    if (!cfg) return 0;
-    return config_overlay_from_json(path, cfg);
+int config_loader_parse_file(const char* path, SimulationConfig* cfg,
+                             char* errbuf, size_t errbuf_len) {
+    if (errbuf && errbuf_len) {
+        errbuf[0] = '\0';
+    }
+    if (!cfg) {
+        set_error(errbuf, errbuf_len, "No configuration struct provided");
+        return 0;
+    }
+    return config_overlay_from_json(path, cfg, errbuf, errbuf_len);
 }
 
 void config_clamp_to_limits(SimulationConfig* cfg) {
@@ -584,7 +635,10 @@ int config_load_from_args(int argc, char** argv, SimulationConfig* out_config) {
 
     const char* config_path = extract_config_path(argc, argv);
     if (config_path && config_path[0] != '\0') {
-        if (!config_loader_parse_file(config_path, out_config)) {
+        char load_err[256];
+        if (!config_loader_parse_file(config_path, out_config, load_err, sizeof(load_err))) {
+            fprintf(stderr, "Failed to load config file %s: %s\n", config_path,
+                    (load_err[0] != '\0') ? load_err : "unknown error");
             return 0;
         }
     }
