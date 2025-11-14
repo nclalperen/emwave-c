@@ -71,6 +71,12 @@ All nine header files are complete with clean interfaces:
 - Moved `NX` and `NY` definitions to `config.h`
 - All includes verified and correct
 
+### 6. UI Module Extraction Completed
+- **[src/ui_render.c](src/ui_render.c)** now owns all SDL2 rendering and HUD drawing
+- **[src/ui_controls.c](src/ui_controls.c)** handles events, sliders, painting, and sweep controls
+- **[src/main_new.c](src/main_new.c)** is the active SDL entry point wired to the modular APIs
+- Legacy `src/main.c` is preserved for reference but excluded from the build
+
 ## 🔧 Ready for Compilation
 
 ### Prerequisites Needed
@@ -150,28 +156,6 @@ Future State (UI extraction pending):
 ```
 
 ## ⏳ Deferred Tasks
-
-### UI Module Extraction (Phase 3)
-Extract UI code from [src/main.c](src/main.c) into separate modules:
-
-1. **Create src/ui_render.c** (~500 lines)
-   - Implement all functions from [include/ui_render.h](include/ui_render.h)
-   - All SDL2 rendering code
-   - Field visualization, color mapping, info panels
-
-2. **Create src/ui_controls.c** (~400 lines)
-   - Implement all functions from [include/ui_controls.h](include/ui_controls.h)
-   - Event handling, keyboard, mouse
-   - Slider interaction, paint mode, sweep control
-
-3. **Transition to main_new.c**
-   - Replace monolithic main.c with clean 100-line version
-   - Template already exists in [src/main_new.c](src/main_new.c)
-
-**Why Deferred:**
-- Core simulation modules are priority
-- Need to verify simulation functionality first
-- UI extraction is low-risk refactoring (pure code movement)
 
 ### Future UI Overhaul (User Request)
 User expressed: *"I am deeply unsatisfied with current UI/UX for example. and I want a complete overhaul on that matter later."*
