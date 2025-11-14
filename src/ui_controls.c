@@ -22,6 +22,34 @@ static int clampi_local(int v, int lo, int hi) {
     return v;
 }
 
+static double compute_full_field_max(const SimulationState* sim) {
+    if (!sim || sim->nx <= 0 || sim->ny <= 0) return 0.0;
+    double vmax = 0.0;
+    for (int i = 0; i < sim->nx; ++i) {
+        for (int j = 0; j < sim->ny; ++j) {
+            double val = fabs(sim->Ez[i][j]);
+            if (val > vmax) vmax = val;
+        }
+    }
+    return vmax;
+}
+
+static double compute_scope_abs_max(const Scope* scope) {
+    if (!scope || !scope->y || scope->n <= 0) return 0.0;
+    double vmax = 0.0;
+    for (int k = 0; k < scope->n; ++k) {
+        double val = fabs(scope->y[k]);
+        if (val > vmax) vmax = val;
+    }
+    return vmax;
+}
+
+static void ui_request_metrics_refresh(UIState* ui) {
+    if (ui) {
+        ui->force_metrics_recompute = 1;
+    }
+}
+
 UIState* ui_state_init(void) {
     UIState* ui = (UIState*)calloc(1, sizeof(UIState));
     if (!ui) {
@@ -66,6 +94,12 @@ UIState* ui_state_init(void) {
     ui->render_field_vmax = 0.0;
     ui->render_scope_vmax = 0.0;
     ui->render_metrics_valid = 0;
+    ui->estimated_field_vmax = 0.0;
+    ui->estimated_scope_vmax = 0.0;
+    ui->field_sample_timestep = -1;
+    ui->scope_sample_generation = 0;
+    ui->force_metrics_recompute = 0;
+    ui->debug_force_metrics = 0;
 
     return ui;
 }
@@ -96,6 +130,8 @@ void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_w
     ui->speed_slider.y = canvas_height + 50;
     ui->speed_slider.w = slider_width;
     ui->speed_slider.h = 22;
+
+    ui_request_metrics_refresh(ui);
 }
 
 void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim) {
@@ -104,21 +140,48 @@ void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim) {
     ui->speed_slider.value = (double)ui->steps_per_frame;
     ui->probe_x = sim->nx / 2;
     ui->probe_y = sim->ny / 2;
+    ui->field_sample_timestep = sim->timestep;
 }
 
 void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* scope) {
     if (!ui || !sim) return;
 
-    double vmax = 0.0;
-    if (ui->render_metrics_valid) {
-        vmax = ui->render_field_vmax;
+    const double decay = 0.995;
+
+    if (ui->field_sample_timestep != sim->timestep) {
+        double decayed = ui->estimated_field_vmax * decay;
+        double sample = fabs(sim->step_Ez_absmax);
+        if (sample > decayed) decayed = sample;
+        ui->estimated_field_vmax = decayed;
+        ui->field_sample_timestep = sim->timestep;
     } else {
-        for (int i = 0; i < sim->nx; ++i) {
-            for (int j = 0; j < sim->ny; ++j) {
-                double val = fabs(sim->Ez[i][j]);
-                if (val > vmax) vmax = val;
-            }
+        ui->estimated_field_vmax *= decay;
+    }
+
+    if (scope) {
+        if (ui->scope_sample_generation != scope->rolling_generation) {
+            double decayed = ui->estimated_scope_vmax * decay;
+            double sample = fabs(scope->rolling_absmax);
+            if (sample > decayed) decayed = sample;
+            ui->estimated_scope_vmax = decayed;
+            ui->scope_sample_generation = scope->rolling_generation;
+        } else {
+            ui->estimated_scope_vmax *= decay;
         }
+    } else {
+        ui->estimated_scope_vmax *= decay;
+    }
+
+    int force_full = ui->force_metrics_recompute || ui->debug_force_metrics;
+
+    double vmax = 0.0;
+    if (ui->render_metrics_valid && !force_full) {
+        vmax = ui->render_field_vmax;
+    } else if (!force_full && ui->estimated_field_vmax > 0.0) {
+        vmax = ui->estimated_field_vmax;
+    } else {
+        vmax = compute_full_field_max(sim);
+        ui->estimated_field_vmax = vmax;
     }
 
     if (ui->vmax_smooth == 0.0) ui->vmax_smooth = vmax;
@@ -130,15 +193,16 @@ void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* sco
 
     double smax = 0.0;
     int have_scope_data = 0;
-    if (ui->render_metrics_valid) {
+    if (ui->render_metrics_valid && !force_full) {
         smax = ui->render_scope_vmax;
         have_scope_data = 1;
-    } else if (scope && scope->y && scope->n > 0) {
-        for (int k = 0; k < scope->n; ++k) {
-            double val = fabs(scope->y[k]);
-            if (val > smax) smax = val;
-        }
+    } else if (!force_full && ui->estimated_scope_vmax > 0.0) {
+        smax = ui->estimated_scope_vmax;
         have_scope_data = 1;
+    } else if (scope && scope->y && scope->n > 0) {
+        smax = compute_scope_abs_max(scope);
+        have_scope_data = 1;
+        ui->estimated_scope_vmax = smax;
     }
 
     if (have_scope_data) {
@@ -150,6 +214,9 @@ void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* sco
     }
 
     ui->render_metrics_valid = 0;
+    if (ui->force_metrics_recompute && !ui->debug_force_metrics) {
+        ui->force_metrics_recompute = 0;
+    }
 }
 
 static void apply_paint(UIState* ui, SimulationState* sim, int mx, int my, int scale) {
@@ -275,6 +342,7 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     fdtd_clear_fields(sim);
                     scope_clear(scope);
                     cpml_zero_psi(sim);
+                    ui_request_metrics_refresh(ui);
                     break;
 
                 case SDLK_a:
@@ -299,11 +367,13 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     fdtd_clear_fields(sim);
                     scope_clear(scope);
                     cpml_zero_psi(sim);
+                    ui_request_metrics_refresh(ui);
                     break;
                 case SDLK_r:
                     fdtd_reset(sim);
                     scope_clear(scope);
                     cpml_zero_psi(sim);
+                    ui_request_metrics_refresh(ui);
                     break;
                 case SDLK_y: {
                     BoundaryType type = boundary_get_type(sim);
@@ -320,6 +390,12 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     break;
                 case SDLK_s:
                     sim->ports_on = !sim->ports_on;
+                    break;
+                case SDLK_f:
+                    ui->debug_force_metrics = !ui->debug_force_metrics;
+                    if (!ui->debug_force_metrics) {
+                        ui_request_metrics_refresh(ui);
+                    }
                     break;
                 default:
                     break;

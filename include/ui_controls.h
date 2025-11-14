@@ -56,6 +56,12 @@ typedef struct {
     double render_field_vmax;
     double render_scope_vmax;
     int render_metrics_valid;
+    double estimated_field_vmax;
+    double estimated_scope_vmax;
+    int field_sample_timestep;
+    unsigned int scope_sample_generation;
+    int force_metrics_recompute;
+    int debug_force_metrics;
 
     /* Render stride */
     int render_stride;
