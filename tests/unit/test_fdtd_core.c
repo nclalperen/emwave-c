@@ -21,8 +21,24 @@ static void test_dt_falls_back_to_default(void) {
     assert(fabs(dt_invalid - dt_default) < 1e-15);
 }
 
+static void test_fdtd_init_handles_state_alloc_failure(void) {
+    fdtd_test_set_alloc_fail_after(0);
+    SimulationState* sim = fdtd_init(NULL);
+    assert(sim == NULL);
+    fdtd_test_set_alloc_fail_after(-1);
+}
+
+static void test_fdtd_init_handles_partial_alloc_failure(void) {
+    fdtd_test_set_alloc_fail_after(3);
+    SimulationState* sim = fdtd_init(NULL);
+    assert(sim == NULL);
+    fdtd_test_set_alloc_fail_after(-1);
+}
+
 int main(void) {
     test_dt_uses_requested_safety();
     test_dt_falls_back_to_default();
+    test_fdtd_init_handles_state_alloc_failure();
+    test_fdtd_init_handles_partial_alloc_failure();
     return 0;
 }

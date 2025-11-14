@@ -9,34 +9,81 @@
 #include <math.h>
 #include <stdio.h>
 
+static int analysis_alloc_fail_after = -1;
+
+void analysis_test_set_alloc_fail_after(int count) {
+    analysis_alloc_fail_after = count;
+}
+
+static int analysis_should_fail_allocation(void) {
+    if (analysis_alloc_fail_after < 0) {
+        return 0;
+    }
+    if (analysis_alloc_fail_after == 0) {
+        return 1;
+    }
+    analysis_alloc_fail_after--;
+    return 0;
+}
+
+static void* analysis_checked_malloc(size_t size) {
+    if (analysis_should_fail_allocation()) {
+        return NULL;
+    }
+    return malloc(size);
+}
+
+static void* analysis_checked_calloc(size_t count, size_t size) {
+    if (analysis_should_fail_allocation()) {
+        return NULL;
+    }
+    return calloc(count, size);
+}
+
 /* Initialize oscilloscope */
-void scope_init(Scope* scope, int width) {
-    if (scope->y) free(scope->y);
-
-    scope->n = (width > 64 ? width : 64);
-    scope->y = (double*)calloc(scope->n, sizeof(double));
-
-    if (!scope->y) {
-        fprintf(stderr, "Warning: Failed to allocate scope buffer\n");
-        scope->n = 0;
-        scope->on = 0;
-        return;
+int scope_init(Scope* scope, int width) {
+    if (!scope) {
+        return 0;
     }
 
+    scope_free(scope);
+    int buffer_len = (width > 64 ? width : 64);
+    double* buf = (double*)analysis_checked_calloc((size_t)buffer_len, sizeof(double));
+    if (!buf) {
+        fprintf(stderr, "Warning: Failed to allocate scope buffer\n");
+        scope->on = 0;
+        scope->head = 0;
+        scope->last = 0.0;
+        scope->rolling_absmax = 0.0;
+        scope->rolling_generation = 0;
+        return 0;
+    }
+
+    scope->y = buf;
+    scope->n = buffer_len;
     scope->head = 0;
     scope->on = 1;
     scope->last = 0.0;
     scope->rolling_absmax = 0.0;
     scope->rolling_generation = 0;
+    return 1;
 }
 
 /* Free oscilloscope */
 void scope_free(Scope* scope) {
+    if (!scope) {
+        return;
+    }
     if (scope->y) {
         free(scope->y);
         scope->y = NULL;
     }
     scope->n = 0;
+    scope->on = 0;
+    scope->head = 0;
+    scope->last = 0.0;
+    scope->rolling_absmax = 0.0;
+    scope->rolling_generation = 0;
 }
 
 /* Push value to oscilloscope */
@@ -72,7 +119,7 @@ int dump_scope_fft_csv(const Scope* scope, const char* path, double dt, int Nfft
     if (Nfft > N) Nfft = N;
     if (Nfft < 64) Nfft = (N < 64 ? N : 64);
 
-    double *x = (double*)malloc(sizeof(double) * Nfft);
+    double *x = (double*)analysis_checked_malloc(sizeof(double) * (size_t)Nfft);
     if (!x) {
         fprintf(stderr, "Warning: FFT export failed - memory allocation error\n");
         return 0;
@@ -135,11 +182,17 @@ static inline int clampi_local(int v, int lo, int hi) {
 }
 
 /* Initialize ports */
-void ports_init(Port* ports, int nx, int ny) {
+int ports_init(Port* ports, int nx, int ny) {
     int safe_x_lo = 1;
     int safe_x_hi = (nx > 1) ? nx - 2 : 0;
     int safe_y_lo = 1;
     int safe_y_hi = (ny > 1) ? ny - 2 : 0;
+
+    if (!ports) {
+        return 0;
+    }
+
+    ports_free(ports);
 
     for (int p = 0; p < MAX_PORTS; p++) {
         ports[p].active = 0;
@@ -154,19 +207,27 @@ void ports_init(Port* ports, int nx, int ny) {
         ports[p].y1 = y1;
         ports[p].len = ports[p].y1 - ports[p].y0 + 1;
         ports[p].n = PORT_SIGNAL_LENGTH;
-        ports[p].V = (double*)calloc(PORT_SIGNAL_LENGTH, sizeof(double));
-        ports[p].I = (double*)calloc(PORT_SIGNAL_LENGTH, sizeof(double));
-        ports[p].head = 0;
-
-        if (!ports[p].V || !ports[p].I) {
+        double* vbuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
+        double* ibuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
+        if (!vbuf || !ibuf) {
+            free(vbuf);
+            free(ibuf);
             fprintf(stderr, "Warning: Failed to allocate port %d buffers\n", p);
-            ports[p].active = 0;
+            ports_free(ports);
+            return 0;
         }
+        ports[p].V = vbuf;
+        ports[p].I = ibuf;
+        ports[p].head = 0;
     }
+    return 1;
 }
 
 /* Free ports */
 void ports_free(Port* ports) {
+    if (!ports) {
+        return;
+    }
     for (int p = 0; p < MAX_PORTS; p++) {
         if (ports[p].V) {
             free(ports[p].V);
@@ -176,6 +237,10 @@ void ports_free(Port* ports) {
             free(ports[p].I);
             ports[p].I = NULL;
         }
+        ports[p].n = 0;
+        ports[p].len = 0;
+        ports[p].head = 0;
+        ports[p].active = 0;
     }
 }
 

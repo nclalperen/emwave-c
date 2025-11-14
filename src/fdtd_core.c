@@ -19,11 +19,89 @@
 #include <omp.h>
 #endif
 
+static int fdtd_alloc_fail_after = -1;
+
+void fdtd_test_set_alloc_fail_after(int count) {
+    fdtd_alloc_fail_after = count;
+}
+
+static int fdtd_should_fail_allocation(void) {
+    if (fdtd_alloc_fail_after < 0) {
+        return 0;
+    }
+    if (fdtd_alloc_fail_after == 0) {
+        return 1;
+    }
+    fdtd_alloc_fail_after--;
+    return 0;
+}
+
+static void* fdtd_checked_malloc(size_t size) {
+    if (fdtd_should_fail_allocation()) {
+        return NULL;
+    }
+    return malloc(size);
+}
+
+static void* fdtd_checked_calloc(size_t count, size_t size) {
+    if (fdtd_should_fail_allocation()) {
+        return NULL;
+    }
+    return calloc(count, size);
+}
+
+static void fdtd_state_zero(SimulationState* state) {
+    if (!state) return;
+
+    state->Ez = NULL;
+    state->Hx = NULL;
+    state->Hy = NULL;
+    state->Ez_old = NULL;
+    state->psi_Ezx = NULL;
+    state->psi_Ezy = NULL;
+    state->psi_Hyx = NULL;
+    state->psi_Hxy = NULL;
+    state->epsr = NULL;
+    state->sigma_map = NULL;
+    state->tag_grid = NULL;
+
+    state->Ez_data = NULL;
+    state->Hx_data = NULL;
+    state->Hy_data = NULL;
+    state->Ez_old_data = NULL;
+    state->psi_Ezx_data = NULL;
+    state->psi_Ezy_data = NULL;
+    state->psi_Hyx_data = NULL;
+    state->psi_Hxy_data = NULL;
+    state->epsr_data = NULL;
+    state->sigma_map_data = NULL;
+    state->tag_grid_data = NULL;
+
+    for (int p = 0; p < MAX_PORTS; ++p) {
+        state->ports[p].V = NULL;
+        state->ports[p].I = NULL;
+        state->ports[p].active = 0;
+        state->ports[p].n = 0;
+        state->ports[p].len = 0;
+        state->ports[p].head = 0;
+    }
+    state->ports_on = 0;
+
+    state->cpml.kx = NULL;
+    state->cpml.bx = NULL;
+    state->cpml.cx = NULL;
+    state->cpml.ky = NULL;
+    state->cpml.by = NULL;
+    state->cpml.cy = NULL;
+    state->cpml.kx_capacity = 0;
+    state->cpml.ky_capacity = 0;
+}
+
 static int alloc_field_double(int nx, int ny, double*** out_rows, double** out_data) {
     size_t cells = (size_t)nx * (size_t)ny;
-    double* data = (double*)calloc(cells, sizeof(double));
+    double* data = (double*)fdtd_checked_calloc(cells, sizeof(double));
     if (!data) return 0;
-    double** rows = (double**)malloc(sizeof(double*) * nx);
+    double** rows = (double**)fdtd_checked_malloc(sizeof(double*) * nx);
     if (!rows) {
         free(data);
         return 0;
@@ -38,9 +116,9 @@ static int alloc_field_double(int nx, int ny, double*** out_rows, double** out_d
 
 static int alloc_field_uchar(int nx, int ny, unsigned char*** out_rows, unsigned char** out_data) {
     size_t cells = (size_t)nx * (size_t)ny;
-    unsigned char* data = (unsigned char*)calloc(cells, sizeof(unsigned char));
+    unsigned char* data = (unsigned char*)fdtd_checked_calloc(cells, sizeof(unsigned char));
     if (!data) return 0;
-    unsigned char** rows = (unsigned char**)malloc(sizeof(unsigned char*) * nx);
+    unsigned char** rows = (unsigned char**)fdtd_checked_malloc(sizeof(unsigned char*) * nx);
     if (!rows) {
         free(data);
         return 0;
@@ -83,19 +161,19 @@ double fdtd_compute_dt(double dx, double dy, double cfl_safety) {
 
 /* Initialize simulation state */
 SimulationState* fdtd_init(const SimulationConfig* cfg) {
-    SimulationState* state = (SimulationState*)calloc(1, sizeof(SimulationState));
+    SimulationState* state = (SimulationState*)fdtd_checked_calloc(1, sizeof(SimulationState));
     if (!state) {
         fprintf(stderr, "Failed to allocate SimulationState\n");
         return NULL;
     }
+    fdtd_state_zero(state);
 
     SimulationConfig local_cfg = cfg ? *cfg : SIM_CONFIG_DEFAULTS;
     config_clamp_to_limits(&local_cfg);
     char errbuf[128];
     if (!config_validate(&local_cfg, errbuf, sizeof(errbuf))) {
         fprintf(stderr, "Invalid configuration: %s\n", errbuf);
-        free(state);
-        return NULL;
+        goto fail;
     }
 
     state->config = local_cfg;
@@ -133,17 +211,13 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
         !alloc_field_double(nx, ny, &state->sigma_map, &state->sigma_map_data) ||
         !alloc_field_uchar(nx, ny, &state->tag_grid, &state->tag_grid_data)) {
         fprintf(stderr, "Failed to allocate simulation grids\n");
-        fdtd_free(state);
-        return NULL;
+        goto fail;
     }
 
-    state->ports_on = 0;
-    for (int p = 0; p < MAX_PORTS; p++) {
-        state->ports[p].active = 0;
-        state->ports[p].V = NULL;
-        state->ports[p].I = NULL;
+    if (!ports_init(state->ports, state->nx, state->ny)) {
+        fprintf(stderr, "Failed to initialize simulation ports\n");
+        goto fail;
     }
-    ports_init(state->ports, state->nx, state->ny);
 
     fdtd_clear_fields(state);
     materials_reset_to_defaults(state);
@@ -155,6 +229,10 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     state->step_Ez_absmax = 0.0;
 
     return state;
+
+fail:
+    fdtd_free(state);
+    return NULL;
 }
 
 /* Free simulation state */

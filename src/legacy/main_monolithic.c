@@ -34,7 +34,9 @@ int main(void) {
     }
 
     materials_init(sim);
-    ports_init(sim->ports, sim->nx, sim->ny);
+    if (!ports_init(sim->ports, sim->nx, sim->ny)) {
+        fprintf(stderr, "Failed to initialize ports\n");
+    }
     initialize_boundaries(sim);
 
     UIState* ui = ui_state_init();

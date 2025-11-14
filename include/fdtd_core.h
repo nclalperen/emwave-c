@@ -11,6 +11,9 @@
 SimulationState* fdtd_init(const SimulationConfig* cfg);
 void fdtd_free(SimulationState* state);
 
+/* Testing hooks */
+void fdtd_test_set_alloc_fail_after(int count);
+
 /* Simulation control */
 void fdtd_step(SimulationState* state);
 void fdtd_reset(SimulationState* state);

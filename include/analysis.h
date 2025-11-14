@@ -9,7 +9,7 @@
 #include <stdio.h>
 
 /* Oscilloscope functions */
-void scope_init(Scope* scope, int width);
+int scope_init(Scope* scope, int width);
 void scope_free(Scope* scope);
 void scope_push(Scope* scope, double v);
 void scope_clear(Scope* scope);
@@ -18,7 +18,7 @@ void scope_clear(Scope* scope);
 int dump_scope_fft_csv(const Scope* scope, const char* path, double dt, int Nfft_requested);
 
 /* Port management */
-void ports_init(Port* ports, int nx, int ny);
+int ports_init(Port* ports, int nx, int ny);
 void ports_free(Port* ports);
 void ports_sample(SimulationState* state, double dx, double dy);
 
@@ -41,5 +41,8 @@ int probe_writer_is_open(const ProbeLogWriter* writer);
 
 FILE* probe_open(const char* filename);
 void probe_log(FILE* f, int timestep, double value);
+
+/* Testing hooks */
+void analysis_test_set_alloc_fail_after(int count);
 
 #endif /* EMWAVE_ANALYSIS_H */
