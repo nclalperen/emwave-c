@@ -39,6 +39,11 @@ else()
     message(STATUS "OpenMP not found - sequential processing only")
 endif()
 
+# libm is required when using GCC/Clang on Linux/Unix
+if(NOT MSVC)
+    target_link_libraries(emwave PRIVATE m)
+endif()
+
 # Warnings and MSVC-specific settings
 if (MSVC)
   target_compile_options(emwave PRIVATE /W4 /permissive-)
