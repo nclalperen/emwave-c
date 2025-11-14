@@ -181,9 +181,17 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                 } else {
                     int max_x = sim->nx * scale;
                     int max_y = sim->ny * scale;
-                    if (e.button.x < max_x && e.button.y < max_y) {
-                        ui->probe_x = clampi_local(e.button.x / scale, 0, sim->nx - 1);
-                        ui->probe_y = clampi_local(e.button.y / scale, 0, sim->ny - 1);
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    if (mx < max_x && my < max_y) {
+                        /* Prefer dragging nearest active source; fall back to moving probe */
+                        int idx = find_nearest_source(sim->sources, mx, my, scale, 10.0f * scale);
+                        if (idx >= 0) {
+                            ui->drag_src = idx;
+                        } else {
+                            ui->probe_x = clampi_local(mx / scale, 0, sim->nx - 1);
+                            ui->probe_y = clampi_local(my / scale, 0, sim->ny - 1);
+                        }
                     }
                 }
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
@@ -192,7 +200,16 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
         } else if (e.type == SDL_MOUSEMOTION) {
             if (ui->paint_mode && (e.motion.state & SDL_BUTTON_LMASK)) {
                 apply_paint(ui, sim, e.motion.x, e.motion.y, scale);
+            } else if (!ui->paint_mode && ui->drag_src >= 0 && (e.motion.state & SDL_BUTTON_LMASK)) {
+                int mx = e.motion.x;
+                int my = e.motion.y;
+                int ix = clampi_local(mx / scale, 1, sim->nx - 2);
+                int iy = clampi_local(my / scale, 1, sim->ny - 2);
+                sim->sources[ui->drag_src].ix = ix;
+                sim->sources[ui->drag_src].iy = iy;
             }
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            ui->drag_src = -1;
         }
 
         if (e.type == SDL_KEYDOWN) {
@@ -211,14 +228,11 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                 case SDLK_m:
                     ui->paint_mode = !ui->paint_mode;
                     break;
-                case SDLK_1:
-                    ui->paint_type = 1;
+                case SDLK_u:
+                    ui->paint_mode = !ui->paint_mode;
                     break;
-                case SDLK_2:
-                    ui->paint_type = 2;
-                    break;
-                case SDLK_3:
-                    ui->paint_type = 3;
+                case SDLK_i:
+                    ui->paint_type = (ui->paint_type % 3) + 1;
                     break;
                 case SDLK_o:
                     ui->paint_eps = clampd(ui->paint_eps * 0.9, 1.0, 20.0);
@@ -226,6 +240,24 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                 case SDLK_p:
                     ui->paint_eps = clampd(ui->paint_eps * 1.1, 1.0, 20.0);
                     break;
+
+                /* Source controls: toggle individual sources and cycle type */
+                case SDLK_1:
+                    sim->sources[0].active = !sim->sources[0].active;
+                    break;
+                case SDLK_2:
+                    if (MAX_SRC > 1) sim->sources[1].active = !sim->sources[1].active;
+                    break;
+                case SDLK_3:
+                    if (MAX_SRC > 2) sim->sources[2].active = !sim->sources[2].active;
+                    break;
+                case SDLK_t:
+                    sources_cycle_type(sim->sources);
+                    fdtd_clear_fields(sim);
+                    scope_clear(scope);
+                    cpml_zero_psi(sim);
+                    break;
+
                 case SDLK_a:
                     ui->auto_rescale = !ui->auto_rescale;
                     if (!ui->auto_rescale) {
@@ -245,7 +277,9 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     }
                     break;
                 case SDLK_c:
-                    sources_cycle_type(sim->sources);
+                    fdtd_clear_fields(sim);
+                    scope_clear(scope);
+                    cpml_zero_psi(sim);
                     break;
                 case SDLK_r:
                     fdtd_reset(sim);

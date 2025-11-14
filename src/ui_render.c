@@ -241,12 +241,12 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
 void render_legend(RenderContext* ctx, int x, int y) {
     const char* legend =
         "Space: pause/resume   ESC/Q: quit\n"
-        "L: toggle legend      M: paint mode on/off\n"
-        "1/2/3: paint type     O/P: paint permittivity -/+\n"
-        "A: auto-rescale       H: hold color scale\n"
-        "J: hold scope scale   Y: toggle CPML/Mur\n"
-        "S: toggle ports       G: log probe.txt on/off\n"
-        "C: cycle source type  Bottom sliders: freq, steps/frame";
+        "L: legend on/off      M/U: paint mode\n"
+        "I: paint type  O/P: paint eps -/+\n"
+        "1/2/3: toggle sources  T: cycle src type\n"
+        "C: clear fields       Y: CPML/Mur\n"
+        "H/J: hold color/scope S: ports  G: log probe\n"
+        "Bottom sliders: frequency and steps per frame";
     SDL_Color c = { 180, 180, 180, 255 };
     int tw, th;
     SDL_Texture* tex = render_text_wrapped(ctx, legend, c, ctx->side_panel_width - 30, &tw, &th);
