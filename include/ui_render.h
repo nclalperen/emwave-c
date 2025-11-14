@@ -8,6 +8,7 @@
 #define EMWAVE_UI_RENDER_H
 
 #include "types.h"
+#include "ui_controls.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
@@ -26,8 +27,8 @@ RenderContext* render_init(const char* title, int width, int height);
 void render_free(RenderContext* ctx);
 
 /* Main rendering function */
-void render_frame(RenderContext* ctx, const SimulationState* state, const Scope* scope,
-                  double fps_avg, int steps_per_frame, int paused, int show_legend);
+void render_frame(RenderContext* ctx, const SimulationState* state, const UIState* ui,
+                  const Scope* scope, double fps_avg);
 
 /* Individual rendering components */
 void render_field_heatmap(RenderContext* ctx, const SimulationState* state,
@@ -36,8 +37,8 @@ void render_sources(RenderContext* ctx, const Source* sources);
 void render_block_outline(RenderContext* ctx);
 void render_colorbar(RenderContext* ctx, double vmin, double vmax);
 void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale);
-void render_info_panel(RenderContext* ctx, const SimulationState* state,
-                       double fps_avg, int steps_per_frame, int paused);
+void render_info_panel(RenderContext* ctx, const SimulationState* state, const UIState* ui,
+                       double fps_avg);
 void render_legend(RenderContext* ctx, int x, int y);
 
 /* Text rendering helpers */
