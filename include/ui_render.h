@@ -1,0 +1,54 @@
+// ============================================================================
+// emwave-c: UI Rendering Interface
+// This module contains ALL SDL2 rendering code
+// Perfect isolation for future UI/UX overhaul
+// ============================================================================
+
+#ifndef EMWAVE_UI_RENDER_H
+#define EMWAVE_UI_RENDER_H
+
+#include "types.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+
+/* Rendering context structure */
+typedef struct {
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    TTF_Font* font;
+    int scale;
+    int ui_height;
+    int side_panel_width;
+} RenderContext;
+
+/* Initialization */
+RenderContext* render_init(const char* title, int width, int height);
+void render_free(RenderContext* ctx);
+
+/* Main rendering function */
+void render_frame(RenderContext* ctx, const SimulationState* state, const Scope* scope,
+                  double fps_avg, int steps_per_frame, int paused, int show_legend);
+
+/* Individual rendering components */
+void render_field_heatmap(RenderContext* ctx, const SimulationState* state,
+                          double vmax, double color_scale);
+void render_sources(RenderContext* ctx, const Source* sources);
+void render_block_outline(RenderContext* ctx);
+void render_colorbar(RenderContext* ctx, double vmin, double vmax);
+void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale);
+void render_info_panel(RenderContext* ctx, const SimulationState* state,
+                       double fps_avg, int steps_per_frame, int paused);
+void render_legend(RenderContext* ctx, int x, int y);
+
+/* Text rendering helpers */
+SDL_Texture* render_text(RenderContext* ctx, const char* text, SDL_Color color, int* w, int* h);
+SDL_Texture* render_text_wrapped(RenderContext* ctx, const char* text, SDL_Color color,
+                                  unsigned int wrap_width, int* outw, int* outh);
+
+/* Slider rendering */
+void slider_draw(RenderContext* ctx, const Slider* slider);
+
+/* Screenshot */
+int save_screenshot(RenderContext* ctx, const char* filename);
+
+#endif /* EMWAVE_UI_RENDER_H */

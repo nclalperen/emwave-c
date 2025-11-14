@@ -14,6 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_OPENMP) && !defined(_MSC_VER)
+#include <omp.h>
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -28,18 +32,30 @@ static const double c0  = 299792458.0;            /* m/s */
 static const double MU0 = 1.256637061435917295e-6;/* H/m (4π×1e-7) */
 static const double EPS0= 8.8541878128e-12;       /* F/m */
 
+/* Rendering and visualization constants */
+#define HIST_STRIDE 4                  /* Histogram sampling stride (perf tuning) */
+#define COLOR_HIST_BINS 512            /* Number of bins for color histogram */
+#define UI_DELAY_MS 8                  /* Frame delay in milliseconds */
+
+/* Numerical safety constants */
+#define CFL_SAFETY_FACTOR 0.95         /* CFL timestep safety factor */
+#define DIVISION_SAFETY_EPSILON 1e-20  /* Small number to prevent division by zero */
+
 /* Physical domain (FIXED mode geometry) */
-static const double Lx = 0.6, Ly = 0.6;           /* meters */
-static const double BASE_DX = Lx / NX;
-static const double BASE_DY = Ly / NY;
+#define Lx_MAIN 0.6           /* meters */
+#define Ly_MAIN 0.6           /* meters */
+#define BASE_DX_MAIN (Lx_MAIN / NX)
+#define BASE_DY_MAIN (Ly_MAIN / NY)
+#define BASE_DX BASE_DX_MAIN
+#define BASE_DY BASE_DY_MAIN
 
 /* AUTO (cells per wavelength) targets and safety */
 static const double TARGET_CPW       = 12.0;  /* desired cells/λ in slowest medium */
 static const double EPSR_MAX_SCENE   = 4.0;   /* slowest medium (inside block) */
-static const double MAX_SCALE_FACTOR = 20.0;  /* Δ_auto ≤ MAX_SCALE_FACTOR * BASE_DX */
+static const double MAX_SCALE_FACTOR = 20.0;  /* Δ_auto ≤ MAX_SCALE_FACTOR * BASE_DX_MAIN */
 
 /* Live grid + timestep (start FIXED) */
-static double dx = BASE_DX, dy = BASE_DY, dt = 0.0;
+static double dx = BASE_DX_MAIN, dy = BASE_DY_MAIN, dt = 0.0;
 
 /* Conductivity map (S/m). Default 0; set SIGMA_BLOCK > 0 for loss. */
 static const double SIGMA_BG    = 0.0;
@@ -56,7 +72,7 @@ static inline float  sqrf   (float x){ return x*x; }
  * CFL can destabilise the solver when sigma>0.  See other AI review.
  */
 static inline double cfl_dt(double dx_, double dy_){
-    return 0.95 / (c0 * sqrt(1.0/(dx_*dx_) + 1.0/(dy_*dy_)));
+    return CFL_SAFETY_FACTOR / (c0 * sqrt(1.0/(dx_*dx_) + 1.0/(dy_*dy_)));
 }
 
 /* ================= Sliders ================= */
@@ -181,7 +197,7 @@ static inline void clear_fields(void){
     memset(Hy,     0, sizeof(double[NX][NY]));
     memset(Ez_old, 0, sizeof(double[NX][NY]));
 }
-static inline void draw_block_outline(SDL_Renderer* ren, int scale){
+static inline void draw_block_outline(SDL_Renderer* ren, const int scale){
     int bx0 = NX/2 - NX/10, bx1 = NX/2 + NX/10;
     int by0 = NY/2 - NY/20, by1 = NY/2 + NY/20;
     SDL_SetRenderDrawColor(ren, 220,220,220,200);
@@ -272,6 +288,11 @@ typedef struct {
 static Source g_src[MAX_SRC];
 static int drag_src = -1;   // -1 = none
 
+/* Source injection mode: linear (physics-correct) vs. saturating (safer when
+ * driving very large amplitudes).  Default to linear for correctness. */
+typedef enum { SRC_INJ_LINEAR = 0, SRC_INJ_SATURATING = 1 } SourceInjectionMode;
+static SourceInjectionMode g_src_injection_mode = SRC_INJ_LINEAR;
+
 static inline void source_reparam(Source* s){
     if (s->type == SRC_GAUSS_PULSE || s->type == SRC_RICKER) {
         double cycles_t0=6.0, cycles_tau=2.0;
@@ -315,12 +336,18 @@ static inline void inject_source_into_Ez(Source* s, double (*Ezf)[NY], int t, do
             double r2 = (double)(di*di + dj*dj);
             double w  = exp(-r2 / s->sigma2);
             double val = A * w;
-            /* saturating injection */
-            Ezf[i][j] += val / (1.0 + fabs(val) * 0.1);
+            if (g_src_injection_mode == SRC_INJ_LINEAR) {
+                /* Linear soft source (superposition preserved). */
+                Ezf[i][j] += val;
+            } else {
+                /* Saturating injection: gently limits very large amplitudes for
+                 * interactive demos at the cost of strict linearity. */
+                Ezf[i][j] += val / (1.0 + fabs(val) * 0.1);
+            }
         }
     }
 }
-static inline void draw_sources(SDL_Renderer* ren, int scale){
+static inline void draw_sources(SDL_Renderer* ren, const int scale){
     for (int k=0;k<MAX_SRC;++k){
         Source* s = &g_src[k];
         Uint8 rr = s->active?0:80, gg=s->active?255:80, bb=0;
@@ -338,6 +365,12 @@ static void scope_init(int width) {
     if (scope.y) free(scope.y);
     scope.n = (width > 64 ? width : 64);
     scope.y = (double*)calloc(scope.n, sizeof(double));
+    if (!scope.y) {
+        fprintf(stderr, "Warning: Failed to allocate scope buffer\n");
+        scope.n = 0;
+        scope.on = 0;
+        return;
+    }
     scope.head = 0; scope.on = 1; scope.last = 0.0;
 }
 static void scope_free(void) { if (scope.y){ free(scope.y); scope.y=NULL; } scope.n=0; }
@@ -370,7 +403,12 @@ static void draw_scope(SDL_Renderer* r, int x, int y, int w, int h, double yscal
         int idx = (scope.head - (w - i) + scope.n) % scope.n; /* oldest->left, newest->right */
         double v = scope.y[idx];
         double t = 0.5 - 0.5*(v/yscale);
-        if (t < 0) t = 0; if (t > 1) t = 1;
+        if (t < 0) {
+            t = 0;
+        }
+        if (t > 1) {
+            t = 1;
+        }
         int yy = y + (int)(t * (h-1));
         int xx = x + i;
         if (i) SDL_RenderDrawLine(r, prevx, prevy, xx, yy);
@@ -387,7 +425,7 @@ static int dump_scope_fft_csv(const char* path, double dt_, int Nfft_requested){
     if (Nfft < 64) Nfft = (N < 64 ? N : 64);
 
     double *x = (double*)malloc(sizeof(double)*Nfft);
-    if (!x) return 0;
+    if (!x) { fprintf(stderr, "Warning: FFT export failed - memory allocation error\n"); return 0; }
     int start = (scope.head - Nfft + scope.n) % scope.n; /* oldest index */
     for (int k=0; k<Nfft; ++k){
         int idx = (start + k) % scope.n;
@@ -398,7 +436,11 @@ static int dump_scope_fft_csv(const char* path, double dt_, int Nfft_requested){
         double w = 0.5 * (1.0 - cos(2.0*M_PI*(double)k/(double)(Nfft-1)));
         x[k] = (x[k] - mean) * w;
     }
-    FILE* f = fopen(path, "w"); if (!f){ free(x); return 0; }
+    FILE* f = fopen(path, "w");
+    if (!f) {
+        free(x);
+        return 0;
+    }
     fprintf(f, "# FFT of scope (Hann); dt=%.9e; N=%d\n", dt_, Nfft);
     fprintf(f, "freq_Hz,mag\n");
     for (int k=0; k<=Nfft/2; ++k){
@@ -423,12 +465,17 @@ static SDL_Texture* render_text(SDL_Renderer* ren, TTF_Font* font,
     SDL_Surface* surf = TTF_RenderUTF8_Blended(font, s, col);
     if (!surf) return NULL;
     SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
-    if (w) *w = surf->w; if (h) *h = surf->h;
+    if (w) {
+        *w = surf->w;
+    }
+    if (h) {
+        *h = surf->h;
+    }
     SDL_FreeSurface(surf);
     return tex;
 }
-static void draw_legend(SDL_Renderer* ren, TTF_Font* font, int x, int y,
-                        const char** lines, int nlines)
+static void draw_legend(SDL_Renderer* ren, TTF_Font* font, const int x, const int y,
+                        const char** lines, const int nlines)
 {
     int maxw = 0, lineh = 0;
     for (int i=0;i<nlines;++i){
@@ -485,7 +532,7 @@ static SDL_Texture* render_text_wrapped(SDL_Renderer* ren, TTF_Font* font,
     return tex;
 }
 #endif /* RENDER_TEXT_WRAPPED_DEFINED */
-static void draw_wrapped_panel(SDL_Renderer* ren, TTF_Font* font, SDL_Rect area, const char* text)
+static void draw_wrapped_panel(SDL_Renderer* ren, TTF_Font* font, const SDL_Rect area, const char* text)
 {
     const int pad = 6;
     SDL_Color fg = {230,230,230,255};
@@ -541,12 +588,12 @@ static int probe2_y = NY/2;
 
 /* ================= Visualization scaling ================= */
 typedef enum { AS_PEAK=0, AS_P99=1 } AutoScaleMode;
-#define COLOR_HIST_BINS 512
-#define HIST_STRIDE 4
 static AutoScaleMode color_autoscale_mode = AS_P99;
 
 /* decoupled holds & smoothing */
 static int hold_color = 0;
+static double cached_p99 = 0.0;  /* Cached P99 value when hold_color is active */
+static int p99_cache_valid = 0;  /* Flag indicating if cached P99 is valid */
 static double held_vmax = 1e-3;
 static int hold_scope = 0;
 static double held_scope_vmax = 1e-3;
@@ -709,7 +756,8 @@ static void build_side_buttons(int panel_x, int panel_y, int panel_w, int panel_
 #ifndef PML_THICK
 #define PML_THICK 12
 #endif
-static int cpml_on = 0;
+/* Start with CPML enabled by default for more accurate outer boundaries. */
+static int cpml_on = 1;
 static int cpml_N  = PML_THICK;
 static double pml_sigma_max = 1.2, pml_kappa_max = 5.0, pml_alpha_max = 0.05;
 
@@ -724,7 +772,7 @@ static double pml_sigma_max = 1.2, pml_kappa_max = 5.0, pml_alpha_max = 0.05;
  * the boundary_type (cpml_on = (boundary_type == BOUNDARY_CPML)).
  */
 typedef enum { BOUNDARY_MUR=0, BOUNDARY_CPML=1 } BoundaryType;
-static BoundaryType boundary_type = BOUNDARY_MUR;
+static BoundaryType boundary_type = BOUNDARY_CPML;
 
 /* per-axis coeffs */
 static double kx[NX], bx[NX], cx[NX];
@@ -762,7 +810,7 @@ static void cpml_build_coeffs(double dt_){
          * normalise the integer distance [0..N] to [0..1].
          */
         if (i < cpml_N)            rx = (cpml_N - i) / (double)cpml_N;
-        else if (i >= NX - cpml_N) rx = (i - (NX - cpml_N - 1)) / (double)cpml_N;
+        else if (i >= NX - cpml_N) rx = (i - (NX - cpml_N)) / (double)cpml_N;
         double g = rx>0 ? pow(rx, m) : 0.0;
         double sigma = pml_sigma_max * g;
         double kappa = 1.0 + (pml_kappa_max - 1.0) * g;
@@ -770,13 +818,13 @@ static void cpml_build_coeffs(double dt_){
         kx[i] = (rx>0)? kappa : 1.0;
         if (rx>0){
             bx[i] = exp(-(sigma/kappa + alpha) * dt_);
-            cx[i] = (sigma * (bx[i] - 1.0)) / (kappa * (sigma + kappa*alpha) + 1e-30);
+            cx[i] = (sigma * (bx[i] - 1.0)) / (kappa * (sigma + kappa*alpha) + 1e-20);
         } else { bx[i]=1.0; cx[i]=0.0; }
     }
     for (int j=0;j<NY;++j){
         double ry = 0.0;
         if (j < cpml_N)            ry = (cpml_N - j) / (double)cpml_N;
-        else if (j >= NY - cpml_N) ry = (j - (NY - cpml_N - 1)) / (double)cpml_N;
+        else if (j >= NY - cpml_N) ry = (j - (NY - cpml_N)) / (double)cpml_N;
         double g = ry>0 ? pow(ry, m) : 0.0;
         double sigma = pml_sigma_max * g;
         double kappa = 1.0 + (pml_kappa_max - 1.0) * g;
@@ -784,18 +832,33 @@ static void cpml_build_coeffs(double dt_){
         ky[j] = (ry>0)? kappa : 1.0;
         if (ry>0){
             by[j] = exp(-(sigma/kappa + alpha) * dt_);
-            cy[j] = (sigma * (by[j] - 1.0)) / (kappa * (sigma + kappa*alpha) + 1e-30);
+            cy[j] = (sigma * (by[j] - 1.0)) / (kappa * (sigma + kappa*alpha) + 1e-20);
         } else { by[j]=1.0; cy[j]=0.0; }
     }
 }
 static void cpml_apply_preset(int idx, double dt_){
     int n = (int)(sizeof(CPML_PRESETS)/sizeof(CPML_PRESETS[0]));
-    if (idx < 0) idx = 0; if (idx >= n) idx = n-1;
+    if (idx < 0) {
+        idx = 0;
+    }
+    if (idx >= n) {
+        idx = n-1;
+    }
     cpml_preset_idx = idx;
     pml_sigma_max = CPML_PRESETS[idx].smax;
     pml_kappa_max = CPML_PRESETS[idx].kmax;
     pml_alpha_max = CPML_PRESETS[idx].amax;
     cpml_N        = CPML_PRESETS[idx].thick;
+
+    /* Validate CPML thickness doesn't exceed grid size */
+    int max_thickness = (NX < NY ? NX : NY) / 2 - 1;
+    if (cpml_N > max_thickness) {
+        fprintf(stderr, "Warning: CPML thickness %d exceeds safe limit %d, clamping\n",
+                cpml_N, max_thickness);
+        cpml_N = max_thickness;
+    }
+    if (cpml_N < 1) cpml_N = 1;
+
     cpml_build_coeffs(dt_);
     cpml_zero_psi();
 }
@@ -814,51 +877,28 @@ static void reset_sim_state(void)
 {
     /* fields */
     zero_2d(Ez); zero_2d(Hx); zero_2d(Hy);
-#ifdef Ez_old
     zero_2d(Ez_old);
-#endif
 
     /* CPML aux */
-#ifdef psi_Ezx
     zero_2d(psi_Ezx);
-#endif
-#ifdef psi_Ezy
     zero_2d(psi_Ezy);
-#endif
-#ifdef psi_Hyx
     zero_2d(psi_Hyx);
-#endif
-#ifdef psi_Hxy
     zero_2d(psi_Hxy);
-#endif
 
     /* scope */
-#ifdef scope_clear
     scope_clear();
-#endif
 
     /* ports */
-#ifdef MAX_PORTS
     for (int p=0; p<MAX_PORTS; ++p) {
         if (ports[p].V) memset(ports[p].V, 0, sizeof(double)*ports[p].n);
         if (ports[p].I) memset(ports[p].I, 0, sizeof(double)*ports[p].n);
         ports[p].head = 0;
     }
-#endif
 
     /* color/scope autoscale smoothers */
-#ifdef vmax_smooth
     vmax_smooth = 0.0;
-#endif
-#ifdef p99_smooth
     p99_smooth = 0.0;
-#endif
-#ifdef scope_vmax_smooth
     scope_vmax_smooth = 0.0;
-#endif
-#ifdef hist_frame_counter
-    hist_frame_counter = 0;
-#endif
 }
 
 /* Recompute Δ, dt, CPML, reparam sources and reset */
@@ -873,125 +913,127 @@ static void rebuild_sim_for_freq(double new_f)
     update_grid_for_freq(freq, &dx, &dy, &dt);
 
     /* sources that depend on freq */
-#ifdef MAX_SRC
     for (int k=0; k<MAX_SRC; ++k) source_reparam(&g_src[k]);
-#endif
 
-#ifdef cpml_on
     if (cpml_on) {
         cpml_build_coeffs(dt);
-#  ifdef cpml_zero_psi
         cpml_zero_psi();
-#  endif
     }
-#endif
     reset_sim_state();
 }
 /* =================== END INJECTION 1 =================== */
 
 
 
-static void draw_info_panel(SDL_Renderer* ren, TTF_Font* font, SDL_Rect area,
-                            double fps_inst_local, double fps_avg_local,
-                            int steps_per_frame_local, int paused_local)
+static void draw_info_panel(SDL_Renderer* ren, TTF_Font* font, const SDL_Rect area,
+                            const double fps_inst_local, const double fps_avg_local,
+                            const int steps_per_frame_local, const int paused_local)
 {
     /* Compose the information string into a static buffer.  We keep the
      * buffer reasonably large; if it overflows, truncation will occur. */
     char buf[2048];
     buf[0] = '\0';
     size_t len = 0;
+
+    /* Safe snprintf macro to prevent buffer overflow */
+    #define SAFE_APPEND(...) do { \
+        if (len < sizeof(buf) - 1) { \
+            int written = snprintf(buf+len, sizeof(buf)-len, __VA_ARGS__); \
+            if (written > 0) len += (size_t)written; \
+            if (len >= sizeof(buf)) len = sizeof(buf) - 1; \
+        } \
+    } while(0)
+
     /* Frequency and units */
     double disp = (freq >= 1e9) ? freq/1e9 : freq/1e6;
     const char* unit = (freq >= 1e9) ? "GHz" : "MHz";
-    len += snprintf(buf+len, sizeof(buf)-len, "Freq: %.2f %s\n", disp, unit);
+    SAFE_APPEND("Freq: %.2f %s\n", disp, unit);
     /* Grid spacing and timestep */
-    len += snprintf(buf+len, sizeof(buf)-len, "Δ=%.4g m   dt=%.4g s\n", dx, dt);
+    SAFE_APPEND("Δ=%.4g m   dt=%.4g s\n", dx, dt);
     /* Cells per wavelength (in/out) */
     double lambda0 = c0 / freq;
     double cpw_out = lambda0 / dx;
     double cpw_in  = (lambda0 / sqrt(EPSR_MAX_SCENE)) / dx;
-    len += snprintf(buf+len, sizeof(buf)-len, "CPW (in/out): %.1f / %.1f\n", cpw_in, cpw_out);
+    SAFE_APPEND("CPW (in/out): %.1f / %.1f\n", cpw_in, cpw_out);
     /* Mode and colour scale */
     const char* mode = auto_rescale ? "AUTO" : "FIXED";
     const char* scmode = hold_color ? "HOLD" : (color_autoscale_mode==AS_P99 ? "AUTO-P99" : "AUTO-PEAK");
-    len += snprintf(buf+len, sizeof(buf)-len, "Mode: %s  Color: %s  Render:x%d\n", mode, scmode, g_render_stride);
+    SAFE_APPEND("Mode: %s  Color: %s  Render:x%d\n", mode, scmode, g_render_stride);
     /* Steps/frame and pause state */
-    len += snprintf(buf+len, sizeof(buf)-len, "Steps/frame: %d   %s\n",
+    SAFE_APPEND("Steps/frame: %d   %s\n",
                     steps_per_frame_local, paused_local ? "PAUSED" : "RUNNING");
     /* Source summary */
     int active_cnt = 0;
     for (int k=0; k<MAX_SRC; ++k){ if (g_src[k].active) ++active_cnt; }
-    len += snprintf(buf+len, sizeof(buf)-len, "Sources: %d active of %d total\n", active_cnt, MAX_SRC);
+    SAFE_APPEND("Sources: %d active of %d total\n", active_cnt, MAX_SRC);
     for (int k=0; k<MAX_SRC; ++k) {
         const char* tname = (g_src[k].type==SRC_CW?"CW":(g_src[k].type==SRC_GAUSS_PULSE?"Gauss":"Ricker"));
         /* Format frequency in MHz or GHz for readability */
         double sdisp = (g_src[k].freq >= 1e9) ? g_src[k].freq/1e9 : g_src[k].freq/1e6;
         const char* sunit = (g_src[k].freq >= 1e9) ? "GHz" : "MHz";
-        len += snprintf(buf+len, sizeof(buf)-len,
-                        "  S%d: %s  Pos=(%d,%d)  Amp=%.2f  f=%.2f %s  Type=%s\n",
+        SAFE_APPEND("  S%d: %s  Pos=(%d,%d)  Amp=%.2f  f=%.2f %s  Type=%s\n",
                         k+1, g_src[k].active?"ON":"OFF",
                         g_src[k].ix, g_src[k].iy,
                         g_src[k].amp,
                         sdisp, sunit,
                         tname);
     }
+    /* Source injection mode (linear vs. saturating) */
+    SAFE_APPEND("Src inj: %s\n",
+                (g_src_injection_mode == SRC_INJ_LINEAR) ? "LINEAR" : "SATURATING");
     /* FPS and power flux */
-    len += snprintf(buf+len, sizeof(buf)-len, "FPS: %.2f (inst), %.2f (avg)  Pflux=%.3e W/m\n",
+    SAFE_APPEND("FPS: %.2f (inst), %.2f (avg)  Pflux=%.3e W/m\n",
                     fps_inst_local, fps_avg_local, pflux_avg);
     /* Probe values */
     if (probe2_active) {
-        len += snprintf(buf+len, sizeof(buf)-len, "Probe1: (%d,%d)=%.3g  Probe2: (%d,%d)=%.3g\n",
+        SAFE_APPEND("Probe1: (%d,%d)=%.3g  Probe2: (%d,%d)=%.3g\n",
                         probe_x, probe_y, Ez[probe_x][probe_y],
                         probe2_x, probe2_y, Ez[probe2_x][probe2_y]);
     } else {
-        len += snprintf(buf+len, sizeof(buf)-len, "Probe: (%d,%d) Ez=%.3g\n",
+        SAFE_APPEND("Probe: (%d,%d) Ez=%.3g\n",
                         probe_x, probe_y, Ez[probe_x][probe_y]);
     }
     /* Scope status */
-    len += snprintf(buf+len, sizeof(buf)-len, "Scope: %s  Scale: %s  Last=%.3g\n",
+    SAFE_APPEND("Scope: %s  Scale: %s  Last=%.3g\n",
                     scope.on?"ON":"OFF", hold_scope?"HOLD":"AUTO", scope.last);
     /* Sigma material parameters */
-    len += snprintf(buf+len, sizeof(buf)-len, "Sigma: bg=%.3g S/m  block=%.3g S/m\n",
+    SAFE_APPEND("Sigma: bg=%.3g S/m  block=%.3g S/m\n",
                     SIGMA_BG, SIGMA_BLOCK);
     /* Boundary / CPML information */
     if (boundary_type == BOUNDARY_CPML) {
-        len += snprintf(buf+len, sizeof(buf)-len,
-                        "Boundary: CPML (%s)  N=%d  sigma=%.2f  kappa=%.2f  alpha=%.3f\n",
+        SAFE_APPEND("Boundary: CPML (%s)  N=%d  sigma=%.2f  kappa=%.2f  alpha=%.3f\n",
                         CPML_PRESETS[cpml_preset_idx].name,
                         cpml_N, pml_sigma_max, pml_kappa_max, pml_alpha_max);
     } else {
-        len += snprintf(buf+len, sizeof(buf)-len,
-                        "Boundary: Mur-1\n");
+        SAFE_APPEND("Boundary: Mur-1\n");
     }
     /* Ports / sweep information */
     if (sweep_on) {
         double freq_now = (sweep_idx < sweep_points) ? sweep_freqs[sweep_idx] : 0.0;
         double fdisp = (freq_now >= 1e9) ? freq_now/1e9 : freq_now/1e6;
         const char* funit = (freq_now >= 1e9) ? "GHz" : "MHz";
-        len += snprintf(buf+len, sizeof(buf)-len,
-                        "Sweep: %d/%d  freq=%.2f %s\n",
+        SAFE_APPEND("Sweep: %d/%d  freq=%.2f %s\n",
                         sweep_idx+1, sweep_points, fdisp, funit);
     } else {
-        len += snprintf(buf+len, sizeof(buf)-len,
-                        "Ports: %s  Last S21=%.3g\n",
+        SAFE_APPEND("Ports: %s  Last S21=%.3g\n",
                         ports_on?"ON":"OFF", s21_amp);
     }
     /* Painting information */
     if (paint_mode) {
         const char* pnames[] = {"OFF","PEC","PMC","Diel"};
         if (paint_type == 3) {
-            len += snprintf(buf+len, sizeof(buf)-len,
-                            "Paint: %s  eps=%.2f\n", pnames[paint_type], paint_eps);
+            SAFE_APPEND("Paint: %s  eps=%.2f\n", pnames[paint_type], paint_eps);
         } else {
-            len += snprintf(buf+len, sizeof(buf)-len,
-                            "Paint: %s\n", pnames[paint_type]);
+            SAFE_APPEND("Paint: %s\n", pnames[paint_type]);
         }
     } else {
-        len += snprintf(buf+len, sizeof(buf)-len, "Paint: OFF\n");
+        SAFE_APPEND("Paint: OFF\n");
     }
     /* Key hints (brief summary).  For a full list, toggle the old legend with 'L'. */
-    len += snprintf(buf+len, sizeof(buf)-len,
-                    "Keys: Space=pause, ↑/↓=freq, ←/→=steps, Z=stride, R=mode, A=color mode, H=hold col, J=hold scope,\\/-reset, T=src type, U=paint, S=ports\n");
+    SAFE_APPEND("Keys: Space=pause, ↑/↓=freq, ←/→=steps, Z=stride, R=mode, A=color mode, H=hold col, J=hold scope,\\/-reset, T=src type, U=paint, S=ports\n");
+
+    #undef SAFE_APPEND
+
     /* Render the composed text within the area with wrapping. */
     draw_wrapped_panel(ren, font, area, buf);
 }
@@ -1001,20 +1043,32 @@ static void draw_info_panel(SDL_Renderer* ren, TTF_Font* font, SDL_Rect area,
 int main(void){
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
     if (SDL_Init(SDL_INIT_VIDEO)!=0){ fprintf(stderr,"SDL init failed: %s\n", SDL_GetError()); return 1; }
-    if (TTF_Init() != 0) { fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError()); return 1; }
+    if (TTF_Init() != 0) { fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError()); SDL_Quit(); return 1; }
 
-    /* allocate fields */
+    /* allocate fields with individual null checks for better diagnostics */
     Ez     = malloc(sizeof(double[NX][NY]));
+    if (!Ez) { fprintf(stderr, "Failed to allocate Ez field\n"); TTF_Quit(); SDL_Quit(); return 1; }
+
     Hx     = malloc(sizeof(double[NX][NY]));
+    if (!Hx) { fprintf(stderr, "Failed to allocate Hx field\n"); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
+
     Hy     = malloc(sizeof(double[NX][NY]));
+    if (!Hy) { fprintf(stderr, "Failed to allocate Hy field\n"); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
+
     Ez_old = malloc(sizeof(double[NX][NY]));
+    if (!Ez_old) { fprintf(stderr, "Failed to allocate Ez_old field\n"); free(Hy); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
 
     psi_Ezx = malloc(sizeof(double[NX][NY]));
-    psi_Ezy = malloc(sizeof(double[NX][NY]));
-    psi_Hyx = malloc(sizeof(double[NX][NY]));
-    psi_Hxy = malloc(sizeof(double[NX][NY]));
+    if (!psi_Ezx) { fprintf(stderr, "Failed to allocate psi_Ezx\n"); free(Ez_old); free(Hy); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
 
-    if (!Ez||!Hx||!Hy||!Ez_old||!psi_Ezx||!psi_Ezy||!psi_Hyx||!psi_Hxy){ fprintf(stderr,"Alloc failed\n"); return 1; }
+    psi_Ezy = malloc(sizeof(double[NX][NY]));
+    if (!psi_Ezy) { fprintf(stderr, "Failed to allocate psi_Ezy\n"); free(psi_Ezx); free(Ez_old); free(Hy); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
+
+    psi_Hyx = malloc(sizeof(double[NX][NY]));
+    if (!psi_Hyx) { fprintf(stderr, "Failed to allocate psi_Hyx\n"); free(psi_Ezy); free(psi_Ezx); free(Ez_old); free(Hy); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
+
+    psi_Hxy = malloc(sizeof(double[NX][NY]));
+    if (!psi_Hxy) { fprintf(stderr, "Failed to allocate psi_Hxy\n"); free(psi_Hyx); free(psi_Ezy); free(psi_Ezx); free(Ez_old); free(Hy); free(Hx); free(Ez); TTF_Quit(); SDL_Quit(); return 1; }
     clear_fields();
     cpml_zero_psi();
 
@@ -1168,9 +1222,6 @@ int main(void){
     double perf_freq = (double)SDL_GetPerformanceFrequency();
     double fps_avg = 0.0;
 
-    /* display scale smoothing */
-    double vmax_local = 0.0;
-
     int running=1, t=0; SDL_Event e;
 
     while (running){
@@ -1243,9 +1294,17 @@ int main(void){
                     {
                         /* Side-effects after a toggle/action */
                         if (auto_rescale != old_auto){
-                            if (auto_rescale) update_grid_for_freq(freq, &dx, &dy, &dt);
-                            else              { dx = BASE_DX; dy = BASE_DY; dt = cfl_dt(dx,dy); }
-                            cpml_build_coeffs(dt); if (cpml_on) cpml_zero_psi();
+                            if (auto_rescale) {
+                                update_grid_for_freq(freq, &dx, &dy, &dt);
+                            } else {
+                                dx = BASE_DX;
+                                dy = BASE_DY;
+                                dt = cfl_dt(dx,dy);
+                            }
+                            cpml_build_coeffs(dt);
+                            if (cpml_on) {
+                                cpml_zero_psi();
+                            }
                             clear_fields(); t = 0;
                             s_freq.value  = slider_from_freq(freq, FREQ_MIN, FREQ_MAX);
                             s_speed.value = steps_per_frame;
@@ -1313,9 +1372,11 @@ int main(void){
 
                 if (paint_mode) {
                     int mx = e.button.x, my = e.button.y;
-                    int ix = clampi(mx / scale, 1, NX-2);
-                    int iy = clampi(my / scale, 1, NY-2);
-                    if (paint_type == 1) {
+                    int ix = clampi(mx / scale, 0, NX-1);
+                    int iy = clampi(my / scale, 0, NY-1);
+                    /* Additional safety check to ensure indices are within bounds */
+                    if (ix >= 1 && ix < NX-1 && iy >= 1 && iy < NY-1) {
+                        if (paint_type == 1) {
                         /* PEC: toggle tag 1 on/off */
                         if (tag_grid[ix][iy] == 1) {
                             tag_grid[ix][iy] = 0;
@@ -1342,6 +1403,7 @@ int main(void){
                             sigma_map[ix][iy] = SIGMA_BG;
                         }
                         tag_grid[ix][iy] = 0;
+                        }
                     }
                 } else {
                     int mx = e.button.x, my = e.button.y;
@@ -1366,8 +1428,17 @@ int main(void){
             if (e.type == SDL_KEYDOWN && e.key.repeat==0){
                 if (e.key.keysym.sym == SDLK_ESCAPE) running = 0;
                 if (e.key.keysym.sym == SDLK_l) show_legend = !show_legend;
-                if (e.key.keysym.sym == SDLK_h) { hold_color = !hold_color; if (hold_color) held_vmax = (vmax_smooth>1e-12?vmax_smooth:1e-3); }
-                if (e.key.keysym.sym == SDLK_j) { hold_scope = !hold_scope; if (hold_scope) held_scope_vmax = (scope_vmax_smooth>1e-12?scope_vmax_smooth:1e-3); }
+                if (e.key.keysym.sym == SDLK_h) {
+                    hold_color = !hold_color;
+                    if (hold_color) held_vmax = (vmax_smooth>1e-12?vmax_smooth:1e-3);
+                    else p99_cache_valid = 0;  /* Invalidate cache when releasing hold */
+                }
+                if (e.key.keysym.sym == SDLK_j) {
+                    hold_scope = !hold_scope;
+                    if (hold_scope) {
+                        held_scope_vmax = (scope_vmax_smooth>1e-12?scope_vmax_smooth:1e-3);
+                    }
+                }
                 if (e.key.keysym.sym == SDLK_o) scope.on = !scope.on;
                 if (e.key.keysym.sym == SDLK_k) scope_clear();
                 if (e.key.keysym.sym == SDLK_z) g_render_stride = (g_render_stride==1?2:(g_render_stride==2?4:1));
@@ -1396,10 +1467,19 @@ int main(void){
 
                 if (e.key.keysym.sym==SDLK_r){
                     auto_rescale = !auto_rescale;
-                    if (auto_rescale) update_grid_for_freq(freq,&dx,&dy,&dt);
-                    else              { dx=BASE_DX; dy=BASE_DY; dt=cfl_dt(dx,dy); }
-                    cpml_build_coeffs(dt); if (cpml_on) cpml_zero_psi();
-                    clear_fields(); t=0;
+                    if (auto_rescale) {
+                        update_grid_for_freq(freq,&dx,&dy,&dt);
+                    } else {
+                        dx=BASE_DX;
+                        dy=BASE_DY;
+                        dt=cfl_dt(dx,dy);
+                    }
+                    cpml_build_coeffs(dt);
+                    if (cpml_on) {
+                        cpml_zero_psi();
+                    }
+                    clear_fields();
+                    t=0;
                     if (probe_out){ fclose(probe_out); probe_out=fopen("probe.txt","w");
                         if (probe_out){
                             fprintf(probe_out,
@@ -1467,9 +1547,24 @@ int main(void){
                     cpml_zero_psi();
                 }
                 }
-                if (e.key.keysym.sym == SDLK_7){ cpml_apply_preset(0, dt); if (cpml_on) cpml_zero_psi(); }
-                if (e.key.keysym.sym == SDLK_8){ cpml_apply_preset(1, dt); if (cpml_on) cpml_zero_psi(); }
-                if (e.key.keysym.sym == SDLK_9){ cpml_apply_preset(2, dt); if (cpml_on) cpml_zero_psi(); }
+                if (e.key.keysym.sym == SDLK_7) {
+                    cpml_apply_preset(0, dt);
+                    if (cpml_on) {
+                        cpml_zero_psi();
+                    }
+                }
+                if (e.key.keysym.sym == SDLK_8) {
+                    cpml_apply_preset(1, dt);
+                    if (cpml_on) {
+                        cpml_zero_psi();
+                    }
+                }
+                if (e.key.keysym.sym == SDLK_9) {
+                    cpml_apply_preset(2, dt);
+                    if (cpml_on) {
+                        cpml_zero_psi();
+                    }
+                }
 
                 
                 /* New: color autoscale mode & HOLD control keys */
@@ -1478,7 +1573,12 @@ int main(void){
                 }
                 if (e.key.keysym.sym == SDLK_LEFTBRACKET){
                     if (!hold_color){ hold_color=1; held_vmax = (p99_smooth>1e-12? p99_smooth : (vmax_smooth>1e-12?vmax_smooth:1e-3)); }
-                    else             { held_vmax *= 0.90; if (held_vmax<1e-12) held_vmax=1e-12; }
+                    else {
+                        held_vmax *= 0.90;
+                        if (held_vmax<1e-12) {
+                            held_vmax = 1e-12;
+                        }
+                    }
                 }
                 if (e.key.keysym.sym == SDLK_RIGHTBRACKET){
                     if (!hold_color){ hold_color=1; held_vmax = (p99_smooth>1e-12? p99_smooth : (vmax_smooth>1e-12?vmax_smooth:1e-3)); }
@@ -1487,12 +1587,13 @@ int main(void){
                 if (e.key.keysym.sym == SDLK_BACKSLASH){
                     hold_color = 0; hold_scope = 0; held_vmax = held_scope_vmax = 1e-3;
                     vmax_smooth = p99_smooth = scope_vmax_smooth = 0.0;
+                    p99_cache_valid = 0;  /* Invalidate P99 cache when resetting holds */
                 }
                 /* Toggle secondary probe on/off */
                 if (e.key.keysym.sym == SDLK_3) {
                     probe2_active = !probe2_active;
                 }
-                /* Adjust amplitude of sources. Q/W control source 1, E/R control source 2. */
+                /* Adjust amplitude of sources. Q/W control source 1, N/M control source 2. */
                 if (e.key.keysym.sym == SDLK_q) {
                     g_src[0].amp *= 0.9;
                     if (g_src[0].amp < 0.001) g_src[0].amp = 0.001;
@@ -1508,6 +1609,12 @@ int main(void){
                 if (e.key.keysym.sym == SDLK_m) {
                     g_src[1].amp *= 1.111111111;
                     if (g_src[1].amp > 10.0) g_src[1].amp = 10.0;
+                }
+                /* Toggle source injection mode (linear vs. saturating). */
+                if (e.key.keysym.sym == SDLK_v) {
+                    g_src_injection_mode = (g_src_injection_mode == SRC_INJ_LINEAR)
+                                         ? SRC_INJ_SATURATING
+                                         : SRC_INJ_LINEAR;
                 }
                 /* Port sampling control and S-parameter export */
                 if (e.key.keysym.sym == SDLK_s) {
@@ -1607,38 +1714,72 @@ int main(void){
         if (!paused){
             for (int s=0; s<steps_per_frame; ++s){
                 /* save Ez for Mur-1 (previous timestep) */
-                for (int i=0;i<NX;++i) for (int j=0;j<NY;++j) Ez_old[i][j]=Ez[i][j];
+                {
+                    int i, j;
+                    #if defined(_OPENMP) && !defined(_MSC_VER)
+                    #pragma omp parallel for collapse(2)
+                    #endif
+                    for (i = 0; i < NX; ++i){
+                        for (j = 0; j < NY; ++j){
+                            Ez_old[i][j] = Ez[i][j];
+                        }
+                    }
+                }
 
                 /* update H with optional CPML */
-                for (int i=0;i<NX-1;++i) for (int j=0;j<NY-1;++j){
-                    /* dEz/dy -> Hx */
-                    double dEdy = (Ez[i][j+1] - Ez[i][j]) / dy;
-                    if (cpml_on && (j < cpml_N || j >= NY - cpml_N)){
-                        psi_Ezy[i][j] = by[j]*psi_Ezy[i][j] + cy[j]*dEdy;
-                        dEdy = (dEdy / ky[j]) + psi_Ezy[i][j];
-                    }
-                    Hx[i][j] -= (dt / MU0) * dEdy;
+                {
+                    int i, j;
+                    #if defined(_OPENMP) && !defined(_MSC_VER)
+                    #pragma omp parallel for collapse(2)
+                    #endif
+                    for (i = 0; i < NX-1; ++i){
+                        for (j = 0; j < NY-1; ++j){
+                            /* dEz/dy -> Hx */
+                            double dEdy = (Ez[i][j+1] - Ez[i][j]) / dy;
+                            if (cpml_on && (j < cpml_N || j >= NY - cpml_N)){
+                                psi_Ezy[i][j] = by[j]*psi_Ezy[i][j] + cy[j]*dEdy;
+                                dEdy = (dEdy / ky[j]) + psi_Ezy[i][j];
+                            }
+                            Hx[i][j] -= (dt / MU0) * dEdy;
 
-                    /* dEz/dx -> Hy */
-                    double dEdx = (Ez[i+1][j] - Ez[i][j]) / dx;
-                    if (cpml_on && (i < cpml_N || i >= NX - cpml_N)){
-                        psi_Ezx[i][j] = bx[i]*psi_Ezx[i][j] + cx[i]*dEdx;
-                        dEdx = (dEdx / kx[i]) + psi_Ezx[i][j];
-                    }
-                    Hy[i][j] += (dt / MU0) * dEdx;
+                            /* dEz/dx -> Hy */
+                            double dEdx = (Ez[i+1][j] - Ez[i][j]) / dx;
+                            if (cpml_on && (i < cpml_N || i >= NX - cpml_N)){
+                                psi_Ezx[i][j] = bx[i]*psi_Ezx[i][j] + cx[i]*dEdx;
+                                dEdx = (dEdx / kx[i]) + psi_Ezx[i][j];
+                            }
+                            Hy[i][j] += (dt / MU0) * dEdx;
 
-                    /* clamp H fields to zero in PMC tagged cells.  A rough approximation that
-                     * sets both Hx and Hy to zero for cells tagged as PMC (tag=2).  More
-                     * accurate PMC enforcement would adjust update equations but this
-                     * suffices for educational purposes. */
-                    if (tag_grid[i][j] == 2) {
-                        Hx[i][j] = 0.0;
-                        Hy[i][j] = 0.0;
+                            /* PMC (Perfect Magnetic Conductor) boundary handling.
+                             *
+                             * NOTE: This is a SIMPLIFIED implementation for educational purposes.
+                             * Setting H fields to zero violates Maxwell's equations for PMC.
+                             *
+                             * PROPER PMC IMPLEMENTATION would require:
+                             * 1. For vertical PMC walls: Set tangential H (Hy) to zero, but
+                             *    enforce image theory for normal H (Hx) by doubling Hx values
+                             * 2. For horizontal PMC walls: Set tangential H (Hx) to zero, but
+                             *    double Hy values
+                             * 3. Adjust the update equations to maintain H continuity
+                             *
+                             * Current simple approach: Set all H components to zero (rough approximation)
+                             */
+                            if (tag_grid[i][j] == 2) {
+                                Hx[i][j] = 0.0;
+                                Hy[i][j] = 0.0;
+                            }
+                        }
                     }
                 }
 
                 /* update E (TMz) with optional CPML + conductivity */
-                for (int i=1;i<NX;++i) for (int j=1;j<NY;++j){
+                {
+                    int i, j;
+                    #if defined(_OPENMP) && !defined(_MSC_VER)
+                    #pragma omp parallel for collapse(2)
+                    #endif
+                    for (i = 1; i < NX; ++i){
+                        for (j = 1; j < NY; ++j){
                     /* dHy/dx */
                     double dHdx = (Hy[i][j] - Hy[i-1][j]) / dx;
                     if (cpml_on && (i < cpml_N || i >= NX - cpml_N)){
@@ -1663,16 +1804,46 @@ int main(void){
                         Ez[i][j] = 0.0;
                     }
                 }
-
-                /* Mur-1 boundaries only if CPML is off */
-                if (!cpml_on){
-                    for (int i=1;i<NX-1;++i){
-                        Ez[i][0]    = Ez_old[i][1]    + ((c0*dt - dy)/(c0*dt + dy)) * (Ez[i][1]    - Ez_old[i][0]);
-                        Ez[i][NY-1] = Ez_old[i][NY-2] + ((c0*dt - dy)/(c0*dt + dy)) * (Ez[i][NY-2] - Ez_old[i][NY-1]);
                     }
-                    for (int j=1;j<NY-1;++j){
-                        Ez[0][j]    = Ez_old[1][j]    + ((c0*dt - dx)/(c0*dt + dx)) * (Ez[1][j]    - Ez_old[0][j]);
-                        Ez[NX-1][j] = Ez_old[NX-2][j] + ((c0*dt - dx)/(c0*dt + dx)) * (Ez[NX-2][j] - Ez_old[NX-1][j]);
+                }
+
+                /* Mur-1 boundaries only if CPML is off.
+                 * Use local wave speed c_local = c0/sqrt(epsr) for better absorption
+                 * at dielectric boundaries. */
+                if (!cpml_on){
+                    {
+                        int i;
+                        #if defined(_OPENMP) && !defined(_MSC_VER)
+                        #pragma omp parallel for
+                        #endif
+                        for (i = 1; i < NX-1; ++i){
+                            /* Bottom boundary (j=0) */
+                            double epsr_bot = epsr[i][1];
+                            double c_bot = c0 / sqrt(epsr_bot);
+                            Ez[i][0] = Ez_old[i][1] + ((c_bot*dt - dy)/(c_bot*dt + dy)) * (Ez[i][1] - Ez_old[i][0]);
+
+                            /* Top boundary (j=NY-1) */
+                            double epsr_top = epsr[i][NY-2];
+                            double c_top = c0 / sqrt(epsr_top);
+                            Ez[i][NY-1] = Ez_old[i][NY-2] + ((c_top*dt - dy)/(c_top*dt + dy)) * (Ez[i][NY-2] - Ez_old[i][NY-1]);
+                        }
+                    }
+                    {
+                        int j;
+                        #if defined(_OPENMP) && !defined(_MSC_VER)
+                        #pragma omp parallel for
+                        #endif
+                        for (j = 1; j < NY-1; ++j){
+                            /* Left boundary (i=0) */
+                            double epsr_left = epsr[1][j];
+                            double c_left = c0 / sqrt(epsr_left);
+                            Ez[0][j] = Ez_old[1][j] + ((c_left*dt - dx)/(c_left*dt + dx)) * (Ez[1][j] - Ez_old[0][j]);
+
+                            /* Right boundary (i=NX-1) */
+                            double epsr_right = epsr[NX-2][j];
+                            double c_right = c0 / sqrt(epsr_right);
+                            Ez[NX-1][j] = Ez_old[NX-2][j] + ((c_right*dt - dx)/(c_right*dt + dx)) * (Ez[NX-2][j] - Ez_old[NX-1][j]);
+                        }
                     }
                 }
 
@@ -1777,23 +1948,73 @@ int main(void){
         SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderClear(ren);
 
         /* field -> heatmap (compute scale) */
-        double vmax=1e-12;
-        for (int i=0;i<NX;i+=HIST_STRIDE) for (int j=0;j<NY;j+=HIST_STRIDE){
-            double a=fabs(Ez[i][j]); if (a>vmax) vmax=a;
+        double vmax = 1e-12;
+        #if defined(_OPENMP) && !defined(_MSC_VER)
+        {
+            double vmax_seed = vmax;
+            #pragma omp parallel
+            {
+                double vmax_local = vmax_seed;
+                int i, j;
+                #pragma omp for collapse(2) nowait
+                for (i = 0; i < NX; i += HIST_STRIDE){
+                    for (j = 0; j < NY; j += HIST_STRIDE){
+                        double a = fabs(Ez[i][j]);
+                        if (a > vmax_local) {
+                            vmax_local = a;
+                        }
+                    }
+                }
+                #pragma omp critical
+                {
+                    if (vmax_local > vmax) {
+                        vmax = vmax_local;
+                    }
+                }
+            }
         }
+        #else
+        {
+            int i, j;
+            for (i = 0; i < NX; i += HIST_STRIDE){
+                for (j = 0; j < NY; j += HIST_STRIDE){
+                    double a = fabs(Ez[i][j]);
+                    if (a > vmax) {
+                        vmax = a;
+                    }
+                }
+            }
+        }
+        #endif
         if (vmax_smooth == 0.0) vmax_smooth = vmax;
         else vmax_smooth = 0.95*vmax_smooth + 0.05*vmax;
 
         double p99 = vmax_smooth;
-        if (!hold_color && color_autoscale_mode == AS_P99){
+            if (!hold_color && color_autoscale_mode == AS_P99){
             unsigned int hist[COLOR_HIST_BINS]; memset(hist,0,sizeof(hist));
             double eps = (vmax>1e-20? vmax : 1e-20);
-            for (int i=0;i<NX;i+=HIST_STRIDE) for (int j=0;j<NY;j+=HIST_STRIDE){
-                double a = fabs(Ez[i][j]) / eps;
-                if (a>1.0) a = 1.0;
-                int bin = (int)(a * (COLOR_HIST_BINS-1));
-                if (bin < 0) bin = 0; if (bin >= COLOR_HIST_BINS) bin = COLOR_HIST_BINS-1;
-                hist[bin]++;
+            {
+                int i, j;
+                #if defined(_OPENMP) && !defined(_MSC_VER)
+                #pragma omp parallel for collapse(2)
+                #endif
+                for (i = 0; i < NX; i += HIST_STRIDE){
+                    for (j = 0; j < NY; j += HIST_STRIDE){
+                        double a = fabs(Ez[i][j]) / eps;
+                        if (a>1.0) a = 1.0;
+                        int bin = (int)(a * (COLOR_HIST_BINS-1));
+                        if (bin < 0) {
+                            bin = 0;
+                        }
+                        if (bin >= COLOR_HIST_BINS) {
+                            bin = COLOR_HIST_BINS-1;
+                        }
+                        #if defined(_OPENMP) && !defined(_MSC_VER)
+                        #pragma omp atomic
+                        #endif
+                        hist[bin]++;
+                    }
+                }
             }
             unsigned int total = (NX/HIST_STRIDE)*(NY/HIST_STRIDE);
             unsigned int target = (unsigned int)(0.99 * (double)total);
@@ -1806,6 +2027,13 @@ int main(void){
             if (p99 < 1e-12) p99 = 1e-12;
             if (p99_smooth == 0.0) p99_smooth = p99;
             else p99_smooth = 0.95*p99_smooth + 0.05*p99;
+
+            /* Cache P99 value when hold_color becomes active */
+            cached_p99 = p99_smooth;
+            p99_cache_valid = 1;
+        } else if (hold_color && color_autoscale_mode == AS_P99 && p99_cache_valid) {
+            /* Use cached P99 to skip expensive histogram calculation */
+            p99_smooth = cached_p99;
         }
 
         double color_use_vmax;
@@ -1818,7 +2046,12 @@ int main(void){
         /* draw field using stride (perf) */
         for (int i=0;i<NX;i+=g_render_stride) for (int j=0;j<NY;j+=g_render_stride){
             int c = (int)(128 + (127.0/color_use_vmax)*Ez[i][j]);
-            if (c<0)c=0; if (c>255)c=255;
+            if (c < 0) {
+                c = 0;
+            }
+            if (c > 255) {
+                c = 255;
+            }
             SDL_SetRenderDrawColor(ren,c,0,255-c,255);
             SDL_Rect cell = { i*scale, SIM_YOFF + j*scale, scale*g_render_stride, scale*g_render_stride };
             SDL_RenderFillRect(ren, &cell);
@@ -1855,7 +2088,12 @@ int main(void){
         /* scope autoscale (decoupled from field) */
         double scope_max = 1e-12;
         if (scope.on && scope.y){
-            for (int i=0;i<scope.n;++i){ double a=fabs(scope.y[i]); if (a>scope_max) scope_max=a; }
+            for (int i=0;i<scope.n;++i){
+                double a=fabs(scope.y[i]);
+                if (a>scope_max) {
+                    scope_max=a;
+                }
+            }
         }
         if (scope_vmax_smooth==0.0) scope_vmax_smooth = scope_max;
         else scope_vmax_smooth = 0.95*scope_vmax_smooth + 0.05*scope_max;
@@ -1876,7 +2114,12 @@ int main(void){
             double frac = 1.0 - (double)yy / (double)(cb_h-1);   // top=1, bottom=0
             double val  = (2.0*frac - 1.0) * color_use_vmax;     // +..-
             int c = (int)(128 + (127.0/color_use_vmax) * val);
-            if (c < 0) c = 0; if (c > 255) c = 255;
+            if (c < 0) {
+                c = 0;
+            }
+            if (c > 255) {
+                c = 255;
+            }
             SDL_SetRenderDrawColor(ren, c, 0, 255 - c, 255);
             SDL_RenderDrawLine(ren, cb_x, cb_y + yy, cb_x + cb_w - 1, cb_y + yy);
         }
@@ -2069,7 +2312,7 @@ int main(void){
         }
 
         SDL_RenderPresent(ren);
-        SDL_Delay(8);
+        SDL_Delay(UI_DELAY_MS);
     } /* end main loop */
 
     if (probe_out) fclose(probe_out);
