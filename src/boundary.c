@@ -182,10 +182,11 @@ void apply_mur_boundaries(SimulationState* state) {
     int ny = state->ny;
     if (nx < 2 || ny < 2) return;
 
-    #ifdef _OPENMP
+    int i;
+#ifdef _OPENMP
     #pragma omp parallel for
-    #endif
-    for (int i = 1; i < nx-1; i++) {
+#endif
+    for (i = 1; i < nx - 1; i++) {
         /* Bottom boundary (j=0) - use local wave speed */
         double epsr_bot = state->epsr[i][1];
         double c_bot = c0 / sqrt(epsr_bot);
@@ -200,10 +201,11 @@ void apply_mur_boundaries(SimulationState* state) {
     }
 
     /* Left and right boundaries (x-direction) */
+    int j;
 #ifdef _OPENMP
     #pragma omp parallel for
 #endif
-    for (int j = 1; j < ny-1; j++) {
+    for (j = 1; j < ny - 1; j++) {
         /* Left boundary (i=0) */
         double epsr_left = state->epsr[1][j];
         double c_left = c0 / sqrt(epsr_left);

@@ -9,10 +9,32 @@ find_package(OpenMP)
 option(EMWAVE_ENABLE_UI "Build SDL-based visualization front-ends" ON)
 set(EMWAVE_UI_AVAILABLE OFF)
 if (EMWAVE_ENABLE_UI)
-    # Prefer config packages when available but fall back to module Find scripts
-    find_package(SDL2 QUIET)
-    find_package(SDL2_ttf QUIET)
-    if (SDL2_FOUND AND SDL2_TTF_FOUND)
+    # Prefer config packages (vcpkg provides them) but fall back gracefully.
+    find_package(SDL2 CONFIG QUIET)
+    if (NOT TARGET SDL2::SDL2 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(_SDL2_DIR_CANDIDATE "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/sdl2")
+        if (EXISTS "${_SDL2_DIR_CANDIDATE}/SDL2Config.cmake")
+            set(SDL2_DIR "${_SDL2_DIR_CANDIDATE}" CACHE PATH "SDL2 config path" FORCE)
+            find_package(SDL2 CONFIG QUIET)
+        endif()
+    endif()
+    if (NOT TARGET SDL2::SDL2)
+        find_package(SDL2 QUIET)
+    endif()
+
+    find_package(SDL2_ttf CONFIG QUIET)
+    if (NOT TARGET SDL2_ttf::SDL2_ttf AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(_SDL2_TTF_DIR_CANDIDATE "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/SDL2_ttf")
+        if (EXISTS "${_SDL2_TTF_DIR_CANDIDATE}/SDL2_ttfConfig.cmake")
+            set(SDL2_ttf_DIR "${_SDL2_TTF_DIR_CANDIDATE}" CACHE PATH "SDL2_ttf config path" FORCE)
+            find_package(SDL2_ttf CONFIG QUIET)
+        endif()
+    endif()
+    if (NOT TARGET SDL2_ttf::SDL2_ttf)
+        find_package(SDL2_ttf QUIET)
+    endif()
+
+    if (TARGET SDL2::SDL2 AND TARGET SDL2_ttf::SDL2_ttf)
         set(EMWAVE_UI_AVAILABLE ON)
     else()
         message(WARNING "SDL2 or SDL2_ttf not found - building headless CLI target only")
@@ -107,7 +129,7 @@ if (EXISTS "${CMAKE_SOURCE_DIR}/assets")
 endif()
 
 # Copy a system font so TTF_OpenFont("DejaVuSans.ttf", ...) works on Windows
-if (WIN32)
+if (WIN32 AND TARGET emwave)
   add_custom_command(TARGET emwave POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "C:/Windows/Fonts/arial.ttf"
