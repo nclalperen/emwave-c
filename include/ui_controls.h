@@ -96,7 +96,8 @@ typedef struct {
 /* Initialization */
 UIState* ui_state_init(void);
 void ui_state_free(UIState* state);
-void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width);
+void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width,
+                         int nx, int ny);
 void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim);
 
 /* Per-frame maintenance */

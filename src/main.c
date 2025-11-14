@@ -44,7 +44,7 @@ int main(void) {
         return 1;
     }
 
-    RenderContext* render = render_init("emwave-c", NX * 2 + 260, NY * 2 + 90);
+    RenderContext* render = render_init("emwave-c", sim->nx * 2 + 260, sim->ny * 2 + 90);
     if (!render) {
         fprintf(stderr, "Failed to initialize SDL renderer\n");
         ui_state_free(ui);
@@ -52,11 +52,12 @@ int main(void) {
         return 1;
     }
 
-    ui_state_set_layout(ui, render->scale, render->ui_height, render->side_panel_width);
+    ui_state_set_layout(ui, render->scale, render->ui_height, render->side_panel_width,
+                        sim->nx, sim->ny);
     ui_state_sync_with_sim(ui, sim);
 
     Scope scope = {0};
-    scope_init(&scope, NX * render->scale);
+    scope_init(&scope, sim->nx * render->scale);
 
     FILE* probe_file = probe_open("probe.txt");
 
