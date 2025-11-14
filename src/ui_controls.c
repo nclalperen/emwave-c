@@ -15,12 +15,6 @@
 #include <math.h>
 #include <stdio.h>
 
-static double clampd(double v, double lo, double hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
-
 static int clampi_local(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -44,8 +38,8 @@ UIState* ui_state_init(void) {
     ui->hold_scope = 0;
     ui->color_autoscale_mode = AS_P99;
     ui->render_stride = 1;
-    ui->probe_x = NX / 2;
-    ui->probe_y = NY / 2;
+    ui->probe_x = 0;
+    ui->probe_y = 0;
     ui->probe2_active = 0;
     ui->drag_src = -1;
     ui->sweep_on = 0;
@@ -77,14 +71,15 @@ void ui_state_free(UIState* state) {
     }
 }
 
-void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width) {
+void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width,
+                         int nx, int ny) {
     if (!ui) return;
     ui->scale = scale;
     ui->ui_height = ui_height;
     ui->side_panel_width = side_panel_width;
 
-    int canvas_height = NY * scale;
-    int slider_width = NX * scale - 40;
+    int canvas_height = ny * scale;
+    int slider_width = nx * scale - 40;
     if (slider_width < 100) slider_width = 100;
 
     ui->freq_slider.x = 20;
@@ -102,14 +97,16 @@ void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim) {
     if (!ui || !sim) return;
     ui->freq_slider.value = slider_from_freq(sim->freq, FREQ_MIN, FREQ_MAX);
     ui->speed_slider.value = (double)ui->steps_per_frame;
+    ui->probe_x = sim->nx / 2;
+    ui->probe_y = sim->ny / 2;
 }
 
 void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* scope) {
     if (!ui || !sim) return;
 
     double vmax = 0.0;
-    for (int i = 0; i < NX; ++i) {
-        for (int j = 0; j < NY; ++j) {
+    for (int i = 0; i < sim->nx; ++i) {
+        for (int j = 0; j < sim->ny; ++j) {
             double val = fabs(sim->Ez[i][j]);
             if (val > vmax) vmax = val;
         }
@@ -139,7 +136,7 @@ void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* sco
 static void apply_paint(UIState* ui, SimulationState* sim, int mx, int my, int scale) {
     if (!ui->paint_mode) return;
     if (mx < 0 || my < 0) return;
-    if (mx >= NX * scale || my >= NY * scale) return;
+    if (mx >= sim->nx * scale || my >= sim->ny * scale) return;
     int gx = mx / scale;
     int gy = my / scale;
     paint_material_at(sim, gx, gy, ui->paint_type, ui->paint_eps);
@@ -182,9 +179,11 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                 if (ui->paint_mode) {
                     apply_paint(ui, sim, e.button.x, e.button.y, scale);
                 } else {
-                    if (e.button.x < NX * scale && e.button.y < NY * scale) {
-                        ui->probe_x = clampi_local(e.button.x / scale, 0, NX - 1);
-                        ui->probe_y = clampi_local(e.button.y / scale, 0, NY - 1);
+                    int max_x = sim->nx * scale;
+                    int max_y = sim->ny * scale;
+                    if (e.button.x < max_x && e.button.y < max_y) {
+                        ui->probe_x = clampi_local(e.button.x / scale, 0, sim->nx - 1);
+                        ui->probe_y = clampi_local(e.button.y / scale, 0, sim->ny - 1);
                     }
                 }
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
@@ -257,7 +256,7 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     cpml_on = !cpml_on;
                     boundary_type = cpml_on ? BOUNDARY_CPML : BOUNDARY_MUR;
                     if (cpml_on) {
-                        cpml_build_coeffs(sim->dt);
+                        cpml_build_coeffs(sim);
                         cpml_zero_psi(sim);
                     }
                     break;

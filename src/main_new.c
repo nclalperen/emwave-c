@@ -21,20 +21,32 @@
 #include <omp.h>
 #endif
 
+static void initialize_boundaries(SimulationState* sim) {
+    cpml_on = 1;
+    boundary_type = BOUNDARY_CPML;
+    cpml_apply_preset(cpml_preset_idx, sim);
+    cpml_zero_psi(sim);
+}
+
 int main(int argc, char** argv) {
     SimulationConfig config;
     if (!config_load_from_args(argc, argv, &config)) {
-        return 0;
+        return 0;  /* help shown or invalid config */
     }
     config_print_summary(&config);
 
-    /* Initialize all subsystems */
+    /* Initialize simulation */
     SimulationState* sim = fdtd_init(&config);
     if (!sim) {
         fprintf(stderr, "Failed to initialize simulation\n");
         return 1;
     }
 
+    materials_init(sim);
+    ports_init(sim->ports, sim->nx, sim->ny);
+    initialize_boundaries(sim);
+
+    /* Initialize UI */
     UIState* ui = ui_state_init();
     if (!ui) {
         fprintf(stderr, "Failed to initialize UI state\n");
@@ -43,20 +55,23 @@ int main(int argc, char** argv) {
     }
 
     int render_width = sim->nx * 2 + 260;
-    int render_height = sim->ny * 2 + 80;
-    RenderContext* render = render_init("FDTD Electromagnetic Simulator",
-                                        render_width, render_height);
+    int render_height = sim->ny * 2 + 90;
+    RenderContext* render = render_init("emwave-c (modular)", render_width, render_height);
     if (!render) {
-        fprintf(stderr, "Failed to initialize rendering\n");
+        fprintf(stderr, "Failed to initialize SDL renderer\n");
         ui_state_free(ui);
         fdtd_free(sim);
         return 1;
     }
 
-    Scope scope = {0};
-    scope_init(&scope, sim->nx * 2);
+    ui_state_set_layout(ui, render->scale, render->ui_height, render->side_panel_width,
+                        sim->nx, sim->ny);
+    ui_state_sync_with_sim(ui, sim);
 
-    FILE* probe_log = probe_open("probe.txt");
+    Scope scope = (Scope){0};
+    scope_init(&scope, sim->nx * render->scale);
+
+    FILE* probe_file = probe_open("probe.txt");
 
     /* Print OpenMP status */
 #ifdef _OPENMP
@@ -67,55 +82,46 @@ int main(int argc, char** argv) {
 
     /* FPS tracking */
     Uint64 perf_freq = SDL_GetPerformanceFrequency();
-    Uint64 t_prev = SDL_GetPerformanceCounter();
+    Uint64 prev = SDL_GetPerformanceCounter();
     double fps_avg = 0.0;
 
     /* Main loop */
     while (ui->running) {
-        /* Handle input */
-        if (!ui_handle_events(ui, sim, &scope)) {
-            break;  /* User requested exit */
+        ui_update_metrics(ui, sim, &scope);
+        if (!ui_handle_events(ui, sim, &scope, render->scale, render->ui_height, render->side_panel_width)) {
+            break;
         }
 
-        /* Run simulation steps */
         if (!ui->paused) {
-            int steps = 2; /* or from UI state */
-            for (int s = 0; s < steps; ++s) {
+            for (int s = 0; s < ui->steps_per_frame; ++s) {
                 fdtd_step(sim);
-
-                /* Sample probe */
                 double probe_val = fdtd_get_Ez(sim, ui->probe_x, ui->probe_y);
                 scope_push(&scope, probe_val);
-                if (probe_log) {
-                    probe_log(probe_log, sim->timestep, probe_val);
+                if (ui->log_probe && probe_file) {
+                    probe_log(probe_file, sim->timestep, probe_val);
                 }
-
-                /* Sample ports if enabled */
                 if (sim->ports_on) {
                     ports_sample(sim, sim->dx, sim->dy);
                 }
             }
         }
 
-        /* Calculate FPS */
-        Uint64 t_now = SDL_GetPerformanceCounter();
-        double dt_s = (double)(t_now - t_prev) / perf_freq;
-        t_prev = t_now;
-        double fps_inst = (dt_s > 0.0) ? (1.0 / dt_s) : 0.0;
+        Uint64 now = SDL_GetPerformanceCounter();
+        double dt = (double)(now - prev) / (double)perf_freq;
+        prev = now;
+        double fps_inst = (dt > 0.0) ? (1.0 / dt) : 0.0;
         if (fps_avg == 0.0) fps_avg = fps_inst;
         else fps_avg = 0.9 * fps_avg + 0.1 * fps_inst;
 
-        /* Render frame */
-        render_frame(render, sim, &scope, fps_avg, 2, ui->paused, ui->show_legend);
-
+        render_frame(render, sim, ui, &scope, fps_avg);
         SDL_Delay(UI_DELAY_MS);
     }
 
-    /* Cleanup */
-    if (probe_log) fclose(probe_log);
+    if (probe_file) fclose(probe_file);
     scope_free(&scope);
     render_free(render);
     ui_state_free(ui);
+    ports_free(sim->ports);
     fdtd_free(sim);
 
     return 0;
