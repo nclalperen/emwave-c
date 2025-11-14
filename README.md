@@ -42,6 +42,10 @@ cmake --build build -j
 
 The executable is `build/emwave`. On macOS you can use Homebrew packages with the same CMake invocation.
 
+### Bundled font assets
+
+The SDL GUI now ships with the [DejaVu Sans](https://dejavu-fonts.github.io/) typeface to avoid relying on host-specific font locations. The font binary lives in `third_party/fonts/DejaVuSans.ttf` together with its Bitstream Vera-derived license and is copied into `assets/fonts/DejaVuSans.ttf` during the build/install steps. At runtime the renderer always loads from that assets directory, so the UI is consistent across Windows, macOS, and Linux.
+
 ### Sample configurations
 
 Runtime parameters, material layouts, and source placements can be scripted via
