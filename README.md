@@ -42,6 +42,21 @@ cmake --build build -j
 
 The executable is `build/emwave`. On macOS you can use Homebrew packages with the same CMake invocation.
 
+### Sample configurations
+
+Runtime parameters, material layouts, and source placements can be scripted via
+JSON. The schema is documented in [`configs/SCHEMA.md`](configs/SCHEMA.md).
+
+Two ready-to-run examples are included:
+
+```bash
+./build/emwave --config configs/waveguide.json
+./build/emwave --config configs/cpw_filter.json
+```
+
+Command-line overrides always win, so `--nx=768 --config=...` scales an existing
+scene without editing the JSON file.
+
 ### CI status
 
 GitHub Actions runs the same CMake/Ninja flow on `ubuntu-latest`, ensuring SDL2/SDL2_ttf + OpenMP builds succeed on each push/PR.

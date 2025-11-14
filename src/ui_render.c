@@ -282,7 +282,7 @@ void slider_draw(RenderContext* ctx, const Slider* slider) {
     SDL_RenderFillRect(ctx->renderer, &knob);
 }
 
-void render_frame(RenderContext* ctx, const SimulationState* state, const UIState* ui,
+void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
                   const Scope* scope, double fps_avg) {
     if (!ctx || !state || !ui) return;
 

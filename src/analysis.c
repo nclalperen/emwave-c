@@ -238,12 +238,82 @@ double compute_s21(const Port* ports, double freq, double dt) {
     return mag2 / mag1;
 }
 
-/* Open probe log file */
+/* Probe logging helpers */
+#define PROBE_WRITER_BLOCK_SIZE 4096
+
+int probe_writer_open(ProbeLogWriter* writer, const char* path) {
+    if (!writer || !path || !*path) return 0;
+    memset(writer, 0, sizeof(*writer));
+    writer->file = fopen(path, "w");
+    if (!writer->file) {
+        return 0;
+    }
+    writer->buffer = (char*)malloc(PROBE_WRITER_BLOCK_SIZE);
+    if (!writer->buffer) {
+        fclose(writer->file);
+        writer->file = NULL;
+        return 0;
+    }
+    writer->capacity = PROBE_WRITER_BLOCK_SIZE;
+    writer->size = 0;
+    return 1;
+}
+
+int probe_writer_is_open(const ProbeLogWriter* writer) {
+    return writer && writer->file;
+}
+
+void probe_writer_flush(ProbeLogWriter* writer) {
+    if (!writer || !writer->file || writer->size == 0) {
+        return;
+    }
+    fwrite(writer->buffer, 1, writer->size, writer->file);
+    writer->size = 0;
+}
+
+void probe_writer_close(ProbeLogWriter* writer) {
+    if (!writer) return;
+    probe_writer_flush(writer);
+    if (writer->file) {
+        fclose(writer->file);
+        writer->file = NULL;
+    }
+    if (writer->buffer) {
+        free(writer->buffer);
+        writer->buffer = NULL;
+    }
+    writer->capacity = 0;
+    writer->size = 0;
+}
+
+void probe_writer_append(ProbeLogWriter* writer, int timestep, double value) {
+    if (!writer || !writer->file || !writer->buffer) return;
+
+    char line[64];
+    int len = snprintf(line, sizeof(line), "%d %.9e\n", timestep, value);
+    if (len <= 0) {
+        return;
+    }
+    size_t needed = (size_t)len;
+    if (needed >= sizeof(line)) {
+        needed = sizeof(line);
+    }
+    if (needed > writer->capacity) {
+        fwrite(line, 1, needed, writer->file);
+        return;
+    }
+    if (writer->size + needed > writer->capacity) {
+        probe_writer_flush(writer);
+    }
+    memcpy(writer->buffer + writer->size, line, needed);
+    writer->size += needed;
+}
+
+/* Legacy helpers retained for monolithic builds */
 FILE* probe_open(const char* filename) {
     return fopen(filename, "w");
 }
 
-/* Log probe value */
 void probe_log(FILE* f, int timestep, double value) {
     if (f) {
         fprintf(f, "%d %.9e\n", timestep, value);

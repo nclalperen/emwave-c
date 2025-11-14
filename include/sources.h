@@ -8,7 +8,7 @@
 #include "types.h"
 
 /* Source initialization and management */
-void sources_init(Source* sources, int nx, int ny);
+void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg);
 void source_reparam(Source* s);
 void sources_set_freq(Source* sources, double f);
 void sources_cycle_type(Source* sources);

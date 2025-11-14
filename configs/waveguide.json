@@ -1,0 +1,21 @@
+{
+  "simulation": {
+    "nx": 512,
+    "ny": 256,
+    "lx": 0.5,
+    "ly": 0.25,
+    "cfl": 0.9,
+    "sweep_points": 3,
+    "sweep_start_hz": 6.0e9,
+    "sweep_stop_hz": 8.5e9,
+    "sweep_steps_per_point": 400
+  },
+  "materials": [
+    { "type": "pec", "x0": 0.0, "x1": 1.0, "y0": 0.0, "y1": 0.04 },
+    { "type": "pec", "x0": 0.0, "x1": 1.0, "y0": 0.96, "y1": 1.0 },
+    { "type": "dielectric", "x0": 0.0, "x1": 1.0, "y0": 0.25, "y1": 0.75, "epsr": 2.4 }
+  ],
+  "sources": [
+    { "type": "gaussian", "x": 0.1, "y": 0.5, "freq": 7.0e9, "amp": 1.0 }
+  ]
+}

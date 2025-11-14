@@ -6,8 +6,8 @@
 // =============================================================================
 
 #include "config.h"
-#include "analysis.h"
 #include "app_bootstrap.h"
+#include "cli_runner.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,18 +15,6 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
-
-static int determine_total_steps(const SimulationConfig* cfg) {
-    if (!cfg) return 0;
-    long steps = (long)cfg->sweep_points * (long)cfg->sweep_steps_per_point;
-    if (steps <= 0) {
-        steps = 1000;  /* fallback for short demos */
-    }
-    if (steps > 100000000) {
-        steps = 100000000;  /* guard runaway configs */
-    }
-    return (int)steps;
-}
 
 int main(int argc, char** argv) {
     SimulationBootstrap bootstrap;
@@ -47,36 +35,7 @@ int main(int argc, char** argv) {
     printf("OpenMP not available - running sequentially\n");
 #endif
 
-    FILE* probe_file = probe_open("probe_cli.txt");
-    const int total_steps = determine_total_steps(config);
-    const int progress_interval = config->steps_per_frame > 0 ? config->steps_per_frame : 50;
-
-    for (int step = 0; step < total_steps; ++step) {
-        fdtd_step(sim);
-
-        /* Sample a probe at the domain centre */
-        int px = sim->nx / 2;
-        int py = sim->ny / 2;
-        double probe_val = fdtd_get_Ez(sim, px, py);
-        if (probe_file) {
-            probe_log(probe_file, sim->timestep, probe_val);
-        }
-
-        if (sim->ports_on) {
-            ports_sample(sim, sim->dx, sim->dy);
-        }
-
-        if ((step + 1) % progress_interval == 0 || step + 1 == total_steps) {
-            double percent = ((double)(step + 1) / (double)total_steps) * 100.0;
-            printf("Progress: %d/%d (%.1f%%)\n", step + 1, total_steps, percent);
-        }
-    }
-
-    if (probe_file) {
-        fclose(probe_file);
-    }
+    int ok = cli_runner_execute(config, sim);
     simulation_bootstrap_shutdown(&bootstrap);
-
-    printf("Simulation complete. Probe samples saved to probe_cli.txt\n");
-    return 0;
+    return ok ? 0 : 1;
 }

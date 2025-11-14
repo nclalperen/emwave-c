@@ -6,8 +6,20 @@
 #include "config.h"
 #include <math.h>
 
+static int normalized_to_cell(double frac, int n, int pad) {
+    double clamped = frac;
+    if (clamped < 0.0) clamped = 0.0;
+    if (clamped > 1.0) clamped = 1.0;
+    int idx = (int)lround(clamped * (double)(n - 1));
+    if (idx < pad) idx = pad;
+    if (idx >= n - pad) idx = (n > pad) ? n - pad - 1 : idx;
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    return idx;
+}
+
 /* Initialize all sources with default parameters */
-void sources_init(Source* sources, int nx, int ny) {
+void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) {
     for (int k = 0; k < MAX_SRC; k++) {
         sources[k].active = (k == 0) ? 1 : 0;  /* Only first source active by default */
         sources[k].type = SRC_CW;
@@ -27,6 +39,25 @@ void sources_init(Source* sources, int nx, int ny) {
         if (sources[k].iy >= ny - pad) sources[k].iy = (ny > pad) ? ny - pad - 1 : 0;
 
         source_reparam(&sources[k]);
+    }
+
+    if (cfg && cfg->source_count > 0) {
+        int pad = 2;
+        for (int k = 0; k < cfg->source_count && k < MAX_SRC; k++) {
+            Source* s = &sources[k];
+            const SourceConfigSpec* spec = &cfg->source_configs[k];
+            s->active = spec->active;
+            s->type = spec->type;
+            s->amp = spec->amp;
+            s->freq = spec->freq;
+            s->sigma2 = spec->sigma2;
+            s->ix = normalized_to_cell(spec->x, nx, pad);
+            s->iy = normalized_to_cell(spec->y, ny, pad);
+            source_reparam(s);
+        }
+        for (int k = cfg->source_count; k < MAX_SRC; k++) {
+            sources[k].active = 0;
+        }
     }
 }
 

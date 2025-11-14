@@ -6,23 +6,46 @@
 #include "config.h"
 #include <math.h>
 
-/* Initialize material properties to defaults */
-void materials_init(SimulationState* state) {
-    materials_reset_to_defaults(state);
+static int clamp_index(int v, int min, int max) {
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+}
 
-    /* Set up central dielectric block (example geometry) */
-    int bx0 = state->nx/2 - state->nx/10;
-    int bx1 = state->nx/2 + state->nx/10;
-    int by0 = state->ny/2 - state->ny/20;
-    int by1 = state->ny/2 + state->ny/20;
+static void apply_rect_to_grid(SimulationState* state, const MaterialRectSpec* rect) {
+    if (!state || !rect) return;
+    int nx = state->nx;
+    int ny = state->ny;
+    int ix0 = clamp_index((int)floor(fmin(rect->x0, rect->x1) * nx), 0, nx - 1);
+    int ix1 = clamp_index((int)ceil(fmax(rect->x0, rect->x1) * nx) - 1, 0, nx - 1);
+    int iy0 = clamp_index((int)floor(fmin(rect->y0, rect->y1) * ny), 0, ny - 1);
+    int iy1 = clamp_index((int)ceil(fmax(rect->y0, rect->y1) * ny) - 1, 0, ny - 1);
 
-    for (int i = bx0; i <= bx1; i++) {
-        for (int j = by0; j <= by1; j++) {
-            if (i >= 0 && i < state->nx && j >= 0 && j < state->ny) {
-                state->epsr[i][j] = EPSR_MAX_SCENE;  /* Dielectric block */
-                state->sigma_map[i][j] = SIGMA_BLOCK;
+    for (int i = ix0; i <= ix1; i++) {
+        for (int j = iy0; j <= iy1; j++) {
+            if (rect->tag == 1) {
+                state->tag_grid[i][j] = 1;  /* PEC */
+                state->epsr[i][j] = 1.0;
+                state->sigma_map[i][j] = SIGMA_BG;
+            } else if (rect->tag == 2) {
+                state->tag_grid[i][j] = 2;  /* PMC */
+            } else {
+                state->tag_grid[i][j] = 0;
+                state->epsr[i][j] = rect->epsr;
+                state->sigma_map[i][j] = rect->sigma;
             }
         }
+    }
+}
+
+/* Initialize material properties to defaults */
+void materials_init(SimulationState* state) {
+    if (!state) return;
+    materials_reset_to_defaults(state);
+
+    const SimulationConfig* cfg = &state->config;
+    for (int i = 0; i < cfg->material_rect_count; i++) {
+        apply_rect_to_grid(state, &cfg->material_rects[i]);
     }
 }
 

@@ -8,15 +8,7 @@
 #include <stddef.h>
 #include "config.h"
 
-/* Source types */
-typedef enum {
-    SRC_CW = 0,
-    SRC_GAUSS_PULSE = 1,
-    SRC_RICKER = 2
-} SourceType;
-
 /* Source structure */
-#define MAX_SRC 4
 typedef struct {
     int active;
     int ix, iy;

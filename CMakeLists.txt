@@ -50,6 +50,8 @@ set(EMWAVE_CORE_SOURCES
     src/materials.c
     src/analysis.c
     src/config_loader.c
+    src/cli_runner.c
+    third_party/jsmn/jsmn.c
 )
 
 set(EMWAVE_UI_SOURCES
@@ -59,13 +61,17 @@ set(EMWAVE_UI_SOURCES
 )
 
 # Build the SDL front-end only if SDL2 dependencies are present
+set(EMWAVE_INCLUDE_DIRS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/jsmn")
+
 if (EMWAVE_UI_AVAILABLE)
     add_executable(emwave
         src/main_new.c
         ${EMWAVE_CORE_SOURCES}
         ${EMWAVE_UI_SOURCES}
     )
-    target_include_directories(emwave PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_include_directories(emwave PRIVATE ${EMWAVE_INCLUDE_DIRS})
     target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(emwave PRIVATE SDL2::SDL2 SDL2_ttf::SDL2_ttf)
 else()
@@ -74,7 +80,7 @@ endif()
 
 # Headless CLI target always builds
 add_executable(emwave_cli src/main_cli.c ${EMWAVE_CORE_SOURCES})
-target_include_directories(emwave_cli PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(emwave_cli PRIVATE ${EMWAVE_INCLUDE_DIRS})
 
 add_executable(render_layout_test
     src/render_layout_test.c
@@ -115,9 +121,9 @@ if (MSVC)
   # Disable OpenMP collapse warnings and use experimental LLVM OpenMP for better support
   if(OpenMP_C_FOUND)
     if (TARGET emwave)
-      target_compile_options(emwave PRIVATE /wd4849 /openmp:experimental)
+      target_compile_options(emwave PRIVATE /wd4849 /openmp:llvm)
     endif()
-    target_compile_options(emwave_cli PRIVATE /wd4849 /openmp:experimental)
+    target_compile_options(emwave_cli PRIVATE /wd4849 /openmp:llvm)
   endif()
 else()
   if (TARGET emwave)
