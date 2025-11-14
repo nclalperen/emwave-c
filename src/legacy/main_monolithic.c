@@ -22,7 +22,7 @@
 static void initialize_boundaries(SimulationState* sim) {
     cpml_on = 1;
     boundary_type = BOUNDARY_CPML;
-    cpml_apply_preset(cpml_preset_idx, sim->dt);
+    cpml_apply_preset(cpml_preset_idx, sim);
     cpml_zero_psi(sim);
 }
 
@@ -34,7 +34,7 @@ int main(void) {
     }
 
     materials_init(sim);
-    ports_init(sim->ports);
+    ports_init(sim->ports, sim->nx, sim->ny);
     initialize_boundaries(sim);
 
     UIState* ui = ui_state_init();

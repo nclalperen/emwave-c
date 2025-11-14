@@ -6,9 +6,8 @@
 // =============================================================================
 
 #include "config.h"
-#include "config_loader.h"
-#include "fdtd_core.h"
 #include "analysis.h"
+#include "app_bootstrap.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,11 +29,17 @@ static int determine_total_steps(const SimulationConfig* cfg) {
 }
 
 int main(int argc, char** argv) {
-    SimulationConfig config;
-    if (!config_load_from_args(argc, argv, &config)) {
+    SimulationBootstrap bootstrap;
+    int bootstrap_status = simulation_bootstrap_from_args(argc, argv, &bootstrap);
+    if (bootstrap_status == 0) {
         return 0;  /* help was shown or validation failed */
     }
-    config_print_summary(&config);
+    if (bootstrap_status < 0) {
+        return 1;
+    }
+
+    const SimulationConfig* config = &bootstrap.config;
+    SimulationState* sim = bootstrap.sim;
 
 #ifdef _OPENMP
     printf("OpenMP enabled (%d threads)\n", omp_get_max_threads());
@@ -42,15 +47,9 @@ int main(int argc, char** argv) {
     printf("OpenMP not available - running sequentially\n");
 #endif
 
-    SimulationState* sim = fdtd_init(&config);
-    if (!sim) {
-        fprintf(stderr, "Failed to initialise simulation state\n");
-        return 1;
-    }
-
     FILE* probe_file = probe_open("probe_cli.txt");
-    const int total_steps = determine_total_steps(&config);
-    const int progress_interval = config.steps_per_frame > 0 ? config.steps_per_frame : 50;
+    const int total_steps = determine_total_steps(config);
+    const int progress_interval = config->steps_per_frame > 0 ? config->steps_per_frame : 50;
 
     for (int step = 0; step < total_steps; ++step) {
         fdtd_step(sim);
@@ -76,7 +75,7 @@ int main(int argc, char** argv) {
     if (probe_file) {
         fclose(probe_file);
     }
-    fdtd_free(sim);
+    simulation_bootstrap_shutdown(&bootstrap);
 
     printf("Simulation complete. Probe samples saved to probe_cli.txt\n");
     return 0;

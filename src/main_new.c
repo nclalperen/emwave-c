@@ -5,14 +5,10 @@
 
 #include "config.h"
 #include "types.h"
-#include "fdtd_core.h"
-#include "boundary.h"
-#include "sources.h"
-#include "materials.h"
 #include "analysis.h"
+#include "app_bootstrap.h"
 #include "ui_render.h"
 #include "ui_controls.h"
-#include "config_loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,30 +17,17 @@
 #include <omp.h>
 #endif
 
-static void initialize_boundaries(SimulationState* sim) {
-    cpml_on = 1;
-    boundary_type = BOUNDARY_CPML;
-    cpml_apply_preset(cpml_preset_idx, sim);
-    cpml_zero_psi(sim);
-}
-
 int main(int argc, char** argv) {
-    SimulationConfig config;
-    if (!config_load_from_args(argc, argv, &config)) {
+    SimulationBootstrap bootstrap;
+    int bootstrap_status = simulation_bootstrap_from_args(argc, argv, &bootstrap);
+    if (bootstrap_status == 0) {
         return 0;  /* help shown or invalid config */
     }
-    config_print_summary(&config);
-
-    /* Initialize simulation */
-    SimulationState* sim = fdtd_init(&config);
-    if (!sim) {
-        fprintf(stderr, "Failed to initialize simulation\n");
+    if (bootstrap_status < 0) {
         return 1;
     }
 
-    materials_init(sim);
-    ports_init(sim->ports, sim->nx, sim->ny);
-    initialize_boundaries(sim);
+    SimulationState* sim = bootstrap.sim;
 
     /* Initialize UI */
     UIState* ui = ui_state_init();
@@ -121,8 +104,7 @@ int main(int argc, char** argv) {
     scope_free(&scope);
     render_free(render);
     ui_state_free(ui);
-    ports_free(sim->ports);
-    fdtd_free(sim);
+    simulation_bootstrap_shutdown(&bootstrap);
 
     return 0;
 }

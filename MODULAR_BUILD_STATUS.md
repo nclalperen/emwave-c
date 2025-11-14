@@ -75,7 +75,7 @@ All nine header files are complete with clean interfaces:
 - **[src/ui_render.c](src/ui_render.c)** now owns all SDL2 rendering and HUD drawing
 - **[src/ui_controls.c](src/ui_controls.c)** handles events, sliders, painting, and sweep controls
 - **[src/main_new.c](src/main_new.c)** is the active SDL entry point wired to the modular APIs
-- Legacy `src/main.c` is preserved for reference but excluded from the build
+- Legacy monolithic UI now lives at [src/legacy/main_monolithic.c](src/legacy/main_monolithic.c) and is excluded from builds
 
 ## 🔧 Ready for Compilation
 
@@ -119,7 +119,7 @@ cmake --build . --config Release
 ```
 Current State:
 ┌─────────────────────────────────────┐
-│         src/main.c (2111 lines)     │  ← Still contains UI code
+│ src/legacy/main_monolithic.c (2111) │  ← Archived reference only
 │  ┌───────────────────────────────┐  │
 │  │  Monolithic UI + Event Loop   │  │  ← To be extracted later
 │  └───────────────────────────────┘  │

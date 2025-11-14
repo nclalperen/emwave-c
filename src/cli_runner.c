@@ -22,11 +22,11 @@ static void setup_ports(SimulationState* sim) {
 
 static void init_world(SimulationState* sim) {
     materials_init(sim);
-    ports_init(sim->ports);
+    ports_init(sim->ports, sim->nx, sim->ny);
     setup_ports(sim);
     cpml_on = 1;
     boundary_type = BOUNDARY_CPML;
-    cpml_apply_preset(cpml_preset_idx, sim->dt);
+    cpml_apply_preset(cpml_preset_idx, sim);
     cpml_zero_psi(sim);
 }
 
@@ -50,7 +50,7 @@ int main(void) {
 
         fdtd_reset(sim);
         fdtd_update_grid_for_freq(sim, freq);
-        cpml_build_coeffs(sim->dt);
+        cpml_build_coeffs(sim);
         cpml_zero_psi(sim);
 
         int total_steps = 4000;
