@@ -10,6 +10,20 @@
 #include "types.h"
 #include <SDL2/SDL.h>
 
+/* Slider UI element */
+typedef struct Slider {
+    int x, y, w, h;
+    double minv, maxv;  /* logical range */
+    double value;       /* current logical value */
+    int dragging;
+} Slider;
+
+/* Autoscale modes */
+typedef enum {
+    AS_PEAK = 0,
+    AS_P99 = 1
+} AutoScaleMode;
+
 /* UI state structure */
 typedef struct {
     int running;
@@ -62,6 +76,17 @@ typedef struct {
     double s21_amp;
     int s21_computed;
 
+    /* Simulation pacing */
+    int steps_per_frame;
+
+    /* Layout */
+    int scale;
+    int ui_height;
+    int side_panel_width;
+
+    /* Probe logging */
+    int log_probe;
+
     /* Sliders */
     Slider freq_slider;
     Slider speed_slider;
@@ -71,9 +96,15 @@ typedef struct {
 /* Initialization */
 UIState* ui_state_init(void);
 void ui_state_free(UIState* state);
+void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width);
+void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim);
+
+/* Per-frame maintenance */
+void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* scope);
 
 /* Event handling */
-int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope);
+int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
+                     int scale, int ui_height, int side_panel_width);
 
 /* Slider interaction */
 int slider_handle_event(Slider* s, const SDL_Event* e);
@@ -81,5 +112,6 @@ int slider_handle_event(Slider* s, const SDL_Event* e);
 /* Slider value conversion helpers */
 double freq_from_slider(double t, double fmin, double fmax);
 double slider_from_freq(double f, double fmin, double fmax);
+
 
 #endif /* EMWAVE_UI_CONTROLS_H */

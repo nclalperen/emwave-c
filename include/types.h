@@ -48,20 +48,6 @@ typedef struct {
     double last;
 } Scope;
 
-/* Slider UI element */
-typedef struct {
-    int x, y, w, h;
-    double minv, maxv;  /* logical range */
-    double value;       /* current logical value */
-    int dragging;
-} Slider;
-
-/* Autoscale modes */
-typedef enum {
-    AS_PEAK = 0,
-    AS_P99 = 1
-} AutoScaleMode;
-
 /* Boundary condition types */
 typedef enum {
     BOUNDARY_MUR = 0,
