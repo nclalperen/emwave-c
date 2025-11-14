@@ -91,9 +91,9 @@ RenderContext* render_init(const char* title, int width, int height) {
         return NULL;
     }
 
-    ctx->scale = 2;
-    ctx->ui_height = 90;
-    ctx->side_panel_width = 240;
+    ctx->scale = RENDER_DEFAULT_SCALE;
+    ctx->ui_height = RENDER_DEFAULT_UI_HEIGHT;
+    ctx->side_panel_width = RENDER_DEFAULT_SIDE_PANEL;
 
     return ctx;
 }
@@ -139,8 +139,8 @@ static void draw_grid(RenderContext* ctx, const SimulationState* state, double v
     if (!ctx || !state) return;
     SDL_Rect pixel = {0, 0, ctx->scale, ctx->scale};
 
-    for (int i = 0; i < NX; ++i) {
-        for (int j = 0; j < NY; ++j) {
+    for (int i = 0; i < state->nx; ++i) {
+        for (int j = 0; j < state->ny; ++j) {
             double v = state->Ez[i][j];
             SDL_Color c = colormap_heat(v, vmax);
             if (state->tag_grid[i][j] == 1) {
@@ -174,19 +174,19 @@ void render_sources(RenderContext* ctx, const Source* sources) {
     }
 }
 
-void render_block_outline(RenderContext* ctx) {
-    int bx0 = NX / 2 - NX / 10;
-    int bx1 = NX / 2 + NX / 10;
-    int by0 = NY / 2 - NY / 20;
-    int by1 = NY / 2 + NY / 20;
-    SDL_Rect r = { bx0 * ctx->scale, by0 * ctx->scale,
-                   (bx1 - bx0) * ctx->scale, (by1 - by0) * ctx->scale };
+void render_block_outline(RenderContext* ctx, const RenderLayout* layout) {
+    if (!ctx || !layout) return;
+    SDL_Rect r = { layout->block_outline.x, layout->block_outline.y,
+                   layout->block_outline.w, layout->block_outline.h };
+    if (r.w <= 0 || r.h <= 0) return;
     SDL_SetRenderDrawColor(ctx->renderer, 220, 220, 220, 255);
     SDL_RenderDrawRect(ctx->renderer, &r);
 }
 
-void render_colorbar(RenderContext* ctx, double vmin, double vmax) {
-    SDL_Rect bar = { NX * ctx->scale + 20, 20, 20, NY * ctx->scale - 40 };
+void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin, double vmax) {
+    if (!ctx || !layout) return;
+    SDL_Rect bar = { layout->colorbar.x, layout->colorbar.y, layout->colorbar.w, layout->colorbar.h };
+    if (bar.h <= 1 || bar.w <= 0) return;
     for (int y = 0; y < bar.h; ++y) {
         double t = 1.0 - (double)y / (double)(bar.h - 1);
         double v = vmin + t * (vmax - vmin);
@@ -222,8 +222,8 @@ void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, i
 }
 
 void render_info_panel(RenderContext* ctx, const SimulationState* state, const UIState* ui,
-                       double fps_avg) {
-    if (!ctx || !state || !ui) return;
+                       double fps_avg, const RenderLayout* layout) {
+    if (!ctx || !state || !ui || !layout) return;
     char buffer[256];
     snprintf(buffer, sizeof(buffer),
              "freq: %.3f GHz\nsteps: %d\nΔx=%.3f mm\nΔt=%.3e s\nFPS: %.1f",
@@ -233,7 +233,7 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     int tw, th;
     SDL_Texture* tex = render_text_wrapped(ctx, buffer, c, ctx->side_panel_width - 30, &tw, &th);
     if (!tex) return;
-    SDL_Rect dst = { NX * ctx->scale + 30, 40, tw, th };
+    SDL_Rect dst = { layout->canvas_w + 30, 40, tw, th };
     SDL_RenderCopy(ctx->renderer, tex, NULL, &dst);
     SDL_DestroyTexture(tex);
 }
@@ -272,11 +272,11 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
                   const Scope* scope, double fps_avg) {
     if (!ctx || !state || !ui) return;
 
-    int canvas_w = NX * ctx->scale;
-    int canvas_h = NY * ctx->scale;
-    int window_w = canvas_w + ctx->side_panel_width;
-    int window_h = canvas_h + ctx->ui_height;
-    SDL_RenderSetLogicalSize(ctx->renderer, window_w, window_h);
+    RenderLayout layout;
+    render_layout_compute(&layout, state->nx, state->ny, ctx->scale,
+                          ctx->side_panel_width, ctx->ui_height);
+
+    SDL_RenderSetLogicalSize(ctx->renderer, layout.window_w, layout.window_h);
 
     SDL_SetRenderDrawColor(ctx->renderer, 8, 8, 12, 255);
     SDL_RenderClear(ctx->renderer);
@@ -286,17 +286,18 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
 
     render_field_heatmap(ctx, state, vmax, 1.0);
     render_sources(ctx, state->sources);
-    render_block_outline(ctx);
+    render_block_outline(ctx, &layout);
 
-    SDL_Rect panel = { canvas_w, 0, ctx->side_panel_width, canvas_h + ctx->ui_height };
+    SDL_Rect panel = { layout.canvas_w, 0, ctx->side_panel_width, layout.window_h };
     SDL_SetRenderDrawColor(ctx->renderer, 20, 20, 30, 255);
     SDL_RenderFillRect(ctx->renderer, &panel);
 
-    render_colorbar(ctx, -vmax, vmax);
-    render_info_panel(ctx, state, ui, fps_avg);
+    render_colorbar(ctx, &layout, -vmax, vmax);
+    render_info_panel(ctx, state, ui, fps_avg, &layout);
 
-    int scope_x = canvas_w + 30;
-    int scope_y = canvas_h - 160;
+    int scope_x = layout.canvas_w + 30;
+    int scope_y = layout.canvas_h - 160;
+    if (scope_y < 20) scope_y = 20;
     render_scope(ctx, scope, scope_x, scope_y, ctx->side_panel_width - 60, 120,
                  ui->hold_scope ? ui->held_scope_vmax : ui->scope_vmax_smooth);
 
@@ -304,7 +305,7 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
     slider_draw(ctx, &ui->speed_slider);
 
     if (ui->show_legend) {
-        render_legend(ctx, canvas_w + 30, scope_y + 140);
+        render_legend(ctx, layout.canvas_w + 30, scope_y + 140);
     }
 
     SDL_RenderPresent(ctx->renderer);
