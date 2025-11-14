@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -151,6 +152,8 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     cpml_apply_preset(state, cpml_get_preset_index(state));
     cpml_zero_psi(state);
 
+    state->step_Ez_absmax = 0.0;
+
     return state;
 }
 
@@ -188,6 +191,7 @@ void fdtd_clear_fields(SimulationState* state) {
     if (state->psi_Ezy_data) memset(state->psi_Ezy_data, 0, sizeof(double) * cells);
     if (state->psi_Hyx_data) memset(state->psi_Hyx_data, 0, sizeof(double) * cells);
     if (state->psi_Hxy_data) memset(state->psi_Hxy_data, 0, sizeof(double) * cells);
+    state->step_Ez_absmax = 0.0;
 }
 
 /* Reset simulation state */
@@ -195,6 +199,7 @@ void fdtd_reset(SimulationState* state) {
     fdtd_clear_fields(state);
     state->timestep = 0;
     cpml_zero_psi(state);
+    state->step_Ez_absmax = 0.0;
 
     /* Reset ports */
     for (int p = 0; p < MAX_PORTS; p++) {
@@ -292,8 +297,10 @@ void fdtd_step(SimulationState* state) {
     }
 
     /* Update E fields with optional CPML + conductivity */
+    double ez_absmax = 0.0;
+
     #ifdef _OPENMP
-    #pragma omp parallel for private(j)
+    #pragma omp parallel for private(j) reduction(max:ez_absmax)
     #endif
     for (i = 1; i < nx; i++) {
         for (j = 1; j < ny; j++) {
@@ -324,6 +331,11 @@ void fdtd_step(SimulationState* state) {
             if (state->tag_grid[i][j] == 1) {
                 state->Ez[i][j] = 0.0;
             }
+
+            double abs_val = fabs(state->Ez[i][j]);
+            if (abs_val > ez_absmax) {
+                ez_absmax = abs_val;
+            }
         }
     }
 
@@ -335,6 +347,24 @@ void fdtd_step(SimulationState* state) {
     /* Inject all active sources */
     inject_all_sources(state);
 
+    double src_absmax = ez_absmax;
+    for (int s = 0; s < MAX_SRC; s++) {
+        if (!state->sources[s].active) continue;
+        for (int di = -2; di <= 2; di++) {
+            for (int dj = -2; dj <= 2; dj++) {
+                int i_src = state->sources[s].ix + di;
+                int j_src = state->sources[s].iy + dj;
+                if (i_src > 0 && i_src < state->nx && j_src > 0 && j_src < state->ny) {
+                    double abs_val = fabs(state->Ez[i_src][j_src]);
+                    if (abs_val > src_absmax) {
+                        src_absmax = abs_val;
+                    }
+                }
+            }
+        }
+    }
+
     /* Increment timestep counter */
     state->timestep++;
+    state->step_Ez_absmax = src_absmax;
 }

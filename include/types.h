@@ -46,6 +46,8 @@ typedef struct {
     double *y;
     int on;
     double last;
+    double rolling_absmax;
+    unsigned int rolling_generation;
 } Scope;
 
 /* Boundary condition types */
@@ -144,6 +146,9 @@ typedef struct {
 
     /* Boundary / CPML state */
     CpmlState cpml;
+
+    /* Cached metrics */
+    double step_Ez_absmax;
 
 } SimulationState;
 

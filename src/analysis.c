@@ -26,6 +26,8 @@ void scope_init(Scope* scope, int width) {
     scope->head = 0;
     scope->on = 1;
     scope->last = 0.0;
+    scope->rolling_absmax = 0.0;
+    scope->rolling_generation = 0;
 }
 
 /* Free oscilloscope */
@@ -44,6 +46,11 @@ void scope_push(Scope* scope, double v) {
     scope->y[scope->head] = v;
     scope->head = (scope->head + 1) % scope->n;
     scope->last = v;
+
+    double abs_v = fabs(v);
+    double decayed = scope->rolling_absmax * 0.995;
+    scope->rolling_absmax = (abs_v > decayed) ? abs_v : decayed;
+    scope->rolling_generation++;
 }
 
 /* Clear oscilloscope */
@@ -52,6 +59,8 @@ void scope_clear(Scope* scope) {
     memset(scope->y, 0, sizeof(double) * scope->n);
     scope->head = 0;
     scope->last = 0.0;
+    scope->rolling_absmax = 0.0;
+    scope->rolling_generation++;
 }
 
 /* Export FFT of scope data to CSV */
