@@ -63,6 +63,10 @@ UIState* ui_state_init(void) {
     ui->speed_slider.value = (double)ui->steps_per_frame;
     ui->speed_slider.dragging = 0;
 
+    ui->render_field_vmax = 0.0;
+    ui->render_scope_vmax = 0.0;
+    ui->render_metrics_valid = 0;
+
     return ui;
 }
 
@@ -106,10 +110,14 @@ void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* sco
     if (!ui || !sim) return;
 
     double vmax = 0.0;
-    for (int i = 0; i < sim->nx; ++i) {
-        for (int j = 0; j < sim->ny; ++j) {
-            double val = fabs(sim->Ez[i][j]);
-            if (val > vmax) vmax = val;
+    if (ui->render_metrics_valid) {
+        vmax = ui->render_field_vmax;
+    } else {
+        for (int i = 0; i < sim->nx; ++i) {
+            for (int j = 0; j < sim->ny; ++j) {
+                double val = fabs(sim->Ez[i][j]);
+                if (val > vmax) vmax = val;
+            }
         }
     }
 
@@ -120,18 +128,28 @@ void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* sco
         ui->held_vmax = ui->vmax_smooth;
     }
 
-    if (scope && scope->y && scope->n > 0) {
-        double smax = 0.0;
+    double smax = 0.0;
+    int have_scope_data = 0;
+    if (ui->render_metrics_valid) {
+        smax = ui->render_scope_vmax;
+        have_scope_data = 1;
+    } else if (scope && scope->y && scope->n > 0) {
         for (int k = 0; k < scope->n; ++k) {
             double val = fabs(scope->y[k]);
             if (val > smax) smax = val;
         }
+        have_scope_data = 1;
+    }
+
+    if (have_scope_data) {
         if (ui->scope_vmax_smooth == 0.0) ui->scope_vmax_smooth = smax;
         ui->scope_vmax_smooth = 0.9 * ui->scope_vmax_smooth + 0.1 * smax;
         if (!ui->hold_scope) {
             ui->held_scope_vmax = ui->scope_vmax_smooth;
         }
     }
+
+    ui->render_metrics_valid = 0;
 }
 
 static void apply_paint(UIState* ui, SimulationState* sim, int mx, int my, int scale) {
@@ -287,14 +305,16 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                     scope_clear(scope);
                     cpml_zero_psi(sim);
                     break;
-                case SDLK_y:
-                    cpml_on = !cpml_on;
-                    boundary_type = cpml_on ? BOUNDARY_CPML : BOUNDARY_MUR;
-                    if (cpml_on) {
+                case SDLK_y: {
+                    BoundaryType type = boundary_get_type(sim);
+                    type = (type == BOUNDARY_CPML) ? BOUNDARY_MUR : BOUNDARY_CPML;
+                    boundary_set_type(sim, type);
+                    if (boundary_is_cpml_enabled(sim)) {
                         cpml_build_coeffs(sim);
                         cpml_zero_psi(sim);
                     }
                     break;
+                }
                 case SDLK_g:
                     ui->log_probe = !ui->log_probe;
                     break;

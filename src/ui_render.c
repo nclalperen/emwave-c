@@ -135,13 +135,18 @@ SDL_Texture* render_text_wrapped(RenderContext* ctx, const char* text, SDL_Color
     return tex;
 }
 
-static void draw_grid(RenderContext* ctx, const SimulationState* state, double vmax) {
-    if (!ctx || !state) return;
+static double draw_grid(RenderContext* ctx, const SimulationState* state, double vmax) {
+    if (!ctx || !state) return 0.0;
     SDL_Rect pixel = {0, 0, ctx->scale, ctx->scale};
+    double field_max = 0.0;
 
     for (int i = 0; i < state->nx; ++i) {
         for (int j = 0; j < state->ny; ++j) {
             double v = state->Ez[i][j];
+            double abs_v = fabs(v);
+            if (abs_v > field_max) {
+                field_max = abs_v;
+            }
             SDL_Color c = colormap_heat(v, vmax);
             if (state->tag_grid[i][j] == 1) {
                 c = (SDL_Color){200, 200, 200, 255};
@@ -154,12 +159,14 @@ static void draw_grid(RenderContext* ctx, const SimulationState* state, double v
             SDL_RenderFillRect(ctx->renderer, &pixel);
         }
     }
+
+    return field_max;
 }
 
-void render_field_heatmap(RenderContext* ctx, const SimulationState* state,
-                          double vmax, double color_scale) {
+double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
+                            double vmax, double color_scale) {
     (void)color_scale;
-    draw_grid(ctx, state, vmax);
+    return draw_grid(ctx, state, vmax);
 }
 
 void render_sources(RenderContext* ctx, const Source* sources) {
@@ -196,8 +203,8 @@ void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin
     }
 }
 
-void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale) {
-    if (!scope || !scope->y || scope->n <= 0) return;
+double render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale) {
+    if (!scope || !scope->y || scope->n <= 0) return 0.0;
     SDL_Rect frame = { x, y, w, h };
     SDL_SetRenderDrawColor(ctx->renderer, 30, 30, 30, 255);
     SDL_RenderFillRect(ctx->renderer, &frame);
@@ -206,12 +213,17 @@ void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, i
 
     int samples = scope->n;
     double vmax = (yscale > 0.0) ? yscale : 1.0;
+    double scope_max = 0.0;
 
     for (int k = 1; k < samples; ++k) {
         int idx0 = (scope->head + k - 1) % samples;
         int idx1 = (scope->head + k) % samples;
         double v0 = scope->y[idx0];
         double v1 = scope->y[idx1];
+        double abs_v0 = fabs(v0);
+        double abs_v1 = fabs(v1);
+        if (abs_v0 > scope_max) scope_max = abs_v0;
+        if (abs_v1 > scope_max) scope_max = abs_v1;
         int px0 = x + (k - 1) * w / samples;
         int px1 = x + k * w / samples;
         int py0 = y + h / 2 - (int)((v0 / vmax) * (h / 2));
@@ -219,6 +231,8 @@ void render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, i
         SDL_SetRenderDrawColor(ctx->renderer, 0, 220, 120, 255);
         SDL_RenderDrawLine(ctx->renderer, px0, py0, px1, py1);
     }
+
+    return scope_max;
 }
 
 void render_info_panel(RenderContext* ctx, const SimulationState* state, const UIState* ui,
@@ -284,7 +298,7 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
     double vmax = ui->hold_color ? ui->held_vmax : ui->vmax_smooth;
     if (vmax < 1e-6) vmax = 1e-6;
 
-    render_field_heatmap(ctx, state, vmax, 1.0);
+    double field_vmax = render_field_heatmap(ctx, state, vmax, 1.0);
     render_sources(ctx, state->sources);
     render_block_outline(ctx, &layout);
 
@@ -298,8 +312,11 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
     int scope_x = layout.canvas_w + 30;
     int scope_y = layout.canvas_h - 160;
     if (scope_y < 20) scope_y = 20;
-    render_scope(ctx, scope, scope_x, scope_y, ctx->side_panel_width - 60, 120,
-                 ui->hold_scope ? ui->held_scope_vmax : ui->scope_vmax_smooth);
+    double scope_vmax = 0.0;
+    if (scope) {
+        scope_vmax = render_scope(ctx, scope, scope_x, scope_y, ctx->side_panel_width - 60, 120,
+                                  ui->hold_scope ? ui->held_scope_vmax : ui->scope_vmax_smooth);
+    }
 
     slider_draw(ctx, &ui->freq_slider);
     slider_draw(ctx, &ui->speed_slider);
@@ -309,6 +326,12 @@ void render_frame(RenderContext* ctx, const SimulationState* state, const UIStat
     }
 
     SDL_RenderPresent(ctx->renderer);
+
+    if (ui) {
+        ui->render_field_vmax = field_vmax;
+        ui->render_scope_vmax = scope_vmax;
+        ui->render_metrics_valid = 1;
+    }
 }
 
 int save_screenshot(RenderContext* ctx, const char* filename) {

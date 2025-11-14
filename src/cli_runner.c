@@ -24,9 +24,8 @@ static void init_world(SimulationState* sim) {
     materials_init(sim);
     ports_init(sim->ports, sim->nx, sim->ny);
     setup_ports(sim);
-    cpml_on = 1;
-    boundary_type = BOUNDARY_CPML;
-    cpml_apply_preset(cpml_preset_idx, sim);
+    boundary_set_type(sim, BOUNDARY_CPML);
+    cpml_apply_preset(sim, cpml_get_preset_index(sim));
     cpml_zero_psi(sim);
 }
 

@@ -52,6 +52,11 @@ typedef struct {
     double cached_p99;
     int p99_cache_valid;
 
+    /* Cached render metrics */
+    double render_field_vmax;
+    double render_scope_vmax;
+    int render_metrics_valid;
+
     /* Render stride */
     int render_stride;
 

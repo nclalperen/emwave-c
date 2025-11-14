@@ -61,6 +61,27 @@ typedef struct {
     int thick;
 } CpmlPreset;
 
+/* CPML runtime state */
+typedef struct {
+    int enabled;
+    int thickness;
+    int preset_idx;
+    double sigma_max;
+    double kappa_max;
+    double alpha_max;
+    BoundaryType boundary_type;
+
+    double* kx;
+    double* bx;
+    double* cx;
+    double* ky;
+    double* by;
+    double* cy;
+
+    int kx_capacity;
+    int ky_capacity;
+} CpmlState;
+
 /* Simulation state structure */
 typedef struct {
     SimulationConfig config;
@@ -120,6 +141,9 @@ typedef struct {
 
     /* Frequency */
     double freq;
+
+    /* Boundary / CPML state */
+    CpmlState cpml;
 
 } SimulationState;
 
