@@ -67,10 +67,16 @@ int main(int argc, char** argv) {
     Uint64 perf_freq = SDL_GetPerformanceFrequency();
     Uint64 prev = SDL_GetPerformanceCounter();
     double fps_avg = 0.0;
+    const int render_metrics_log_interval = 120;
+    double render_metrics_accum = 0.0;
+    int render_metrics_samples = 0;
 
     /* Main loop */
     while (ui->running) {
+        Uint64 metrics_start = SDL_GetPerformanceCounter();
         ui_update_metrics(ui, sim, &scope);
+        Uint64 metrics_end = SDL_GetPerformanceCounter();
+        double metrics_ms = (double)(metrics_end - metrics_start) * 1000.0 / (double)perf_freq;
         if (!ui_handle_events(ui, sim, &scope, render->scale, render->ui_height, render->side_panel_width)) {
             break;
         }
@@ -96,7 +102,20 @@ int main(int argc, char** argv) {
         if (fps_avg == 0.0) fps_avg = fps_inst;
         else fps_avg = 0.9 * fps_avg + 0.1 * fps_inst;
 
+        Uint64 render_start = SDL_GetPerformanceCounter();
         render_frame(render, sim, ui, &scope, fps_avg);
+        Uint64 render_end = SDL_GetPerformanceCounter();
+        double render_ms = (double)(render_end - render_start) * 1000.0 / (double)perf_freq;
+        double render_metrics_ms = metrics_ms + render_ms;
+        render_metrics_accum += render_metrics_ms;
+        render_metrics_samples++;
+        if (render_metrics_samples >= render_metrics_log_interval) {
+            double avg_ms = render_metrics_accum / (double)render_metrics_samples;
+            printf("[profile] render+metrics avg %.3f ms (metrics %.3f ms, render %.3f ms)\n",
+                   avg_ms, metrics_ms, render_ms);
+            render_metrics_accum = 0.0;
+            render_metrics_samples = 0;
+        }
         SDL_Delay(UI_DELAY_MS);
     }
 

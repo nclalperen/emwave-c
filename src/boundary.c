@@ -13,50 +13,113 @@
 #include <omp.h>
 #endif
 
-/* Global CPML state */
-int cpml_on = 0;
-int cpml_N = PML_THICK;
-double pml_sigma_max = 1.2;
-double pml_kappa_max = 5.0;
-double pml_alpha_max = 0.05;
-int cpml_preset_idx = 1;
-BoundaryType boundary_type = BOUNDARY_MUR;
+static CpmlState* cpml_state(SimulationState* state) {
+    return state ? &state->cpml : NULL;
+}
 
-/* CPML coefficient arrays */
-double* kx = NULL;
-double* bx = NULL;
-double* cx = NULL;
-double* ky = NULL;
-double* by = NULL;
-double* cy = NULL;
+void boundary_init(SimulationState* state) {
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return;
 
-static int kx_capacity = 0;
-static int ky_capacity = 0;
+    *cpml = (CpmlState){0};
+    cpml->boundary_type = BOUNDARY_MUR;
+    cpml->enabled = 0;
+    cpml->thickness = PML_THICK;
+    cpml->preset_idx = 1;
 
-static int ensure_cpml_capacity(int nx, int ny) {
-    if (nx > kx_capacity) {
-        double* nkx = (double*)realloc(kx, sizeof(double) * nx);
-        double* nbx = (double*)realloc(bx, sizeof(double) * nx);
-        double* ncx = (double*)realloc(cx, sizeof(double) * nx);
-        if (!nkx || !nbx || !ncx) {
-            fprintf(stderr, "Failed to allocate CPML X coefficients\n");
-            free(nkx); free(nbx); free(ncx);
+    const CpmlPreset preset = CPML_PRESETS[cpml->preset_idx];
+    cpml->sigma_max = preset.smax;
+    cpml->kappa_max = preset.kmax;
+    cpml->alpha_max = preset.amax;
+}
+
+void boundary_shutdown(SimulationState* state) {
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return;
+
+    free(cpml->kx); cpml->kx = NULL;
+    free(cpml->bx); cpml->bx = NULL;
+    free(cpml->cx); cpml->cx = NULL;
+    free(cpml->ky); cpml->ky = NULL;
+    free(cpml->by); cpml->by = NULL;
+    free(cpml->cy); cpml->cy = NULL;
+    cpml->kx_capacity = 0;
+    cpml->ky_capacity = 0;
+}
+
+void boundary_set_type(SimulationState* state, BoundaryType type) {
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return;
+    cpml->boundary_type = type;
+    cpml->enabled = (type == BOUNDARY_CPML);
+}
+
+BoundaryType boundary_get_type(const SimulationState* state) {
+    const CpmlState* cpml = state ? &state->cpml : NULL;
+    return cpml ? cpml->boundary_type : BOUNDARY_MUR;
+}
+
+int boundary_is_cpml_enabled(const SimulationState* state) {
+    const CpmlState* cpml = state ? &state->cpml : NULL;
+    return cpml ? cpml->enabled : 0;
+}
+
+int cpml_get_preset_index(const SimulationState* state) {
+    const CpmlState* cpml = state ? &state->cpml : NULL;
+    return cpml ? cpml->preset_idx : 0;
+}
+
+static int ensure_cpml_capacity(SimulationState* state, int nx, int ny) {
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return 0;
+
+    if (nx > cpml->kx_capacity) {
+        double* new_ptr = (double*)realloc(cpml->kx, sizeof(double) * nx);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML X coefficients (kx)\n");
             return 0;
         }
-        kx = nkx; bx = nbx; cx = ncx;
-        kx_capacity = nx;
+        cpml->kx = new_ptr;
+
+        new_ptr = (double*)realloc(cpml->bx, sizeof(double) * nx);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML X coefficients (bx)\n");
+            return 0;
+        }
+        cpml->bx = new_ptr;
+
+        new_ptr = (double*)realloc(cpml->cx, sizeof(double) * nx);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML X coefficients (cx)\n");
+            return 0;
+        }
+        cpml->cx = new_ptr;
+
+        cpml->kx_capacity = nx;
     }
-    if (ny > ky_capacity) {
-        double* nky = (double*)realloc(ky, sizeof(double) * ny);
-        double* nby = (double*)realloc(by, sizeof(double) * ny);
-        double* ncy = (double*)realloc(cy, sizeof(double) * ny);
-        if (!nky || !nby || !ncy) {
-            fprintf(stderr, "Failed to allocate CPML Y coefficients\n");
-            free(nky); free(nby); free(ncy);
+    if (ny > cpml->ky_capacity) {
+        double* new_ptr = (double*)realloc(cpml->ky, sizeof(double) * ny);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML Y coefficients (ky)\n");
             return 0;
         }
-        ky = nky; by = nby; cy = ncy;
-        ky_capacity = ny;
+        cpml->ky = new_ptr;
+
+        new_ptr = (double*)realloc(cpml->by, sizeof(double) * ny);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML Y coefficients (by)\n");
+            return 0;
+        }
+        cpml->by = new_ptr;
+
+        new_ptr = (double*)realloc(cpml->cy, sizeof(double) * ny);
+        if (!new_ptr) {
+            fprintf(stderr, "Failed to allocate CPML Y coefficients (cy)\n");
+            return 0;
+        }
+        cpml->cy = new_ptr;
+
+        cpml->ky_capacity = ny;
     }
     return 1;
 }
@@ -79,13 +142,16 @@ void cpml_zero_psi(SimulationState* state) {
 }
 
 /* Build CPML coefficients for given timestep */
-void cpml_build_coeffs(const SimulationState* state) {
+void cpml_build_coeffs(SimulationState* state) {
     if (!state) return;
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return;
+
     double dt = state->dt;
     int nx = state->nx;
     int ny = state->ny;
 
-    if (!ensure_cpml_capacity(nx, ny)) {
+    if (!ensure_cpml_capacity(state, nx, ny)) {
         return;
     }
 
@@ -96,25 +162,26 @@ void cpml_build_coeffs(const SimulationState* state) {
         double rx = 0.0;
 
         /* Compute fractional distance into PML region */
-        if (i < cpml_N) {
-            rx = (cpml_N - i) / (double)cpml_N;
-        } else if (i >= nx - cpml_N) {
-            rx = (i - (nx - cpml_N)) / (double)cpml_N;  /* FIXED: was -1 */
+        if (i < cpml->thickness) {
+            rx = (cpml->thickness - i) / (double)cpml->thickness;
+        } else if (i >= nx - cpml->thickness) {
+            rx = (i - (nx - cpml->thickness)) / (double)cpml->thickness;  /* FIXED: was -1 */
         }
 
         double g = rx > 0 ? pow(rx, m) : 0.0;
-        double sigma = pml_sigma_max * g;
-        double kappa = 1.0 + (pml_kappa_max - 1.0) * g;
-        double alpha = pml_alpha_max * (1.0 - rx);
+        double sigma = cpml->sigma_max * g;
+        double kappa = 1.0 + (cpml->kappa_max - 1.0) * g;
+        double alpha = cpml->alpha_max * (1.0 - rx);
 
-        kx[i] = (rx > 0) ? kappa : 1.0;
+        cpml->kx[i] = (rx > 0) ? kappa : 1.0;
 
         if (rx > 0) {
-            bx[i] = exp(-(sigma/kappa + alpha) * dt);
-            cx[i] = (sigma * (bx[i] - 1.0)) / (kappa * (sigma + kappa*alpha) + DIVISION_SAFETY_EPSILON);
+            cpml->bx[i] = exp(-(sigma/kappa + alpha) * dt);
+            cpml->cx[i] = (sigma * (cpml->bx[i] - 1.0)) /
+                          (kappa * (sigma + kappa*alpha) + DIVISION_SAFETY_EPSILON);
         } else {
-            bx[i] = 1.0;
-            cx[i] = 0.0;
+            cpml->bx[i] = 1.0;
+            cpml->cx[i] = 0.0;
         }
     }
 
@@ -122,51 +189,54 @@ void cpml_build_coeffs(const SimulationState* state) {
     for (int j = 0; j < ny; j++) {
         double ry = 0.0;
 
-        if (j < cpml_N) {
-            ry = (cpml_N - j) / (double)cpml_N;
-        } else if (j >= ny - cpml_N) {
-            ry = (j - (ny - cpml_N)) / (double)cpml_N;  /* FIXED: was -1 */
+        if (j < cpml->thickness) {
+            ry = (cpml->thickness - j) / (double)cpml->thickness;
+        } else if (j >= ny - cpml->thickness) {
+            ry = (j - (ny - cpml->thickness)) / (double)cpml->thickness;  /* FIXED: was -1 */
         }
 
         double g = ry > 0 ? pow(ry, m) : 0.0;
-        double sigma = pml_sigma_max * g;
-        double kappa = 1.0 + (pml_kappa_max - 1.0) * g;
-        double alpha = pml_alpha_max * (1.0 - ry);
+        double sigma = cpml->sigma_max * g;
+        double kappa = 1.0 + (cpml->kappa_max - 1.0) * g;
+        double alpha = cpml->alpha_max * (1.0 - ry);
 
-        ky[j] = (ry > 0) ? kappa : 1.0;
+        cpml->ky[j] = (ry > 0) ? kappa : 1.0;
 
         if (ry > 0) {
-            by[j] = exp(-(sigma/kappa + alpha) * dt);
-            cy[j] = (sigma * (by[j] - 1.0)) / (kappa * (sigma + kappa*alpha) + DIVISION_SAFETY_EPSILON);
+            cpml->by[j] = exp(-(sigma/kappa + alpha) * dt);
+            cpml->cy[j] = (sigma * (cpml->by[j] - 1.0)) /
+                          (kappa * (sigma + kappa*alpha) + DIVISION_SAFETY_EPSILON);
         } else {
-            by[j] = 1.0;
-            cy[j] = 0.0;
+            cpml->by[j] = 1.0;
+            cpml->cy[j] = 0.0;
         }
     }
 }
 
 /* Apply a CPML preset */
-void cpml_apply_preset(int idx, const SimulationState* state) {
+void cpml_apply_preset(SimulationState* state, int idx) {
     if (!state) return;
+    CpmlState* cpml = cpml_state(state);
+    if (!cpml) return;
     int n = sizeof(CPML_PRESETS) / sizeof(CPML_PRESETS[0]);
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
 
-    cpml_preset_idx = idx;
-    pml_sigma_max = CPML_PRESETS[idx].smax;
-    pml_kappa_max = CPML_PRESETS[idx].kmax;
-    pml_alpha_max = CPML_PRESETS[idx].amax;
-    cpml_N = CPML_PRESETS[idx].thick;
+    cpml->preset_idx = idx;
+    cpml->sigma_max = CPML_PRESETS[idx].smax;
+    cpml->kappa_max = CPML_PRESETS[idx].kmax;
+    cpml->alpha_max = CPML_PRESETS[idx].amax;
+    cpml->thickness = CPML_PRESETS[idx].thick;
 
     /* Validate CPML thickness doesn't exceed grid size */
     int min_dim = (state->nx < state->ny ? state->nx : state->ny);
     int max_thickness = min_dim / 2 - 1;
-    if (cpml_N > max_thickness) {
+    if (cpml->thickness > max_thickness) {
         fprintf(stderr, "Warning: CPML thickness %d exceeds safe limit %d, clamping\n",
-                cpml_N, max_thickness);
-        cpml_N = max_thickness;
+                cpml->thickness, max_thickness);
+        cpml->thickness = max_thickness;
     }
-    if (cpml_N < 1) cpml_N = 1;
+    if (cpml->thickness < 1) cpml->thickness = 1;
 
     cpml_build_coeffs(state);
 }

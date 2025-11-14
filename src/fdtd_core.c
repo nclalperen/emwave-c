@@ -18,16 +18,6 @@
 #include <omp.h>
 #endif
 
-/* External boundary state */
-extern int cpml_on;
-extern int cpml_N;
-extern double* kx;
-extern double* bx;
-extern double* cx;
-extern double* ky;
-extern double* by;
-extern double* cy;
-
 static int alloc_field_double(int nx, int ny, double*** out_rows, double** out_data) {
     size_t cells = (size_t)nx * (size_t)ny;
     double* data = (double*)calloc(cells, sizeof(double));
@@ -125,6 +115,8 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     state->timestep = 0;
     state->freq = 1e9;
 
+    boundary_init(state);
+
     int nx = state->nx;
     int ny = state->ny;
 
@@ -156,7 +148,7 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     materials_reset_to_defaults(state);
     materials_init(state);
     sources_init(state->sources, state->nx, state->ny);
-    cpml_build_coeffs(state);
+    cpml_apply_preset(state, cpml_get_preset_index(state));
     cpml_zero_psi(state);
 
     return state;
@@ -179,6 +171,7 @@ void fdtd_free(SimulationState* state) {
     free_field_uchar(&state->tag_grid, &state->tag_grid_data);
 
     ports_free(state->ports);
+    boundary_shutdown(state);
 
     free(state);
 }
@@ -247,6 +240,16 @@ void fdtd_step(SimulationState* state) {
     int ny = state->ny;
     if (nx <= 1 || ny <= 1) return;
 
+    CpmlState* cpml = &state->cpml;
+    int cpml_active = cpml ? cpml->enabled : 0;
+    int cpml_N = cpml ? cpml->thickness : 0;
+    double* kx = cpml ? cpml->kx : NULL;
+    double* bx = cpml ? cpml->bx : NULL;
+    double* cx = cpml ? cpml->cx : NULL;
+    double* ky = cpml ? cpml->ky : NULL;
+    double* by = cpml ? cpml->by : NULL;
+    double* cy = cpml ? cpml->cy : NULL;
+
     /* Save Ez for Mur-1 boundaries */
     int i, j;
     #ifdef _OPENMP
@@ -266,7 +269,7 @@ void fdtd_step(SimulationState* state) {
         for (j = 0; j < ny-1; j++) {
             /* dEz/dy -> Hx */
             double dEdy = (state->Ez[i][j+1] - state->Ez[i][j]) / dy;
-            if (cpml_on && (j < cpml_N || j >= ny - cpml_N)) {
+            if (cpml_active && (j < cpml_N || j >= ny - cpml_N)) {
                 state->psi_Ezy[i][j] = by[j] * state->psi_Ezy[i][j] + cy[j] * dEdy;
                 dEdy = (dEdy / ky[j]) + state->psi_Ezy[i][j];
             }
@@ -274,7 +277,7 @@ void fdtd_step(SimulationState* state) {
 
             /* dEz/dx -> Hy */
             double dEdx = (state->Ez[i+1][j] - state->Ez[i][j]) / dx;
-            if (cpml_on && (i < cpml_N || i >= nx - cpml_N)) {
+            if (cpml_active && (i < cpml_N || i >= nx - cpml_N)) {
                 state->psi_Ezx[i][j] = bx[i] * state->psi_Ezx[i][j] + cx[i] * dEdx;
                 dEdx = (dEdx / kx[i]) + state->psi_Ezx[i][j];
             }
@@ -296,14 +299,14 @@ void fdtd_step(SimulationState* state) {
         for (j = 1; j < ny; j++) {
             /* dHy/dx */
             double dHdx = (state->Hy[i][j] - state->Hy[i-1][j]) / dx;
-            if (cpml_on && (i < cpml_N || i >= nx - cpml_N)) {
+            if (cpml_active && (i < cpml_N || i >= nx - cpml_N)) {
                 state->psi_Hyx[i][j] = bx[i] * state->psi_Hyx[i][j] + cx[i] * dHdx;
                 dHdx = (dHdx / kx[i]) + state->psi_Hyx[i][j];
             }
 
             /* dHx/dy */
             double dHdy = (state->Hx[i][j] - state->Hx[i][j-1]) / dy;
-            if (cpml_on && (j < cpml_N || j >= ny - cpml_N)) {
+            if (cpml_active && (j < cpml_N || j >= ny - cpml_N)) {
                 state->psi_Hxy[i][j] = by[j] * state->psi_Hxy[i][j] + cy[j] * dHdy;
                 dHdy = (dHdy / ky[j]) + state->psi_Hxy[i][j];
             }
@@ -325,7 +328,7 @@ void fdtd_step(SimulationState* state) {
     }
 
     /* Apply Mur boundaries if CPML is off */
-    if (!cpml_on) {
+    if (!cpml_active) {
         apply_mur_boundaries(state);
     }
 

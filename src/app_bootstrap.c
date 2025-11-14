@@ -17,9 +17,8 @@ static void configure_boundaries(SimulationState* sim) {
         return;
     }
 
-    cpml_on = 1;
-    boundary_type = BOUNDARY_CPML;
-    cpml_apply_preset(cpml_preset_idx, sim);
+    boundary_set_type(sim, BOUNDARY_CPML);
+    cpml_apply_preset(sim, cpml_get_preset_index(sim));
     cpml_zero_psi(sim);
 }
 
