@@ -121,6 +121,7 @@ if (MSVC)
   target_compile_definitions(emwave_cli PRIVATE _CRT_SECURE_NO_WARNINGS)
   # Disable OpenMP collapse warnings and use experimental LLVM OpenMP for better support
   if(OpenMP_C_FOUND)
+    target_compile_options(emwave_core PRIVATE /wd4849 /openmp:llvm)
     if (TARGET emwave)
       target_compile_options(emwave PRIVATE /wd4849 /openmp:llvm)
     endif()
