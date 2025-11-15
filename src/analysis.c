@@ -11,6 +11,34 @@
 
 static int analysis_alloc_fail_after = -1;
 
+static void scope_reset(Scope* scope) {
+    if (!scope) {
+        return;
+    }
+    scope->y = NULL;
+    scope->n = 0;
+    scope->head = 0;
+    scope->on = 0;
+    scope->last = 0.0;
+    scope->rolling_absmax = 0.0;
+    scope->rolling_generation = 0;
+}
+
+static void port_reset(Port* port) {
+    if (!port) {
+        return;
+    }
+    port->x = 0;
+    port->y0 = 0;
+    port->y1 = 0;
+    port->len = 0;
+    port->n = 0;
+    port->head = 0;
+    port->active = 0;
+    port->V = NULL;
+    port->I = NULL;
+}
+
 void analysis_test_set_alloc_fail_after(int count) {
     analysis_alloc_fail_after = count;
 }
@@ -51,6 +79,7 @@ int scope_init(Scope* scope, int width) {
     double* buf = (double*)analysis_checked_calloc((size_t)buffer_len, sizeof(double));
     if (!buf) {
         fprintf(stderr, "Warning: Failed to allocate scope buffer\n");
+        scope_reset(scope);
         return 0;
     }
 
@@ -69,16 +98,8 @@ void scope_free(Scope* scope) {
     if (!scope) {
         return;
     }
-    if (scope->y) {
-        free(scope->y);
-        scope->y = NULL;
-    }
-    scope->n = 0;
-    scope->on = 0;
-    scope->head = 0;
-    scope->last = 0.0;
-    scope->rolling_absmax = 0.0;
-    scope->rolling_generation = 0;
+    free(scope->y);
+    scope_reset(scope);
 }
 
 /* Push value to oscilloscope */
@@ -190,14 +211,14 @@ int ports_init(Port* ports, int nx, int ny) {
     ports_free(ports);
 
     for (int p = 0; p < MAX_PORTS; p++) {
-        ports[p].active = 0;
         int target_x = (p == 0) ? nx / 4 : (3 * nx) / 4;
-        ports[p].x = clampi_local(target_x, safe_x_lo, safe_x_hi);
+        int px = clampi_local(target_x, safe_x_lo, safe_x_hi);
 
         int y0 = clampi_local(ny / 4, safe_y_lo, safe_y_hi);
         int y1 = clampi_local((3 * ny) / 4, y0 + 1, safe_y_hi + 1);
         if (y1 < y0) y1 = y0;
 
+        int segment_len = y1 - y0 + 1;
         double* vbuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
         double* ibuf = (double*)analysis_checked_calloc(PORT_SIGNAL_LENGTH, sizeof(double));
         if (!vbuf || !ibuf) {
@@ -207,13 +228,15 @@ int ports_init(Port* ports, int nx, int ny) {
             ports_free(ports);
             return 0;
         }
+        ports[p].x = px;
         ports[p].y0 = y0;
         ports[p].y1 = y1;
-        ports[p].len = ports[p].y1 - ports[p].y0 + 1;
+        ports[p].len = segment_len;
         ports[p].n = PORT_SIGNAL_LENGTH;
         ports[p].V = vbuf;
         ports[p].I = ibuf;
         ports[p].head = 0;
+        ports[p].active = 0;
     }
     return 1;
 }
@@ -224,18 +247,9 @@ void ports_free(Port* ports) {
         return;
     }
     for (int p = 0; p < MAX_PORTS; p++) {
-        if (ports[p].V) {
-            free(ports[p].V);
-            ports[p].V = NULL;
-        }
-        if (ports[p].I) {
-            free(ports[p].I);
-            ports[p].I = NULL;
-        }
-        ports[p].n = 0;
-        ports[p].len = 0;
-        ports[p].head = 0;
-        ports[p].active = 0;
+        free(ports[p].V);
+        free(ports[p].I);
+        port_reset(&ports[p]);
     }
 }
 

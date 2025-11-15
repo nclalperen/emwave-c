@@ -1,5 +1,6 @@
 #include "fdtd_core.h"
 #include "config.h"
+#include "analysis.h"
 
 #include <check.h>
 #include <math.h>
@@ -66,6 +67,14 @@ START_TEST(test_fdtd_init_handles_allocation_sequence_failures) {
 }
 END_TEST
 
+START_TEST(test_fdtd_init_handles_port_alloc_failure) {
+    analysis_test_set_alloc_fail_after(0);
+    SimulationState* sim = fdtd_init(NULL);
+    ck_assert_ptr_null(sim);
+    analysis_test_set_alloc_fail_after(-1);
+}
+END_TEST
+
 static Suite* fdtd_suite(void) {
     Suite* s = suite_create("fdtd_core");
     TCase* tc = tcase_create("core");
@@ -75,6 +84,7 @@ static Suite* fdtd_suite(void) {
     tcase_add_test(tc, test_fdtd_init_handles_partial_alloc_failure);
     tcase_add_test(tc, test_fdtd_free_handles_partially_initialized_state);
     tcase_add_test(tc, test_fdtd_init_handles_allocation_sequence_failures);
+    tcase_add_test(tc, test_fdtd_init_handles_port_alloc_failure);
     suite_add_tcase(s, tc);
     return s;
 }

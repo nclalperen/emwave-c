@@ -13,6 +13,7 @@ function(add_emwave_check_test target)
   cmake_parse_arguments(ARG "" "" "SOURCES" ${ARGN})
   add_executable(${target} ${ARG_SOURCES})
   target_link_libraries(${target} PRIVATE emwave_core Check::check)
+  target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS)
   add_test(NAME ${target} COMMAND ${target})
 endfunction()
 

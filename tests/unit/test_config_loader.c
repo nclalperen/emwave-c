@@ -5,7 +5,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 START_TEST(test_waveguide_config) {
     SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
@@ -50,12 +55,31 @@ START_TEST(test_missing_file) {
 END_TEST
 
 START_TEST(test_oversized_file_guard) {
-    char path[] = "/tmp/emwave_config_oversizeXXXXXX";
-    int fd = mkstemp(path);
-    ck_assert_msg(fd >= 0, "mkstemp failed");
+    char path[512];
+    FILE* f = NULL;
+#if defined(_WIN32)
+    char tmp_dir[MAX_PATH];
+    DWORD dir_len = GetTempPathA(MAX_PATH, tmp_dir);
+    ck_assert_msg(dir_len > 0 && dir_len < MAX_PATH, "GetTempPathA failed");
 
-    FILE* f = fdopen(fd, "wb");
+    char tmp_file[MAX_PATH];
+    UINT res = GetTempFileNameA(tmp_dir, "ewc", 0, tmp_file);
+    ck_assert_msg(res != 0, "GetTempFileNameA failed");
+    ck_assert_msg(strlen(tmp_file) + 1 <= sizeof(path), "buffer too small for temp path");
+    strncpy(path, tmp_file, sizeof(path));
+    path[sizeof(path) - 1] = '\0';
+    f = fopen(path, "wb");
     ck_assert_ptr_nonnull(f);
+#else
+    char tmpl[] = "/tmp/emwave_config_oversizeXXXXXX";
+    int fd = mkstemp(tmpl);
+    ck_assert_msg(fd >= 0, "mkstemp failed");
+    ck_assert_msg(strlen(tmpl) + 1 <= sizeof(path), "buffer too small for temp path");
+    strncpy(path, tmpl, sizeof(path));
+    path[sizeof(path) - 1] = '\0';
+    f = fdopen(fd, "wb");
+    ck_assert_ptr_nonnull(f);
+#endif
 
     size_t target = (size_t)CONFIG_LOADER_MAX_FILE_BYTES + 1024;
     char block[4096];
@@ -76,7 +100,7 @@ START_TEST(test_oversized_file_guard) {
     ck_assert_msg(errbuf[0] != '\0', "Error buffer should describe failure");
     ck_assert_msg(strstr(errbuf, "too large") != NULL, "Expected error to mention size guard");
 
-    unlink(path);
+    remove(path);
 }
 END_TEST
 
