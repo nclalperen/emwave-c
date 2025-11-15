@@ -112,6 +112,27 @@ static void free_field_uchar(unsigned char*** rows, unsigned char** data) {
     }
 }
 
+static void fdtd_release_state_resources(SimulationState* state) {
+    if (!state) return;
+
+    free_field_double(&state->Ez, &state->Ez_data);
+    free_field_double(&state->Hx, &state->Hx_data);
+    free_field_double(&state->Hy, &state->Hy_data);
+    free_field_double(&state->Ez_old, &state->Ez_old_data);
+    free_field_double(&state->psi_Ezx, &state->psi_Ezx_data);
+    free_field_double(&state->psi_Ezy, &state->psi_Ezy_data);
+    free_field_double(&state->psi_Hyx, &state->psi_Hyx_data);
+    free_field_double(&state->psi_Hxy, &state->psi_Hxy_data);
+    free_field_double(&state->epsr, &state->epsr_data);
+    free_field_double(&state->sigma_map, &state->sigma_map_data);
+    free_field_uchar(&state->tag_grid, &state->tag_grid_data);
+
+    ports_free(state->ports);
+    boundary_shutdown(state);
+
+    fdtd_state_zero(state);
+}
+
 /* CFL timestep calculation */
 double fdtd_compute_dt(double dx, double dy, double cfl_safety) {
     double safety = (cfl_safety > 0.0) ? cfl_safety : CFL_SAFETY_FACTOR;
@@ -228,44 +249,7 @@ error:
 void fdtd_free(SimulationState* state) {
     if (!state) return;
 
-    if (state->Ez || state->Ez_data) {
-        free_field_double(&state->Ez, &state->Ez_data);
-    }
-    if (state->Hx || state->Hx_data) {
-        free_field_double(&state->Hx, &state->Hx_data);
-    }
-    if (state->Hy || state->Hy_data) {
-        free_field_double(&state->Hy, &state->Hy_data);
-    }
-    if (state->Ez_old || state->Ez_old_data) {
-        free_field_double(&state->Ez_old, &state->Ez_old_data);
-    }
-    if (state->psi_Ezx || state->psi_Ezx_data) {
-        free_field_double(&state->psi_Ezx, &state->psi_Ezx_data);
-    }
-    if (state->psi_Ezy || state->psi_Ezy_data) {
-        free_field_double(&state->psi_Ezy, &state->psi_Ezy_data);
-    }
-    if (state->psi_Hyx || state->psi_Hyx_data) {
-        free_field_double(&state->psi_Hyx, &state->psi_Hyx_data);
-    }
-    if (state->psi_Hxy || state->psi_Hxy_data) {
-        free_field_double(&state->psi_Hxy, &state->psi_Hxy_data);
-    }
-    if (state->epsr || state->epsr_data) {
-        free_field_double(&state->epsr, &state->epsr_data);
-    }
-    if (state->sigma_map || state->sigma_map_data) {
-        free_field_double(&state->sigma_map, &state->sigma_map_data);
-    }
-    if (state->tag_grid || state->tag_grid_data) {
-        free_field_uchar(&state->tag_grid, &state->tag_grid_data);
-    }
-
-    ports_free(state->ports);
-    boundary_shutdown(state);
-
-    fdtd_state_zero(state);
+    fdtd_release_state_resources(state);
     free(state);
 }
 
