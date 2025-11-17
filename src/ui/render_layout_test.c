@@ -77,6 +77,22 @@ static int validate_layout(int nx, int ny) {
         ok = 0;
     }
 
+    int expected_scope_x = layout.viewport.x + 16;
+    if (layout.timeline_scope.x != expected_scope_x) {
+        printf("Timeline scope x mismatch for %dx%d (got %d, expected %d)\n",
+               nx, ny, layout.timeline_scope.x, expected_scope_x);
+        ok = 0;
+    }
+
+    int expected_scope_w = layout.viewport.w - 32;
+    if (expected_scope_w < 0) expected_scope_w = 0;
+    if (expected_scope_w > layout.viewport.w) expected_scope_w = layout.viewport.w;
+    if (layout.timeline_scope.w != expected_scope_w) {
+        printf("Timeline scope width mismatch for %dx%d (got %d, expected %d)\n",
+               nx, ny, layout.timeline_scope.w, expected_scope_w);
+        ok = 0;
+    }
+
     return ok;
 }
 
