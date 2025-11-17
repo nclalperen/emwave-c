@@ -7,10 +7,82 @@
 #include <string.h>
 
 #if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <errno.h>
 #endif
+
+static int create_temp_config(char* path, size_t path_len, FILE** out_file) {
+#if defined(_WIN32)
+    char tmp_dir[MAX_PATH];
+    DWORD dir_len = GetTempPathA(MAX_PATH, tmp_dir);
+    if (dir_len == 0 || dir_len >= MAX_PATH) {
+        return 0;
+    }
+    char tmp_file[MAX_PATH];
+    if (GetTempFileNameA(tmp_dir, "ewc", 0, tmp_file) == 0) {
+        return 0;
+    }
+    if (strlen(tmp_file) + 1 > path_len) {
+        return 0;
+    }
+    strncpy(path, tmp_file, path_len);
+    path[path_len - 1] = '\0';
+    FILE* file = fopen(path, "wb");
+    if (!file) {
+        return 0;
+    }
+#else
+    char tmpl[512];
+#ifdef TEST_TMP_DIR
+    int written = snprintf(tmpl, sizeof(tmpl), "%s/emwave_config_XXXXXX", TEST_TMP_DIR);
+#else
+    int written = snprintf(tmpl, sizeof(tmpl), "/tmp/emwave_config_XXXXXX");
+#endif
+    if (written <= 0 || (size_t)written >= sizeof(tmpl)) {
+        return 0;
+    }
+    int fd = mkstemp(tmpl);
+    if (fd < 0) {
+        return 0;
+    }
+    if (strlen(tmpl) + 1 > path_len) {
+        close(fd);
+        errno = ENAMETOOLONG;
+        return 0;
+    }
+    strncpy(path, tmpl, path_len);
+    path[path_len - 1] = '\0';
+    FILE* file = fdopen(fd, "wb");
+    if (!file) {
+        close(fd);
+        return 0;
+    }
+#endif
+    if (out_file) {
+        *out_file = file;
+    } else {
+        fclose(file);
+    }
+    return 1;
+}
+
+static void write_repeated_bytes(FILE* f, size_t total_bytes) {
+    char block[4096];
+    memset(block, 'x', sizeof(block));
+    size_t remaining = total_bytes;
+    while (remaining > 0) {
+        size_t chunk = remaining < sizeof(block) ? remaining : sizeof(block);
+        size_t written = fwrite(block, 1, chunk, f);
+        ck_assert_msg(written == chunk, "Failed to write temporary config data");
+        remaining -= chunk;
+    }
+    fflush(f);
+}
 
 START_TEST(test_waveguide_config) {
     SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
@@ -54,43 +126,22 @@ START_TEST(test_missing_file) {
 }
 END_TEST
 
+START_TEST(test_directory_path_rejected) {
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    char errbuf[128];
+    int ok = config_loader_parse_file(CONFIGS_DIR, &cfg, errbuf, sizeof(errbuf));
+    ck_assert_msg(!ok, "Directories should fail to parse");
+    ck_assert_msg(errbuf[0] != '\0', "Directory failure should populate errbuf");
+}
+END_TEST
+
 START_TEST(test_oversized_file_guard) {
     char path[512];
     FILE* f = NULL;
-#if defined(_WIN32)
-    char tmp_dir[MAX_PATH];
-    DWORD dir_len = GetTempPathA(MAX_PATH, tmp_dir);
-    ck_assert_msg(dir_len > 0 && dir_len < MAX_PATH, "GetTempPathA failed");
-
-    char tmp_file[MAX_PATH];
-    UINT res = GetTempFileNameA(tmp_dir, "ewc", 0, tmp_file);
-    ck_assert_msg(res != 0, "GetTempFileNameA failed");
-    ck_assert_msg(strlen(tmp_file) + 1 <= sizeof(path), "buffer too small for temp path");
-    strncpy(path, tmp_file, sizeof(path));
-    path[sizeof(path) - 1] = '\0';
-    f = fopen(path, "wb");
-    ck_assert_ptr_nonnull(f);
-#else
-    char tmpl[] = "/tmp/emwave_config_oversizeXXXXXX";
-    int fd = mkstemp(tmpl);
-    ck_assert_msg(fd >= 0, "mkstemp failed");
-    ck_assert_msg(strlen(tmpl) + 1 <= sizeof(path), "buffer too small for temp path");
-    strncpy(path, tmpl, sizeof(path));
-    path[sizeof(path) - 1] = '\0';
-    f = fdopen(fd, "wb");
-    ck_assert_ptr_nonnull(f);
-#endif
+    ck_assert_msg(create_temp_config(path, sizeof(path), &f), "Failed to create temp config");
 
     size_t target = (size_t)CONFIG_LOADER_MAX_FILE_BYTES + 1024;
-    char block[4096];
-    memset(block, 'x', sizeof(block));
-    size_t remaining = target;
-    while (remaining > 0) {
-        size_t chunk = remaining < sizeof(block) ? remaining : sizeof(block);
-        size_t written = fwrite(block, 1, chunk, f);
-        ck_assert_msg(written == chunk, "Failed to write oversized block");
-        remaining -= chunk;
-    }
+    write_repeated_bytes(f, target);
     fclose(f);
 
     SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
@@ -104,6 +155,50 @@ START_TEST(test_oversized_file_guard) {
 }
 END_TEST
 
+START_TEST(test_empty_file_is_rejected) {
+    char path[512];
+    FILE* f = NULL;
+    ck_assert_msg(create_temp_config(path, sizeof(path), &f), "Failed to create temp file");
+    fclose(f);
+
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    char errbuf[128];
+    int ok = config_loader_parse_file(path, &cfg, errbuf, sizeof(errbuf));
+    ck_assert_msg(!ok, "Empty config should be rejected");
+    ck_assert_msg(errbuf[0] != '\0', "Expected error message for empty config");
+
+    remove(path);
+}
+END_TEST
+
+START_TEST(test_config_truncates_excess_sources) {
+    char path[512];
+    FILE* f = NULL;
+    ck_assert_msg(create_temp_config(path, sizeof(path), &f), "Failed to create temp config");
+
+    fputs("{\n", f);
+    fputs("  \"simulation\": { \"nx\": 32, \"ny\": 32 },\n", f);
+    fputs("  \"sources\": [", f);
+    for (int i = 0; i < MAX_SRC + 1; ++i) {
+        fputs("{ \"type\": \"gaussian\", \"x\": 0.1, \"y\": 0.2 }", f);
+        if (i != MAX_SRC) {
+            fputc(',', f);
+        }
+    }
+    fputs("]\n}\n", f);
+    fclose(f);
+
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    char errbuf[128];
+    int ok = config_loader_parse_file(path, &cfg, errbuf, sizeof(errbuf));
+    ck_assert_msg(ok, "Config with too many sources should still parse");
+    ck_assert_int_eq(cfg.source_count, MAX_SRC);
+    ck_assert_msg(errbuf[0] == '\0', "No error string expected when truncating sources");
+
+    remove(path);
+}
+END_TEST
+
 static Suite* config_loader_suite(void) {
     Suite* s = suite_create("config_loader");
     TCase* tc = tcase_create("core");
@@ -111,7 +206,10 @@ static Suite* config_loader_suite(void) {
     tcase_add_test(tc, test_cpw_config);
     tcase_add_test(tc, test_invalid_config_file);
     tcase_add_test(tc, test_missing_file);
+    tcase_add_test(tc, test_directory_path_rejected);
     tcase_add_test(tc, test_oversized_file_guard);
+    tcase_add_test(tc, test_empty_file_is_rejected);
+    tcase_add_test(tc, test_config_truncates_excess_sources);
     suite_add_tcase(s, tc);
     return s;
 }
