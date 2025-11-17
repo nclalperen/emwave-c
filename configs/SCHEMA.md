@@ -54,14 +54,16 @@ Array describing the active sources at start-up. Positions are normalized
 fractions (0.0 → left/bottom, 1.0 → right/top) and are clamped away from the
 PML to avoid numerical issues.
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `type` | string | `"cw"`, `"gaussian"`, or `"ricker"`. |
-| `x`, `y` | number | Normalized location of the source. |
-| `amp` | number | Source amplitude. Defaults to 1.0. |
-| `freq` | number | Frequency in Hz. Defaults to 1e9. |
-| `sigma2` | number | Spatial variance (controls Gaussian footprint). Defaults to 4.0. |
-| `active` | boolean | Whether the source is enabled. Defaults to `true`. |
+  | Key | Type | Description |
+  | --- | --- | --- |
+  | `type` | string | `"cw"`, `"gaussian"`, `"ricker"`, or `"expr"`. |
+  | `field` | string | Optional. Target field: `"ez"` (default), `"hx"`, or `"hy"`. |
+  | `x`, `y` | number | Normalized location of the source. |
+  | `amp` | number | Source amplitude. Defaults to 1.0. |
+  | `freq` | number | Frequency in Hz. Defaults to 1e9. |
+  | `sigma2` | number | Spatial variance (controls Gaussian footprint). Defaults to 4.0. |
+  | `expr` | string | Optional expression when `type` is `"expr"`. Variables: `t` (seconds), `amp`, `freq`, `pi`. |
+  | `active` | boolean | Whether the source is enabled. Defaults to `true`. |
 
 At most `CONFIG_MAX_MATERIAL_RECTS` material rectangles and `MAX_SRC` sources are
 loaded. Excess entries are ignored.

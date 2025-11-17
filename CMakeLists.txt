@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EmWaveC C)
+project(EmWaveC C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
@@ -51,6 +51,7 @@ set(EMWAVE_CORE_SOURCES
     src/core/fdtd_core.c
     src/core/boundary.c
     src/core/ports.c
+    src/core/expr.c
     src/core/config_runtime.c
     src/core/sources.c
     src/core/materials.c
@@ -78,6 +79,7 @@ add_library(emwave_solver STATIC
     src/core/app_bootstrap.c
     src/core/fdtd_core.c
     src/core/boundary.c
+    src/core/expr.c
     src/core/config_runtime.c
     src/core/sources.c
     src/core/materials.c
@@ -94,6 +96,28 @@ if (EMWAVE_UI_AVAILABLE)
     )
     target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(emwave PRIVATE emwave_core SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+
+    # Dear ImGui front-end (SDL2 + SDL_Renderer backend)
+    set(IMGUI_SOURCES
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/backends/imgui_impl_sdl2.cpp
+        third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp
+        src/app/main_imgui.cpp
+        ${EMWAVE_UI_SOURCES}
+    )
+
+    add_executable(emwave_imgui ${IMGUI_SOURCES})
+    target_include_directories(emwave_imgui PRIVATE
+        ${EMWAVE_INCLUDE_DIRS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends"
+    )
+    target_link_libraries(emwave_imgui PRIVATE emwave_core SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+    target_compile_definitions(emwave_imgui PRIVATE SDL_MAIN_HANDLED)
+    set_target_properties(emwave_imgui PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 else()
     message(WARNING "SDL2 UI disabled - emwave target will not be built")
 endif()

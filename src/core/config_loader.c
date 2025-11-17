@@ -72,6 +72,9 @@ static SourceType source_type_from_string(const char* type) {
     if (str_ieq(type, "ricker")) {
         return SRC_RICKER;
     }
+    if (str_ieq(type, "expr") || str_ieq(type, "expression")) {
+        return SRC_EXPR;
+    }
     return SRC_CW;
 }
 
@@ -365,6 +368,8 @@ static int json_load_source(const char* json, const jsmntok_t* tokens, int total
     spec.freq = 1e9;
     spec.sigma2 = 4.0;
     spec.type = SRC_CW;
+     spec.field = SRC_FIELD_EZ;
+     spec.expr[0] = '\0';
     int idx = obj_index + 1;
     for (int pair = 0; pair < tokens[obj_index].size; pair++) {
         int key_idx = idx;
@@ -379,6 +384,20 @@ static int json_load_source(const char* json, const jsmntok_t* tokens, int total
             if (json_token_to_string(json, &tokens[value_idx], type, sizeof(type))) {
                 spec.type = source_type_from_string(type);
             }
+        } else if (strcmp(key, "field") == 0) {
+            char field[16];
+            if (json_token_to_string(json, &tokens[value_idx], field, sizeof(field))) {
+                if (str_ieq(field, "ez")) {
+                    spec.field = SRC_FIELD_EZ;
+                } else if (str_ieq(field, "hx")) {
+                    spec.field = SRC_FIELD_HX;
+                } else if (str_ieq(field, "hy")) {
+                    spec.field = SRC_FIELD_HY;
+                }
+            }
+        } else if (strcmp(key, "expr") == 0 && tokens[value_idx].type == JSMN_STRING) {
+            json_token_to_string(json, &tokens[value_idx],
+                                 spec.expr, sizeof(spec.expr));
         } else if (strcmp(key, "x") == 0) {
             json_token_to_double(json, &tokens[value_idx], &spec.x);
         } else if (strcmp(key, "y") == 0) {

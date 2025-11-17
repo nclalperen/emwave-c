@@ -79,11 +79,21 @@
 #define CONFIG_MAX_MATERIAL_RECTS 16
 #define MAX_SRC 4
 
+/* Maximum length for user-defined source expressions (excluding NUL) */
+#define SOURCE_EXPR_MAX_LEN 256
+
 typedef enum {
     SRC_CW = 0,
     SRC_GAUSS_PULSE = 1,
-    SRC_RICKER = 2
+    SRC_RICKER = 2,
+    SRC_EXPR = 3
 } SourceType;
+
+typedef enum {
+    SRC_FIELD_EZ = 0,
+    SRC_FIELD_HX = 1,
+    SRC_FIELD_HY = 2
+} SourceFieldType;
 
 typedef struct {
     double x0;
@@ -103,6 +113,8 @@ typedef struct {
     double amp;
     double freq;
     double sigma2;
+    SourceFieldType field;
+    char expr[SOURCE_EXPR_MAX_LEN];
 } SourceConfigSpec;
 
 typedef struct {
@@ -153,6 +165,15 @@ typedef struct {
     PortConfigSpec port_configs[2];
 } SimulationConfig;
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern const SimulationConfig SIM_CONFIG_DEFAULTS;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_CONFIG_H */

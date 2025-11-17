@@ -32,8 +32,14 @@ const SimulationConfig SIM_CONFIG_DEFAULTS = {
     },
     .source_count = 1,
     .source_configs = {
-        { .active = 1, .x = 0.25, .y = 0.5, .type = SRC_CW,
-          .amp = 1.0, .freq = 1e9, .sigma2 = 4.0 }
+        { .active = 1,
+          .x = 0.25, .y = 0.5,
+          .type = SRC_CW,
+          .amp = 1.0,
+          .freq = 1e9,
+          .sigma2 = 4.0,
+          .field = SRC_FIELD_EZ,
+          .expr = "" }
     },
     .port_count = 0,
 };
@@ -84,6 +90,11 @@ void config_clamp_to_limits(SimulationConfig* cfg) {
         cfg->source_configs[i].y = clamp01(cfg->source_configs[i].y);
         if (cfg->source_configs[i].sigma2 <= 0.0) cfg->source_configs[i].sigma2 = 4.0;
         if (cfg->source_configs[i].freq <= 0.0) cfg->source_configs[i].freq = 1e9;
+        if (cfg->source_configs[i].field < SRC_FIELD_EZ ||
+            cfg->source_configs[i].field > SRC_FIELD_HY) {
+            cfg->source_configs[i].field = SRC_FIELD_EZ;
+        }
+        cfg->source_configs[i].expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
     }
 
     if (cfg->port_count < 0) cfg->port_count = 0;

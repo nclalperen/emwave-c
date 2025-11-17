@@ -4,7 +4,11 @@
 
 #include "sources.h"
 #include "config.h"
+#include "expr.h"
+
 #include <math.h>
+#include <string.h>
+#include <stdio.h>
 
 static int normalized_to_cell(double frac, int n, int pad) {
     double clamped = frac;
@@ -18,14 +22,42 @@ static int normalized_to_cell(double frac, int n, int pad) {
     return idx;
 }
 
+static void source_free_expr(Source* s) {
+    if (!s || !s->expr_program) {
+        return;
+    }
+    expr_free((ExprProgram*)s->expr_program);
+    s->expr_program = NULL;
+}
+
+static void source_compile_expr(Source* s) {
+    source_free_expr(s);
+    if (!s) return;
+    if (s->type != SRC_EXPR) return;
+    if (s->expr_text[0] == '\0') return;
+
+    ExprProgram* prog = NULL;
+    char errbuf[128];
+    if (!expr_compile(s->expr_text, &prog, errbuf, (int)sizeof(errbuf))) {
+        fprintf(stderr, "Warning: failed to compile source expression '%s': %s\n",
+                s->expr_text, (errbuf[0] != '\0') ? errbuf : "unknown error");
+        s->expr_program = NULL;
+        return;
+    }
+    s->expr_program = (void*)prog;
+}
+
 /* Initialize all sources with default parameters */
 void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) {
     for (int k = 0; k < MAX_SRC; k++) {
         sources[k].active = (k == 0) ? 1 : 0;  /* Only first source active by default */
         sources[k].type = SRC_CW;
+        sources[k].field = SRC_FIELD_EZ;
         sources[k].amp = 1.0;
         sources[k].freq = 1e9;  /* 1 GHz */
         sources[k].sigma2 = 4.0;  /* Spatial footprint */
+        sources[k].expr_text[0] = '\0';
+        sources[k].expr_program = NULL;
 
         /* Default positions - spread them out */
         sources[k].ix = nx/2 + (k - MAX_SRC/2) * (nx/8);
@@ -51,12 +83,21 @@ void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) 
             s->amp = spec->amp;
             s->freq = spec->freq;
             s->sigma2 = spec->sigma2;
+            s->field = spec->field;
+            s->expr_text[0] = '\0';
+            s->expr_program = NULL;
+            if (spec->expr[0] != '\0') {
+                strncpy(s->expr_text, spec->expr, SOURCE_EXPR_MAX_LEN - 1);
+                s->expr_text[SOURCE_EXPR_MAX_LEN - 1] = '\0';
+            }
             s->ix = normalized_to_cell(spec->x, nx, pad);
             s->iy = normalized_to_cell(spec->y, ny, pad);
             source_reparam(s);
+            source_compile_expr(s);
         }
         for (int k = cfg->source_count; k < MAX_SRC; k++) {
             sources[k].active = 0;
+            source_free_expr(&sources[k]);
         }
     }
 }
@@ -85,8 +126,13 @@ void sources_set_freq(Source* sources, double f) {
 /* Cycle through source types */
 void sources_cycle_type(Source* sources) {
     for (int k = 0; k < MAX_SRC; k++) {
-        sources[k].type = (SourceType)((sources[k].type + 1) % 3);
+        if (sources[k].type == SRC_EXPR) {
+            continue; /* expression sources are not cycled from the keyboard */
+        }
+        int next = ((int)sources[k].type + 1) % (int)SRC_EXPR; /* cycle CW/Gauss/Ricker */
+        sources[k].type = (SourceType)next;
         source_reparam(&sources[k]);
+        source_compile_expr(&sources[k]);
     }
 }
 
@@ -110,17 +156,39 @@ double source_time_value(const Source* s, int t, double dt) {
             return s->amp * (1.0 - 2.0 * a * a) * e;
         }
 
+        case SRC_EXPR: {
+            const ExprProgram* prog = (const ExprProgram*)s->expr_program;
+            if (!prog) return 0.0;
+            return expr_eval(prog, tt, s->amp, s->freq);
+        }
+
         default:
             return 0.0;
     }
 }
 
-/* Inject a single source into Ez field */
+/* Inject a single source into the selected field component */
 void inject_source_into_Ez(Source* s, SimulationState* state, double dt) {
     if (!s->active) return;
+    if (!state) return;
 
     /* Compute source amplitude at this timestep */
     double A = source_time_value(s, state->timestep, dt);
+
+    double** field = NULL;
+    switch (s->field) {
+        case SRC_FIELD_HX:
+            field = state->Hx;
+            break;
+        case SRC_FIELD_HY:
+            field = state->Hy;
+            break;
+        case SRC_FIELD_EZ:
+        default:
+            field = state->Ez;
+            break;
+    }
+    if (!field) return;
 
     /* Soft source injection with spatial Gaussian footprint */
     for (int di = -2; di <= 2; di++) {
@@ -135,9 +203,16 @@ void inject_source_into_Ez(Source* s, SimulationState* state, double dt) {
                 double val = A * w;
 
                 /* Saturating injection to reduce reflections */
-                state->Ez[i][j] += val / (1.0 + fabs(val) * 0.1);
+                field[i][j] += val / (1.0 + fabs(val) * 0.1);
             }
         }
+    }
+}
+
+void sources_shutdown(Source* sources) {
+    if (!sources) return;
+    for (int k = 0; k < MAX_SRC; ++k) {
+        source_free_expr(&sources[k]);
     }
 }
 

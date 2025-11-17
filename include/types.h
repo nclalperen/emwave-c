@@ -13,9 +13,12 @@ typedef struct {
     int active;
     int ix, iy;
     SourceType type;
+    SourceFieldType field;
     double amp, freq;
     double t0, tau;     /* pulse parameters */
     double sigma2;      /* spatial footprint variance in cells^2 */
+    char expr_text[SOURCE_EXPR_MAX_LEN];
+    void* expr_program;  /* opaque pointer to compiled expression, if any */
 } Source;
 
 /* Port structure for S-parameter measurements */
