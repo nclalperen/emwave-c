@@ -44,6 +44,7 @@ struct AppState {
     bool show_log_panel;
     bool show_expression_panel;
     bool show_scenes_panel;
+    bool show_grid_overlay;
     /* Simple log buffer */
     char log_lines[128][256];
     int log_count;
@@ -98,16 +99,17 @@ static const char* source_field_label(SourceFieldType f) {
 
 /* Scene overview panel ---------------------------------------------------- */
 static void draw_scene_panel(const SimulationState* sim, const WizardState& wizard) {
-    if (!sim) {
-        return;
-    }
-    if (!ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!ImGui::Begin("Scene")) {
+        ImGui::End();
         return;
     }
 
-    ImGui::Text("Grid: %d x %d", sim->nx, sim->ny);
-    ImGui::Text("Domain: %.3f m x %.3f m", sim->lx, sim->ly);
-    ImGui::Text("dt: %.3e s", sim->dt);
+    if (sim) {
+        ImGui::Text("Grid: %d x %d", sim->nx, sim->ny);
+        ImGui::Text("Domain: %.3f m x %.3f m", sim->lx, sim->ly);
+        ImGui::Text("dt: %.3e s", sim->dt);
+        ImGui::Separator();
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("Materials");
@@ -124,10 +126,12 @@ static void draw_scene_panel(const SimulationState* sim, const WizardState& wiza
 
 /* Sources panel ----------------------------------------------------------- */
 static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppState* app) {
-    if (!sim || !app) {
+    if (!ImGui::Begin("Sources")) {
+        ImGui::End();
         return;
     }
-    if (!ImGui::CollapsingHeader("Sources", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!sim || !app) {
+        ImGui::End();
         return;
     }
 
@@ -198,6 +202,8 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
         ImGui::Text("Position: (%d,%d)", s.ix, s.iy);
         ImGui::Unindent();
     }
+
+    ImGui::End();
 }
 
 /* Blocks panel ------------------------------------------------------------ */
@@ -211,6 +217,23 @@ static void draw_probes_panel(const SimulationState* sim);
 
 /* Log panel --------------------------------------------------------------- */
 static void draw_log_panel(AppState* app);
+
+static void render_grid_overlay(RenderContext* render, const SimulationState* sim, SDL_Color color) {
+    if (!render || !sim) return;
+    SDL_Renderer* rr = render->renderer;
+    if (!rr) return;
+    int width = sim->nx * render->scale;
+    int height = sim->ny * render->scale;
+    SDL_SetRenderDrawColor(rr, color.r, color.g, color.b, color.a);
+    for (int i = 0; i <= sim->nx; ++i) {
+        int x = i * render->scale;
+        SDL_RenderDrawLine(rr, x, 0, x, height);
+    }
+    for (int j = 0; j <= sim->ny; ++j) {
+        int y = j * render->scale;
+        SDL_RenderDrawLine(rr, 0, y, width, y);
+    }
+}
 
 static void wizard_grid_tab(WizardState& w) {
     ImGui::TextUnformatted("Domain & Grid");
@@ -491,10 +514,8 @@ static void draw_blocks_panel(WizardState& wizard,
                               SimulationBootstrap* bootstrap,
                               SimulationState* sim,
                               AppState* app) {
-    if (!bootstrap || !sim || !app) {
-        return;
-    }
-    if (!ImGui::CollapsingHeader("Blocks", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!ImGui::Begin("Blocks")) {
+        ImGui::End();
         return;
     }
 
@@ -538,15 +559,20 @@ static void draw_blocks_panel(WizardState& wizard,
             ImGui::TreePop();
         }
     }
+
+    ImGui::End();
 }
 
 /* Probes panel ------------------------------------------------------------ */
 static void draw_probes_panel(const SimulationState* sim) {
-#if EMWAVE_ENABLE_PORTS
-    if (!sim) {
+    if (!ImGui::Begin("Probes")) {
+        ImGui::End();
         return;
     }
-    if (!ImGui::CollapsingHeader("Probes", ImGuiTreeNodeFlags_DefaultOpen)) {
+
+#if EMWAVE_ENABLE_PORTS
+    if (!sim) {
+        ImGui::End();
         return;
     }
     ImGui::Text("Ports enabled: %s", sim->ports_on ? "yes" : "no");
@@ -562,6 +588,8 @@ static void draw_probes_panel(const SimulationState* sim) {
     }
     ImGui::TextUnformatted("Ports are disabled in this build.");
 #endif
+
+    ImGui::End();
 }
 
 /* Log panel --------------------------------------------------------------- */
@@ -618,6 +646,7 @@ int main(int argc, char** argv) {
     app.show_log_panel = true;
     app.show_expression_panel = true;
     app.show_scenes_panel = true;
+    app.show_grid_overlay = true;
     app.log_count = 0;
     ui_log_add(&app, "Simulation started");
 
@@ -647,20 +676,8 @@ int main(int argc, char** argv) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 4.0f;
     style.FrameRounding = 3.0f;
-    style.ScrollbarSize = 14.0f;
-    style.FramePadding = ImVec2(8.0f, 4.0f);
-    style.ItemSpacing = ImVec2(8.0f, 6.0f);
-    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
-    style.IndentSpacing = 20.0f;
-    style.WindowPadding = ImVec2(8.0f, 8.0f);
-
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.10f, 0.13f, 0.94f);
-    colors[ImGuiCol_Header] = ImVec4(0.18f, 0.35f, 0.55f, 0.60f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.23f, 0.44f, 0.69f, 0.82f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.25f, 0.52f, 0.82f, 0.92f);
-    colors[ImGuiCol_TableRowBg] = ImVec4(0.12f, 0.13f, 0.17f, 0.65f);
-    colors[ImGuiCol_TableRowBgAlt] = ImVec4(0.15f, 0.17f, 0.21f, 0.80f);
+    style.ScrollbarSize = 16.0f;
+    style.FramePadding = ImVec2(6.0f, 4.0f);
 
     ImGui_ImplSDL2_InitForSDLRenderer(render->window, render->renderer);
     ImGui_ImplSDLRenderer2_Init(render->renderer);
@@ -795,10 +812,10 @@ int main(int argc, char** argv) {
 
         ImVec2 full = ImGui::GetContentRegionAvail();
         // Fixed proportions for 1920x1080 studio layout
-        float bottom_h = 200.0f;  // Fixed height for bottom strip
+        float bottom_h = 220.0f;  // Fixed height for bottom strip
         float main_h = full.y - bottom_h;
-        float left_w = 300.0f;    // Fixed width for left column
-        float right_w = 360.0f;   // Fixed width for right column
+        float left_w = 320.0f;    // Fixed width for left column
+        float right_w = 350.0f;   // Fixed width for right column
         float center_w = full.x - left_w - right_w;
 
         ImVec2 origin = ImGui::GetCursorPos();
@@ -807,7 +824,6 @@ int main(int argc, char** argv) {
 
         // Left column
         ImGui::SetCursorPos(origin);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, column_bg);
         ImGui::BeginChild("LeftColumn", ImVec2(left_w, main_h), true);
         if (app.show_scene_panel) {
             draw_scene_panel(sim, wizard);
@@ -831,7 +847,6 @@ int main(int argc, char** argv) {
 
         // Right column (Simulation Controls + Wizard)
         ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, column_bg);
         ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
 
         // Simulation Controls
@@ -863,6 +878,11 @@ int main(int argc, char** argv) {
 
             ImGui::Separator();
             ImGui::Checkbox("Basic mode", &app.basic_mode);
+
+            ImGui::Separator();
+            if (ImGui::Button(app.show_grid_overlay ? "Hide grid" : "Show grid")) {
+                app.show_grid_overlay = !app.show_grid_overlay;
+            }
         }
 
         // Interactive Tools section
@@ -969,7 +989,6 @@ int main(int argc, char** argv) {
 
         // Bottom strip with tabs for Scope and Log
         ImGui::SetCursorPos(ImVec2(origin.x, origin.y + main_h));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, bottom_bg);
         ImGui::BeginChild("BottomStrip", ImVec2(full.x, bottom_h), true);
         if (ImGui::BeginTabBar("BottomTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Scope")) {
@@ -1081,6 +1100,10 @@ int main(int argc, char** argv) {
         double vmax = sim->step_Ez_absmax;
         if (vmax <= 0.0) vmax = 1.0;
         render_field_heatmap(render, sim, vmax, 1.0);
+        if (app.show_grid_overlay) {
+            SDL_Color grid_col = {40, 40, 50, 255};
+            render_grid_overlay(render, sim, grid_col);
+        }
         render_sources(render, sim->sources);
 
         ImGui::Render();
