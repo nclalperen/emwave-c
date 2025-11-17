@@ -56,6 +56,33 @@ static void fdtd_state_zero(SimulationState* state) {
     state->config = SIM_CONFIG_DEFAULTS;
 }
 
+static void fdtd_reset_port_buffers(SimulationState* state) {
+    if (!state) {
+        return;
+    }
+    for (int p = 0; p < MAX_PORTS; ++p) {
+        Port* port = &state->ports[p];
+        size_t bytes = (port->n > 0) ? (sizeof(double) * (size_t)port->n) : 0u;
+        if (bytes > 0 && port->V) {
+            memset(port->V, 0, bytes);
+        }
+        if (bytes > 0 && port->I) {
+            memset(port->I, 0, bytes);
+        }
+        port->head = 0;
+        int span = (port->y1 >= port->y0) ? (port->y1 - port->y0 + 1) : 0;
+        if (span < 0) {
+            span = 0;
+        }
+        port->len = span;
+        if (!port->V || !port->I || span == 0 || port->n <= 0) {
+            port->active = 0;
+        } else {
+            port->active = 1;
+        }
+    }
+}
+
 static int alloc_field_double(int nx, int ny, double*** out_rows, double** out_data) {
     size_t cells = (size_t)nx * (size_t)ny;
     double* data = (double*)fdtd_checked_calloc(cells, sizeof(double));
@@ -153,7 +180,7 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     char errbuf[128];
     if (!config_validate(&local_cfg, errbuf, sizeof(errbuf))) {
         fprintf(stderr, "Invalid configuration: %s\n", errbuf);
-        goto error;
+        goto fail;
     }
 
     state->config = local_cfg;
@@ -179,54 +206,30 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     int nx = state->nx;
     int ny = state->ny;
 
-    if (!alloc_field_double(nx, ny, &state->Ez, &state->Ez_data)) {
-        fprintf(stderr, "Failed to allocate Ez grid\n");
-        goto error;
+    if (nx < 2 || ny < 2) {
+        fprintf(stderr, "Grid dimensions too small for simulation (%d x %d)\n", nx, ny);
+        goto fail;
     }
-    if (!alloc_field_double(nx, ny, &state->Hx, &state->Hx_data)) {
-        fprintf(stderr, "Failed to allocate Hx grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->Hy, &state->Hy_data)) {
-        fprintf(stderr, "Failed to allocate Hy grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->Ez_old, &state->Ez_old_data)) {
-        fprintf(stderr, "Failed to allocate Ez_old grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->psi_Ezx, &state->psi_Ezx_data)) {
-        fprintf(stderr, "Failed to allocate psi_Ezx grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->psi_Ezy, &state->psi_Ezy_data)) {
-        fprintf(stderr, "Failed to allocate psi_Ezy grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->psi_Hyx, &state->psi_Hyx_data)) {
-        fprintf(stderr, "Failed to allocate psi_Hyx grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->psi_Hxy, &state->psi_Hxy_data)) {
-        fprintf(stderr, "Failed to allocate psi_Hxy grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->epsr, &state->epsr_data)) {
-        fprintf(stderr, "Failed to allocate epsr grid\n");
-        goto error;
-    }
-    if (!alloc_field_double(nx, ny, &state->sigma_map, &state->sigma_map_data)) {
-        fprintf(stderr, "Failed to allocate sigma map grid\n");
-        goto error;
-    }
-    if (!alloc_field_uchar(nx, ny, &state->tag_grid, &state->tag_grid_data)) {
-        fprintf(stderr, "Failed to allocate tag grid\n");
-        goto error;
+
+    if (!alloc_field_double(nx, ny, &state->Ez, &state->Ez_data) ||
+        !alloc_field_double(nx, ny, &state->Hx, &state->Hx_data) ||
+        !alloc_field_double(nx, ny, &state->Hy, &state->Hy_data) ||
+        !alloc_field_double(nx, ny, &state->Ez_old, &state->Ez_old_data) ||
+        !alloc_field_double(nx, ny, &state->psi_Ezx, &state->psi_Ezx_data) ||
+        !alloc_field_double(nx, ny, &state->psi_Ezy, &state->psi_Ezy_data) ||
+        !alloc_field_double(nx, ny, &state->psi_Hyx, &state->psi_Hyx_data) ||
+        !alloc_field_double(nx, ny, &state->psi_Hxy, &state->psi_Hxy_data) ||
+        !alloc_field_double(nx, ny, &state->epsr, &state->epsr_data) ||
+        !alloc_field_double(nx, ny, &state->sigma_map, &state->sigma_map_data) ||
+        !alloc_field_uchar(nx, ny, &state->tag_grid, &state->tag_grid_data)) {
+        fprintf(stderr, "Failed to allocate simulation grids\n");
+        goto fail;
     }
 
     if (!ports_init(state->ports, state->nx, state->ny)) {
+        ports_free(state->ports);
         fprintf(stderr, "Failed to initialize simulation ports\n");
-        goto error;
+        goto fail;
     }
 
     fdtd_clear_fields(state);
@@ -240,7 +243,7 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
 
     return state;
 
-error:
+fail:
     fdtd_free(state);
     return NULL;
 }
@@ -276,11 +279,7 @@ void fdtd_reset(SimulationState* state) {
     state->step_Ez_absmax = 0.0;
 
     /* Reset ports */
-    for (int p = 0; p < MAX_PORTS; p++) {
-        if (state->ports[p].V) memset(state->ports[p].V, 0, sizeof(double) * state->ports[p].n);
-        if (state->ports[p].I) memset(state->ports[p].I, 0, sizeof(double) * state->ports[p].n);
-        state->ports[p].head = 0;
-    }
+    fdtd_reset_port_buffers(state);
 }
 
 /* Material property access */
