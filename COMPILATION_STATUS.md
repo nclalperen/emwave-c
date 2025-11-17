@@ -1,6 +1,6 @@
 # Compilation Status - MSVC on Windows
 
-> **Status update:** The modular SDL front-end (`src/main_new.c`) is now the only
+> **Status update:** The modular SDL front-end (`src/app/main_new.c`) is now the only
 > UI entry point that participates in the build. The legacy monolithic
 > implementation has been archived at
 > [src/legacy/main_monolithic.c](src/legacy/main_monolithic.c) for historical
@@ -13,8 +13,8 @@
 
 1. **vcpkg manifest mode configured** - SDL2 and SDL2_ttf successfully installed via vcpkg.json
 2. **Modular source files fixed for MSVC**:
-   - [src/fdtd_core.c](src/fdtd_core.c) - OpenMP loops fixed (pre-declared variables)
-   - [src/boundary.c](src/boundary.c) - OpenMP loops fixed
+   - [src/core/fdtd_core.c](src/core/fdtd_core.c) - OpenMP loops fixed (pre-declared variables)
+   - [src/core/boundary.c](src/core/boundary.c) - OpenMP loops fixed
    - [include/config.h](include/config.h) - Changed `BASE_DX`/`BASE_DY` to macros (MSVC doesn't allow non-constant static initializers)
 
 3. **CMakeLists.txt MSVC optimizations**:

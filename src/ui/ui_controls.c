@@ -11,15 +11,45 @@
 #include "sources.h"
 #include "analysis.h"
 #include "boundary.h"
+#include "util.h"
 
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
 
-static int clampi_local(int v, int lo, int hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
+static int clamp_panel_width(int v) {
+    return util_clamp_int(v, RENDER_MIN_PANEL_WIDTH, RENDER_MAX_PANEL_WIDTH);
+}
+
+static int clamp_timeline_height(int v) {
+    return util_clamp_int(v, RENDER_MIN_TIMELINE_HEIGHT, RENDER_MAX_TIMELINE_HEIGHT);
+}
+
+static void ui_adjust_layout(UIState* ui, const SimulationState* sim,
+                             int left_delta, int right_delta, int timeline_delta) {
+    if (!ui || !sim) return;
+    int new_left = clamp_panel_width(ui->left_panel_width + left_delta);
+    int new_right = clamp_panel_width(ui->right_panel_width + right_delta);
+    int new_timeline = clamp_timeline_height(ui->timeline_height + timeline_delta);
+    if (new_left != ui->left_panel_width ||
+        new_right != ui->right_panel_width ||
+        new_timeline != ui->timeline_height) {
+        ui_state_set_layout(ui, ui->scale, ui->menu_bar_height, new_timeline,
+                            new_left, new_right, sim->nx, sim->ny);
+    }
+}
+
+static int wrap_accent_index(int index) {
+#if UI_ACCENT_PRESET_COUNT <= 0
+    (void)index;
+    return 0;
+#else
+    int m = index % UI_ACCENT_PRESET_COUNT;
+    if (m < 0) {
+        m += UI_ACCENT_PRESET_COUNT;
+    }
+    return m;
+#endif
 }
 
 static double compute_full_field_max(const SimulationState* sim) {
@@ -77,8 +107,13 @@ UIState* ui_state_init(void) {
     ui->sweep_steps_per_point = 2000;
     ui->steps_per_frame = STEPS_PER_FRAME;
     ui->scale = RENDER_DEFAULT_SCALE;
-    ui->ui_height = RENDER_DEFAULT_UI_HEIGHT;
-    ui->side_panel_width = RENDER_DEFAULT_SIDE_PANEL;
+    ui->menu_bar_height = RENDER_DEFAULT_MENU_BAR;
+    ui->timeline_height = RENDER_DEFAULT_TIMELINE_HEIGHT;
+    ui->left_panel_width = RENDER_DEFAULT_LEFT_PANEL;
+    ui->right_panel_width = RENDER_DEFAULT_RIGHT_PANEL;
+    ui->scope_dock = SCOPE_DOCK_PROPERTIES;
+    ui->theme_mode = THEME_DARK;
+    ui->accent_index = 0;
     ui->log_probe = 0;
 
     ui->freq_slider.minv = 0.0;
@@ -110,28 +145,43 @@ void ui_state_free(UIState* state) {
     }
 }
 
-void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width,
+void ui_state_set_layout(UIState* ui, int scale, int menu_bar_height, int timeline_height,
+                         int left_panel_width, int right_panel_width,
                          int nx, int ny) {
     if (!ui) return;
+    if (scale < 1) scale = 1;
     ui->scale = scale;
-    ui->ui_height = ui_height;
-    ui->side_panel_width = side_panel_width;
+    ui->menu_bar_height = (menu_bar_height < 0) ? 0 : menu_bar_height;
+    ui->timeline_height = clamp_timeline_height(timeline_height);
+    ui->left_panel_width = clamp_panel_width(left_panel_width);
+    ui->right_panel_width = clamp_panel_width(right_panel_width);
 
-    int canvas_height = ny * scale;
-    int slider_width = nx * scale - 40;
-    if (slider_width < 100) slider_width = 100;
+    int viewport_w = nx * scale;
+    int timeline_y = ui->menu_bar_height + ny * scale;
+    int slider_width = viewport_w - 40;
+    if (slider_width < 160) slider_width = viewport_w - 10;
+    if (slider_width < 100) slider_width = 120;
+    int slider_x = ui->left_panel_width + (viewport_w - slider_width) / 2;
+    if (slider_x < ui->left_panel_width + 8) {
+        slider_x = ui->left_panel_width + 8;
+    }
 
-    ui->freq_slider.x = 20;
-    ui->freq_slider.y = canvas_height + 15;
+    ui->freq_slider.x = slider_x;
+    ui->freq_slider.y = timeline_y + ui->timeline_height - 60;
+    if (ui->freq_slider.y < timeline_y + 10) {
+        ui->freq_slider.y = timeline_y + 10;
+    }
     ui->freq_slider.w = slider_width;
     ui->freq_slider.h = 22;
 
-    ui->speed_slider.x = 20;
-    ui->speed_slider.y = canvas_height + 50;
+    ui->speed_slider.x = slider_x;
+    ui->speed_slider.y = ui->freq_slider.y + 28;
+    int max_speed_y = timeline_y + ui->timeline_height - ui->speed_slider.h - 12;
+    if (ui->speed_slider.y > max_speed_y) {
+        ui->speed_slider.y = max_speed_y;
+    }
     ui->speed_slider.w = slider_width;
     ui->speed_slider.h = 22;
-
-    ui_request_metrics_refresh(ui);
 }
 
 void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim) {
@@ -240,9 +290,13 @@ static void update_steps_from_slider(UIState* ui) {
     ui->speed_slider.value = (double)ui->steps_per_frame;
 }
 
-int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
-                     int scale, int ui_height, int side_panel_width) {
+static int clampi_local(int v, int lo, int hi) {
+    return util_clamp_int(v, lo, hi);
+}
+
+int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
     if (!ui || !sim) return 0;
+    const int scale = ui->scale;
 
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -326,17 +380,54 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
                 case SDLK_p:
                     ui->paint_eps = clampd(ui->paint_eps * 1.1, 1.0, 20.0);
                     break;
+                case SDLK_b:
+                    ui->theme_mode = (ThemeMode)((ui->theme_mode + 1) % THEME_COUNT);
+                    break;
+                case SDLK_v:
+                    if (e.key.keysym.mod & KMOD_SHIFT) {
+                        ui->accent_index = wrap_accent_index(ui->accent_index - 1);
+                    } else {
+                        ui->accent_index = wrap_accent_index(ui->accent_index + 1);
+                    }
+                    break;
+                case SDLK_LEFTBRACKET:
+                    ui_adjust_layout(ui, sim, -12, 0, 0);
+                    break;
+                case SDLK_RIGHTBRACKET:
+                    ui_adjust_layout(ui, sim, 12, 0, 0);
+                    break;
+                case SDLK_COMMA:
+                    ui_adjust_layout(ui, sim, 0, -12, 0);
+                    break;
+                case SDLK_PERIOD:
+                    ui_adjust_layout(ui, sim, 0, 12, 0);
+                    break;
+                case SDLK_MINUS:
+                    ui_adjust_layout(ui, sim, 0, 0, -8);
+                    break;
+                case SDLK_EQUALS:
+                    ui_adjust_layout(ui, sim, 0, 0, 8);
+                    break;
+                case SDLK_BACKSLASH:
+                    ui->scope_dock = (ui->scope_dock == SCOPE_DOCK_PROPERTIES)
+                                         ? SCOPE_DOCK_TIMELINE
+                                         : SCOPE_DOCK_PROPERTIES;
+                    break;
 
                 /* Source controls: toggle individual sources and cycle type */
                 case SDLK_1:
                     sim->sources[0].active = !sim->sources[0].active;
                     break;
+#if MAX_SRC > 1
                 case SDLK_2:
-                    if (MAX_SRC > 1) sim->sources[1].active = !sim->sources[1].active;
+                    sim->sources[1].active = !sim->sources[1].active;
                     break;
+#endif
+#if MAX_SRC > 2
                 case SDLK_3:
-                    if (MAX_SRC > 2) sim->sources[2].active = !sim->sources[2].active;
+                    sim->sources[2].active = !sim->sources[2].active;
                     break;
+#endif
                 case SDLK_t:
                     sources_cycle_type(sim->sources);
                     fdtd_clear_fields(sim);

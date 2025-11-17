@@ -7,6 +7,11 @@
 
 #include <math.h>
 
+/* Optional instrumentation (ports/S-parameters) */
+#ifndef EMWAVE_ENABLE_PORTS
+#define EMWAVE_ENABLE_PORTS 1
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -135,4 +140,3 @@ typedef struct {
 extern const SimulationConfig SIM_CONFIG_DEFAULTS;
 
 #endif /* EMWAVE_CONFIG_H */
-

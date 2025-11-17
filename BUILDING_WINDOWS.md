@@ -268,11 +268,11 @@ After successful build:
 The current build uses the new modular architecture:
 
 **Core simulation modules** (implemented):
-- `src/fdtd_core.c` - FDTD engine
-- `src/boundary.c` - CPML/Mur boundaries
-- `src/sources.c` - Wave sources
-- `src/materials.c` - Material properties
-- `src/analysis.c` - Measurement tools
+- `src/core/fdtd_core.c` - FDTD engine
+- `src/core/boundary.c` - CPML/Mur boundaries
+- `src/core/sources.c` - Wave sources
+- `src/core/materials.c` - Material properties
+- `src/core/analysis.c` - Measurement tools
 
 **UI modules** (deferred):
 - Still using monolithic `src/main.c` with embedded UI

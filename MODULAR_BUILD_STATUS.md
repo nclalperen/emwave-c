@@ -5,31 +5,31 @@
 ### 1. Core Module Implementation
 All five core simulation modules have been implemented and are ready for compilation:
 
-- **[src/fdtd_core.c](src/fdtd_core.c)** - FDTD electromagnetic simulation engine (277 lines)
+- **[src/core/fdtd_core.c](src/core/fdtd_core.c)** - FDTD electromagnetic simulation engine (277 lines)
   - Field initialization and cleanup
   - Main FDTD stepping loop with Yee grid updates
   - CPML boundary integration
   - OpenMP parallelization
   - All Phase 1 CPML indexing fixes applied
 
-- **[src/boundary.c](src/boundary.c)** - Boundary conditions (167 lines)
+- **[src/core/boundary.c](src/core/boundary.c)** - Boundary conditions (167 lines)
   - CPML coefficient calculation (FIXED indexing bug)
   - Three CPML presets (Gentle, Default, Aggressive)
   - Material-aware Mur first-order ABC
   - Validation of CPML thickness
 
-- **[src/sources.c](src/sources.c)** - Wave source management (133 lines)
+- **[src/core/sources.c](src/core/sources.c)** - Wave source management (133 lines)
   - Three source types: CW, Gaussian pulse, Ricker wavelet
   - Soft source injection with spatial Gaussian footprint
   - Saturating injection to prevent numerical blow-up
   - Source dragging helpers for UI
 
-- **[src/materials.c](src/materials.c)** - Material properties (65 lines)
+- **[src/core/materials.c](src/core/materials.c)** - Material properties (65 lines)
   - Material initialization with default dielectric block
   - Interactive painting (PEC, PMC, dielectric)
   - Material query helpers (inline for performance)
 
-- **[src/analysis.c](src/analysis.c)** - Measurement tools (238 lines)
+- **[src/core/analysis.c](src/core/analysis.c)** - Measurement tools (238 lines)
   - Oscilloscope with safe memory allocation
   - FFT export with Hann windowing
   - Port sampling for two-port S-parameters
@@ -72,9 +72,9 @@ All nine header files are complete with clean interfaces:
 - All includes verified and correct
 
 ### 6. UI Module Extraction Completed
-- **[src/ui_render.c](src/ui_render.c)** now owns all SDL2 rendering and HUD drawing
-- **[src/ui_controls.c](src/ui_controls.c)** handles events, sliders, painting, and sweep controls
-- **[src/main_new.c](src/main_new.c)** is the active SDL entry point wired to the modular APIs
+- **[src/ui/ui_render.c](src/ui/ui_render.c)** now owns all SDL2 rendering and HUD drawing
+- **[src/ui/ui_controls.c](src/ui/ui_controls.c)** handles events, sliders, painting, and sweep controls
+- **[src/app/main_new.c](src/app/main_new.c)** is the active SDL entry point wired to the modular APIs
 - Legacy monolithic UI now lives at [src/legacy/main_monolithic.c](src/legacy/main_monolithic.c) and is excluded from builds
 
 ## 🔧 Ready for Compilation
@@ -255,11 +255,11 @@ All Phase 2 optimizations are implemented:
 ## 📝 File Inventory
 
 ### Implemented Modules (Ready to Compile)
-- src/fdtd_core.c (277 lines)
-- src/boundary.c (167 lines)
-- src/sources.c (133 lines)
-- src/materials.c (65 lines)
-- src/analysis.c (238 lines)
+- src/core/fdtd_core.c (277 lines)
+- src/core/boundary.c (167 lines)
+- src/core/sources.c (133 lines)
+- src/core/materials.c (65 lines)
+- src/core/analysis.c (238 lines)
 
 ### Header Files (Complete)
 - include/config.h
@@ -290,7 +290,7 @@ All Phase 2 optimizations are implemented:
 - probe.txt
 
 ### Templates for Future
-- src/main_new.c (100-line clean entry point)
+- src/app/main_new.c (100-line clean entry point)
 
 ## 🏆 Summary
 

@@ -47,21 +47,23 @@ endif()
 
 # Source files for modular build
 set(EMWAVE_CORE_SOURCES
-    src/app_bootstrap.c
-    src/fdtd_core.c
-    src/boundary.c
-    src/sources.c
-    src/materials.c
-    src/analysis.c
-    src/config_loader.c
-    src/cli_runner.c
+    src/core/app_bootstrap.c
+    src/core/fdtd_core.c
+    src/core/boundary.c
+    src/core/ports.c
+    src/core/config_runtime.c
+    src/core/sources.c
+    src/core/materials.c
+    src/core/analysis.c
+    src/core/config_loader.c
+    src/app/cli_runner.c
     third_party/jsmn/jsmn.c
 )
 
 set(EMWAVE_UI_SOURCES
-    src/ui_controls.c
-    src/ui_render.c
-    src/ui_layout.c
+    src/ui/ui_controls.c
+    src/ui/ui_render.c
+    src/ui/ui_layout.c
 )
 
 # Build the SDL front-end only if SDL2 dependencies are present
@@ -72,9 +74,22 @@ set(EMWAVE_INCLUDE_DIRS
 add_library(emwave_core STATIC ${EMWAVE_CORE_SOURCES})
 target_include_directories(emwave_core PUBLIC ${EMWAVE_INCLUDE_DIRS})
 
+add_library(emwave_solver STATIC
+    src/core/app_bootstrap.c
+    src/core/fdtd_core.c
+    src/core/boundary.c
+    src/core/config_runtime.c
+    src/core/sources.c
+    src/core/materials.c
+    src/core/config_loader.c
+    third_party/jsmn/jsmn.c
+)
+target_include_directories(emwave_solver PUBLIC ${EMWAVE_INCLUDE_DIRS})
+target_compile_definitions(emwave_solver PUBLIC EMWAVE_ENABLE_PORTS=0)
+
 if (EMWAVE_UI_AVAILABLE)
     add_executable(emwave
-        src/main_new.c
+        src/app/main_new.c
         ${EMWAVE_UI_SOURCES}
     )
     target_compile_definitions(emwave PRIVATE SDL_MAIN_HANDLED)
@@ -84,12 +99,12 @@ else()
 endif()
 
 # Headless CLI target always builds
-add_executable(emwave_cli src/main_cli.c)
+add_executable(emwave_cli src/app/main_cli.c)
 target_link_libraries(emwave_cli PRIVATE emwave_core)
 
 add_executable(render_layout_test
-    src/render_layout_test.c
-    src/ui_layout.c
+    src/ui/render_layout_test.c
+    src/ui/ui_layout.c
 )
 target_include_directories(render_layout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 

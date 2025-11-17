@@ -47,11 +47,11 @@
 
 ### 3. Modular Architecture
 All core simulation modules are MSVC-compatible and OpenMP-enabled:
-- ✅ [src/fdtd_core.c](src/fdtd_core.c) - Core FDTD engine with OpenMP
-- ✅ [src/boundary.c](src/boundary.c) - CPML and Mur boundaries with OpenMP
-- ✅ [src/sources.c](src/sources.c) - Wave source management
-- ✅ [src/materials.c](src/materials.c) - Material properties
-- ✅ [src/analysis.c](src/analysis.c) - Measurement tools
+- ✅ [src/core/fdtd_core.c](src/core/fdtd_core.c) - Core FDTD engine with OpenMP
+- ✅ [src/core/boundary.c](src/core/boundary.c) - CPML and Mur boundaries with OpenMP
+- ✅ [src/core/sources.c](src/core/sources.c) - Wave source management
+- ✅ [src/core/materials.c](src/core/materials.c) - Material properties
+- ✅ [src/core/analysis.c](src/core/analysis.c) - Measurement tools
 
 ---
 

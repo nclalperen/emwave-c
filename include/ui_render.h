@@ -19,8 +19,12 @@ typedef struct {
     SDL_Renderer* renderer;
     TTF_Font* font;
     int scale;
-    int ui_height;
-    int side_panel_width;
+    int logical_w;
+    int logical_h;
+    int menu_bar_height;
+    int timeline_height;
+    int left_panel_width;
+    int right_panel_width;
 } RenderContext;
 
 /* Initialization */
@@ -40,7 +44,7 @@ void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin
 double render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale);
 void render_info_panel(RenderContext* ctx, const SimulationState* state, const UIState* ui,
                        double fps_avg, const RenderLayout* layout);
-void render_legend(RenderContext* ctx, int x, int y);
+void render_legend(RenderContext* ctx, int x, int y, int max_width);
 
 /* Text rendering helpers */
 SDL_Texture* render_text(RenderContext* ctx, const char* text, SDL_Color color, int* w, int* h);

@@ -38,8 +38,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    int render_width = sim->nx * RENDER_DEFAULT_SCALE + RENDER_DEFAULT_SIDE_PANEL;
-    int render_height = sim->ny * RENDER_DEFAULT_SCALE + RENDER_DEFAULT_UI_HEIGHT;
+    int render_width = sim->nx * RENDER_DEFAULT_SCALE
+                     + RENDER_DEFAULT_LEFT_PANEL
+                     + RENDER_DEFAULT_RIGHT_PANEL;
+    int render_height = sim->ny * RENDER_DEFAULT_SCALE
+                      + RENDER_DEFAULT_MENU_BAR
+                      + RENDER_DEFAULT_TIMELINE_HEIGHT;
     RenderContext* render = render_init("emwave-c (modular)", render_width, render_height);
     if (!render) {
         fprintf(stderr, "Failed to initialize SDL renderer\n");
@@ -48,7 +52,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    ui_state_set_layout(ui, render->scale, render->ui_height, render->side_panel_width,
+    ui_state_set_layout(ui, render->scale, render->menu_bar_height, render->timeline_height,
+                        render->left_panel_width, render->right_panel_width,
                         sim->nx, sim->ny);
     ui_state_sync_with_sim(ui, sim);
 
@@ -89,7 +94,7 @@ int main(int argc, char** argv) {
         ui_update_metrics(ui, sim, &scope);
         Uint64 metrics_end = SDL_GetPerformanceCounter();
         double metrics_ms = (double)(metrics_end - metrics_start) * 1000.0 / (double)perf_freq;
-        if (!ui_handle_events(ui, sim, &scope, render->scale, render->ui_height, render->side_panel_width)) {
+        if (!ui_handle_events(ui, sim, &scope)) {
             break;
         }
 
