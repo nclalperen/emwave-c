@@ -109,9 +109,9 @@ void render_layout_compute(RenderLayout* layout,
         layout->properties_scope.y = layout->properties_panel.y + 16;
     }
 
-    layout->timeline_scope.x = layout->timeline_panel.x + 16;
+    layout->timeline_scope.x = layout->viewport.x + 16;
     layout->timeline_scope.y = layout->timeline_panel.y + 16;
-    layout->timeline_scope.w = util_clamp_int(layout->timeline_panel.w - 32, 0, layout->timeline_panel.w);
+    layout->timeline_scope.w = util_clamp_int(layout->viewport.w - 32, 0, layout->viewport.w);
     const int timeline_controls_reserved = 72;
     int timeline_scope_height = layout->timeline_panel.h - (timeline_controls_reserved + 24);
     layout->timeline_scope.h = util_clamp_int(timeline_scope_height, 0, layout->timeline_panel.h);
