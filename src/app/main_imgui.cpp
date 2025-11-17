@@ -99,16 +99,18 @@ static const char* source_field_label(SourceFieldType f) {
 
 /* Scene overview panel ---------------------------------------------------- */
 static void draw_scene_panel(const SimulationState* sim, const WizardState& wizard) {
-    if (!ImGui::Begin("Scene")) {
-        ImGui::End();
-        return;
-    }
+    if (!ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen)) return;
 
+    ImGui::Indent();
     if (sim) {
         ImGui::Text("Grid: %d x %d", sim->nx, sim->ny);
         ImGui::Text("Domain: %.3f m x %.3f m", sim->lx, sim->ly);
         ImGui::Text("dt: %.3e s", sim->dt);
         ImGui::Separator();
+    } else {
+        ImGui::TextUnformatted("Simulation not available");
+        ImGui::Unindent();
+        return;
     }
 
     ImGui::Separator();
@@ -126,15 +128,10 @@ static void draw_scene_panel(const SimulationState* sim, const WizardState& wiza
 
 /* Sources panel ----------------------------------------------------------- */
 static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppState* app) {
-    if (!ImGui::Begin("Sources")) {
-        ImGui::End();
-        return;
-    }
-    if (!sim || !app) {
-        ImGui::End();
-        return;
-    }
+    if (!sim || !app) return;
+    if (!ImGui::CollapsingHeader("Sources", ImGuiTreeNodeFlags_DefaultOpen)) return;
 
+    ImGui::Indent();
     int max_src = MAX_SRC;
     if (wizard.cfg.source_count > max_src) {
         wizard.cfg.source_count = max_src;
@@ -202,8 +199,7 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
         ImGui::Text("Position: (%d,%d)", s.ix, s.iy);
         ImGui::Unindent();
     }
-
-    ImGui::End();
+    ImGui::Unindent();
 }
 
 /* Blocks panel ------------------------------------------------------------ */
@@ -514,11 +510,10 @@ static void draw_blocks_panel(WizardState& wizard,
                               SimulationBootstrap* bootstrap,
                               SimulationState* sim,
                               AppState* app) {
-    if (!ImGui::Begin("Blocks")) {
-        ImGui::End();
-        return;
-    }
+    (void)app;
+    if (!ImGui::CollapsingHeader("Blocks", ImGuiTreeNodeFlags_DefaultOpen)) return;
 
+    ImGui::Indent();
     int count = wizard.cfg.material_rect_count;
     if (ImGui::InputInt("Count", &count)) {
         if (count < 0) count = 0;
@@ -559,20 +554,17 @@ static void draw_blocks_panel(WizardState& wizard,
             ImGui::TreePop();
         }
     }
-
-    ImGui::End();
+    ImGui::Unindent();
 }
 
 /* Probes panel ------------------------------------------------------------ */
 static void draw_probes_panel(const SimulationState* sim) {
-    if (!ImGui::Begin("Probes")) {
-        ImGui::End();
-        return;
-    }
+    if (!ImGui::CollapsingHeader("Probes", ImGuiTreeNodeFlags_DefaultOpen)) return;
 
+    ImGui::Indent();
 #if EMWAVE_ENABLE_PORTS
     if (!sim) {
-        ImGui::End();
+        ImGui::Unindent();
         return;
     }
     ImGui::Text("Ports enabled: %s", sim->ports_on ? "yes" : "no");
@@ -588,8 +580,7 @@ static void draw_probes_panel(const SimulationState* sim) {
     }
     ImGui::TextUnformatted("Ports are disabled in this build.");
 #endif
-
-    ImGui::End();
+    ImGui::Unindent();
 }
 
 /* Log panel --------------------------------------------------------------- */
@@ -676,8 +667,18 @@ int main(int argc, char** argv) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 4.0f;
     style.FrameRounding = 3.0f;
-    style.ScrollbarSize = 16.0f;
-    style.FramePadding = ImVec2(6.0f, 4.0f);
+    style.ScrollbarSize = 14.0f;
+    style.FramePadding = ImVec2(8.0f, 4.0f);
+    style.ItemSpacing = ImVec2(8.0f, 6.0f);
+    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+    style.IndentSpacing = 20.0f;
+    style.WindowPadding = ImVec2(8.0f, 8.0f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.12f, 0.13f, 1.00f);
+    colors[ImGuiCol_Header] = ImVec4(0.26f, 0.59f, 0.98f, 0.31f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.59f, 0.98f, 0.80f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.26f, 0.59f, 0.98f, 1.00f);
 
     ImGui_ImplSDL2_InitForSDLRenderer(render->window, render->renderer);
     ImGui_ImplSDLRenderer2_Init(render->renderer);
@@ -811,12 +812,32 @@ int main(int argc, char** argv) {
         ImGui::Begin("RootLayout", nullptr, root_flags);
 
         ImVec2 full = ImGui::GetContentRegionAvail();
-        // Fixed proportions for 1920x1080 studio layout
-        float bottom_h = 220.0f;  // Fixed height for bottom strip
-        float main_h = full.y - bottom_h;
-        float left_w = 320.0f;    // Fixed width for left column
-        float right_w = 350.0f;   // Fixed width for right column
-        float center_w = full.x - left_w - right_w;
+        // Responsive proportions tuned for the 1920x1080 studio layout baseline
+        const float target_left_w = 300.0f;
+        const float target_right_w = 360.0f;
+        const float target_bottom_h = 200.0f;
+        const float min_center_w = 640.0f;
+        const float min_main_h = 420.0f;
+
+        float width_needed = target_left_w + target_right_w + min_center_w;
+        float width_scale = (width_needed > 0.0f && full.x < width_needed)
+                                ? (full.x / width_needed)
+                                : 1.0f;
+        float left_w = target_left_w * width_scale;
+        float right_w = target_right_w * width_scale;
+        if (left_w + right_w > full.x) {
+            float squeeze = (left_w + right_w > 0.0f) ? (full.x / (left_w + right_w)) : 1.0f;
+            left_w *= squeeze;
+            right_w *= squeeze;
+        }
+        float center_w = ImMax(0.0f, full.x - left_w - right_w);
+
+        float height_needed = target_bottom_h + min_main_h;
+        float height_scale = (height_needed > 0.0f && full.y < height_needed)
+                                 ? (full.y / height_needed)
+                                 : 1.0f;
+        float bottom_h = target_bottom_h * height_scale;
+        float main_h = ImMax(0.0f, full.y - bottom_h);
 
         ImVec2 origin = ImGui::GetCursorPos();
         const ImVec4 column_bg = ImVec4(0.24f, 0.24f, 0.24f, 0.95f);
@@ -824,17 +845,31 @@ int main(int argc, char** argv) {
 
         // Left column
         ImGui::SetCursorPos(origin);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
         ImGui::BeginChild("LeftColumn", ImVec2(left_w, main_h), true);
+        bool first_left_panel = true;
+        auto left_spacing = [&]() {
+            if (!first_left_panel) {
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+            }
+            first_left_panel = false;
+        };
         if (app.show_scene_panel) {
+            left_spacing();
             draw_scene_panel(sim, wizard);
         }
         if (app.show_sources_panel) {
+            left_spacing();
             draw_sources_panel(sim, wizard, &app);
         }
         if (app.show_blocks_panel) {
+            left_spacing();
             draw_blocks_panel(wizard, &bootstrap, sim, &app);
         }
         if (app.show_probes_panel) {
+            left_spacing();
             draw_probes_panel(sim);
         }
         ImGui::EndChild();
@@ -842,11 +877,12 @@ int main(int argc, char** argv) {
 
         // Center viewport frame (empty ImGui frame; SDL field behind it)
         ImGui::SetCursorPos(ImVec2(origin.x + left_w, origin.y));
-        ImGui::BeginChild("CenterViewport", ImVec2(center_w, main_h), true);
+        ImGui::BeginChild("CenterViewport", ImVec2(ImMax(1.0f, center_w), main_h), true);
         ImGui::EndChild();
 
         // Right column (Simulation Controls + Wizard)
         ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
         ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
 
         // Simulation Controls
@@ -989,6 +1025,7 @@ int main(int argc, char** argv) {
 
         // Bottom strip with tabs for Scope and Log
         ImGui::SetCursorPos(ImVec2(origin.x, origin.y + main_h));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.09f, 1.00f));
         ImGui::BeginChild("BottomStrip", ImVec2(full.x, bottom_h), true);
         if (ImGui::BeginTabBar("BottomTabs", ImGuiTabBarFlags_None)) {
             if (ImGui::BeginTabItem("Scope")) {
