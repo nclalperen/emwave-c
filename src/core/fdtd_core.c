@@ -148,6 +148,9 @@ static void free_field_uchar(unsigned char*** rows, unsigned char** data) {
 static void fdtd_release_state_resources(SimulationState* state) {
     if (!state) return;
 
+    /* Free any dynamically compiled source expressions */
+    sources_shutdown(state->sources);
+
     free_field_double(&state->Ez, &state->Ez_data);
     free_field_double(&state->Hx, &state->Hx_data);
     free_field_double(&state->Hy, &state->Hy_data);

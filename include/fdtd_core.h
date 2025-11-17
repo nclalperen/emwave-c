@@ -7,6 +7,10 @@
 
 #include "types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Initialization and cleanup */
 SimulationState* fdtd_init(const SimulationConfig* cfg);
 void fdtd_free(SimulationState* state);
@@ -72,5 +76,9 @@ static inline double clampd(double v, double lo, double hi) {
 static inline float sqrf(float x) {
     return x * x;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_FDTD_CORE_H */

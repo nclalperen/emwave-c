@@ -530,9 +530,12 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state,
             if (abs_v > field_max) {
                 field_max = abs_v;
             }
-            double t = 0.5;
+            double t;
             if (vmax > 0.0) {
                 t = 0.5 + 0.5 * clampd(v / vmax, -1.0, 1.0);
+            } else {
+                /* When no meaningful vmax is provided, render near-zero fields as dark. */
+                t = 0.0;
             }
             SDL_Color c = colormap_for_mode(mode, t);
             if (state->tag_grid[i][j] == 1) {
@@ -553,7 +556,7 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state,
 double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
                             double vmax, double color_scale) {
     (void)color_scale;
-    ColorMapMode mode = COLORMAP_CLASSIC;
+    ColorMapMode mode = COLORMAP_VIRIDIS;
     /* The active colormap is selected per-frame in render_frame via UIState,
        so this function currently uses the classic mapping by default when
        called directly. */

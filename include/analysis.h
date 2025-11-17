@@ -9,6 +9,10 @@
 #include "ports.h"
 #include <stdio.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Oscilloscope functions */
 int scope_init(Scope* scope, int width);
 void scope_free(Scope* scope);
@@ -40,5 +44,9 @@ void probe_log(FILE* f, int timestep, double value);
 
 /* Testing hooks */
 void analysis_test_set_alloc_fail_after(int count);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_ANALYSIS_H */

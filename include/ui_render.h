@@ -13,6 +13,10 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Rendering context structure */
 typedef struct {
     SDL_Window* window;
@@ -57,5 +61,9 @@ void slider_draw(RenderContext* ctx, const Slider* slider);
 
 /* Screenshot */
 int save_screenshot(RenderContext* ctx, const char* filename);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_UI_RENDER_H */

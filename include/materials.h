@@ -7,6 +7,10 @@
 
 #include "types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Material initialization */
 void materials_init(SimulationState* state);
 void materials_reset_to_defaults(SimulationState* state);
@@ -26,5 +30,9 @@ static inline int is_pmc(const SimulationState* state, int i, int j) {
 static inline int is_dielectric(const SimulationState* state, int i, int j) {
     return state->tag_grid[i][j] == 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_MATERIALS_H */
