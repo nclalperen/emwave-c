@@ -101,10 +101,11 @@ After building, launch from the build directory or project root:
 - `M` toggle Mur vs CPML boundaries.
 - Mouse click/drag places or moves sources; numeric keys enter paint modes for PEC/PMC/dielectrics.
 - `F` cycles source types (CW, Gaussian, Ricker). Arrow keys still nudge frequency when paused; the bottom timeline tray hosts sliders for frequency and steps/frame for precise control.
-- `L` toggles the on-screen legend; `H` freezes the color scale; `S` freezes the scope scale.
+- `L` toggles the on-screen legend; `H` freezes the color scale; `J` freezes the scope scale; `S` toggles S-parameter ports.
 - `[` `]` shrink/grow the left toolbox column, `,` `.` resize the right-side properties column.
 - `-`/`=` change the height of the bottom timeline/scope tray, and `\` toggles whether the scope docks in that tray or lives in the properties column.
-- `B` flips between dark and light UI themes; `V` (Shift+V reverses) cycles the neon accent palettes if you want a different mood for the highlighted data.
+- `B` flips between dark and light UI themes; `V` (Shift+V reverses) cycles the neon accent palettes, and `K` (Shift+K reverses) cycles the field colormap (classic, viridis-style, plasma-style).
+- `F1` shows the in-app onboarding overlay with a condensed keyboard cheat sheet and status badges.
 
 ## Assets and fonts
 - The UI ships with DejaVu Sans (`third_party/fonts/DejaVuSans.ttf`). The build copies it into `assets/fonts/DejaVuSans.ttf` so runtime never relies on system fonts.

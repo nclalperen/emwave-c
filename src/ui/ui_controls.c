@@ -89,6 +89,7 @@ UIState* ui_state_init(void) {
     ui->running = 1;
     ui->paused = 0;
     ui->show_legend = 1;
+    ui->show_help_overlay = 0;
     ui->paint_mode = 0;
     ui->paint_type = 1;
     ui->paint_eps = 2.0;
@@ -112,6 +113,7 @@ UIState* ui_state_init(void) {
     ui->left_panel_width = RENDER_DEFAULT_LEFT_PANEL;
     ui->right_panel_width = RENDER_DEFAULT_RIGHT_PANEL;
     ui->scope_dock = SCOPE_DOCK_PROPERTIES;
+    ui->colormap_mode = COLORMAP_CLASSIC;
     ui->theme_mode = THEME_DARK;
     ui->accent_index = 0;
     ui->log_probe = 0;
@@ -359,6 +361,9 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
                 case SDLK_q:
                     ui->running = 0;
                     return 0;
+                case SDLK_F1:
+                    ui->show_help_overlay = !ui->show_help_overlay;
+                    break;
                 case SDLK_SPACE:
                     ui->paused = !ui->paused;
                     break;
@@ -388,6 +393,13 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
                         ui->accent_index = wrap_accent_index(ui->accent_index - 1);
                     } else {
                         ui->accent_index = wrap_accent_index(ui->accent_index + 1);
+                    }
+                    break;
+                case SDLK_k:
+                    if (e.key.keysym.mod & KMOD_SHIFT) {
+                        ui->colormap_mode = (ColorMapMode)((ui->colormap_mode - 1 + COLORMAP_COUNT) % COLORMAP_COUNT);
+                    } else {
+                        ui->colormap_mode = (ColorMapMode)((ui->colormap_mode + 1) % COLORMAP_COUNT);
                     }
                     break;
                 case SDLK_LEFTBRACKET:
