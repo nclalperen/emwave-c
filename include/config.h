@@ -114,6 +114,11 @@ typedef enum {
     SIM_RUN_MODE_SWEEP = 1
 } SimulationRunMode;
 
+typedef enum {
+    SIM_BOUNDARY_CPML = 0,
+    SIM_BOUNDARY_MUR = 1
+} SimulationBoundaryMode;
+
 #define SIM_PROBE_LOG_PATH_MAX 260
 
 typedef struct {
@@ -129,6 +134,7 @@ typedef struct {
     int sweep_steps_per_point;
     SimulationRunMode run_mode;
     int run_steps;
+    SimulationBoundaryMode boundary_mode;
     int enable_probe_log;
     char probe_log_path[SIM_PROBE_LOG_PATH_MAX];
     int material_rect_count;

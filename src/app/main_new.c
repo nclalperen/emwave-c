@@ -128,6 +128,15 @@ int main(int argc, char** argv) {
             render_metrics_accum = 0.0;
             render_metrics_samples = 0;
         }
+
+        if (ui->request_screenshot) {
+            ui->request_screenshot = 0;
+            if (!save_screenshot(render, "frame.bmp")) {
+                fprintf(stderr, "Warning: failed to save screenshot to frame.bmp\n");
+            } else {
+                printf("Saved screenshot to frame.bmp\n");
+            }
+        }
         SDL_Delay(UI_DELAY_MS);
     }
 

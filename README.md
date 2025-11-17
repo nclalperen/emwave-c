@@ -75,6 +75,29 @@ Run the *MSYS2 MinGW 64-bit* shell (not the MSYS shell) so GCC, SDL2, and OpenMP
   ```
 Set `-DUSE_OPENMP=OFF` if building on a toolchain without OpenMP.
 
+## Running tests
+After configuring with CMake, run the unit test suite from the build directory:
+```bash
+cd build
+ctest --output-on-failure          # single-config generators (Ninja/Make)
+ctest -C Debug --output-on-failure # multi-config (Visual Studio/MSVC)
+```
+The tests cover configuration loading/validation, FDTD core allocation paths, and analysis/ports instrumentation. CI runs the same `ctest` invocation plus a headless smoke run of `emwave_cli` on every push and pull request.
+
+## Headless CLI usage
+The `emwave_cli` binary runs the solver without any SDL/UI dependencies so you can script sweeps and batch runs:
+```bash
+./build/emwave_cli --config configs/waveguide.json --run-steps=2000
+./build/emwave_cli --config configs/cpw_filter.json --run-mode=sweep
+```
+Key flags:
+- `--config=PATH` loads a JSON scene (see `configs/SCHEMA.md`).
+- `--run-mode=fixed|sweep` selects a fixed-step run or an S-parameter sweep (default: fixed).
+- `--run-steps=N` sets total steps when `run-mode=fixed` (otherwise falls back to sweep-derived count).
+- `--boundary=cpml|mur` chooses the absorbing boundary model (default: CPML).
+- `--probe-log=PATH` enables probe logging to a text file; `--no-probe-log` disables it.
+CLI flags always override values coming from the JSON config.
+
 ## Running the simulator
 After building, launch from the build directory or project root:
 ```powershell
@@ -125,6 +148,7 @@ After building, launch from the build directory or project root:
 - `BUILDING_WINDOWS.md` - exhaustive Windows toolchain coverage.
 - `MODULAR_ARCHITECTURE_SUMMARY.md` and `MODULAR_BUILD_STATUS.md` - deeper context on the code layout and refactors.
 - `UI_OVERHAUL_GUIDE.md` - notes on potential UI replacements and future improvements.
+- `SCENES.md` - short descriptions of the bundled example configs.
 - `COMPILATION_STATUS.md` & `BUILD_SUCCESS.md` - recent validation reports.
 
 emwave-c is actively developed; feel free to file issues or PRs with improvements, scenes, and instrumentation ideas.

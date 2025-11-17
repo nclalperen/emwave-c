@@ -17,9 +17,15 @@ static void configure_boundaries(SimulationState* sim) {
         return;
     }
 
-    boundary_set_type(sim, BOUNDARY_CPML);
-    cpml_apply_preset(sim, cpml_get_preset_index(sim));
-    cpml_zero_psi(sim);
+    SimulationBoundaryMode mode = sim->config.boundary_mode;
+    if (mode == SIM_BOUNDARY_MUR) {
+        boundary_set_type(sim, BOUNDARY_MUR);
+        cpml_zero_psi(sim);
+    } else {
+        boundary_set_type(sim, BOUNDARY_CPML);
+        cpml_apply_preset(sim, cpml_get_preset_index(sim));
+        cpml_zero_psi(sim);
+    }
 }
 
 static int initialise_state(const SimulationConfig* cfg, SimulationBootstrap* bootstrap) {

@@ -215,6 +215,45 @@ static void json_apply_simulation(const char* json, const jsmntok_t* tokens, int
     if ((idx = json_object_find(json, tokens, total, obj_index, "sweep_steps_per_point")) >= 0) {
         json_token_to_int(json, &tokens[idx], &cfg->sweep_steps_per_point);
     }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "run_mode")) >= 0 &&
+        tokens[idx].type == JSMN_STRING) {
+        char mode[16];
+        if (json_token_to_string(json, &tokens[idx], mode, sizeof(mode))) {
+            if (str_ieq(mode, "sweep")) {
+                cfg->run_mode = SIM_RUN_MODE_SWEEP;
+            } else {
+                cfg->run_mode = SIM_RUN_MODE_FIXED_STEPS;
+            }
+        }
+    }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "run_steps")) >= 0) {
+        json_token_to_int(json, &tokens[idx], &cfg->run_steps);
+    }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "enable_probe_log")) >= 0) {
+        int flag = 0;
+        if (json_token_to_bool(json, &tokens[idx], &flag)) {
+            cfg->enable_probe_log = flag ? 1 : 0;
+        }
+    }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "probe_log_path")) >= 0 &&
+        tokens[idx].type == JSMN_STRING) {
+        char path[SIM_PROBE_LOG_PATH_MAX];
+        if (json_token_to_string(json, &tokens[idx], path, sizeof(path))) {
+            strncpy(cfg->probe_log_path, path, SIM_PROBE_LOG_PATH_MAX - 1);
+            cfg->probe_log_path[SIM_PROBE_LOG_PATH_MAX - 1] = '\0';
+        }
+    }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "boundary")) >= 0 &&
+        tokens[idx].type == JSMN_STRING) {
+        char bmode[16];
+        if (json_token_to_string(json, &tokens[idx], bmode, sizeof(bmode))) {
+            if (str_ieq(bmode, "mur")) {
+                cfg->boundary_mode = SIM_BOUNDARY_MUR;
+            } else {
+                cfg->boundary_mode = SIM_BOUNDARY_CPML;
+            }
+        }
+    }
 }
 
 static int json_load_material(const char* json, const jsmntok_t* tokens, int total,
@@ -471,10 +510,11 @@ static void print_usage(void) {
     printf("  --sweep-start=<Hz>    Sweep start frequency\n");
     printf("  --sweep-stop=<Hz>     Sweep stop frequency\n");
     printf("  --sweep-steps=<n>     Steps per sweep point\n");
-    printf("  --run-mode=MODE      fixed or sweep (default fixed)\n");
-    printf("  --run-steps=<n>      Steps to run when mode=fixed\n");
-    printf("  --probe-log=<path>   Enable probe logging to file\n");
-    printf("  --no-probe-log       Disable probe logging\n");
+    printf("  --run-mode=MODE       fixed or sweep (default fixed)\n");
+    printf("  --run-steps=<n>       Steps to run when mode=fixed\n");
+    printf("  --boundary=MODE       cpml or mur (default cpml)\n");
+    printf("  --probe-log=<path>    Enable probe logging to file\n");
+    printf("  --no-probe-log        Disable probe logging\n");
     printf("  --help                Show this help\n");
 }
 
@@ -543,6 +583,13 @@ int config_load_from_args(int argc, char** argv, SimulationConfig* out_config) {
             }
         } else if (strncmp(arg, "--run-steps=", 12) == 0) {
             parse_int_arg(arg + 12, &out_config->run_steps);
+        } else if (strncmp(arg, "--boundary=", 11) == 0) {
+            const char* mode = arg + 11;
+            if (strcmp(mode, "mur") == 0) {
+                out_config->boundary_mode = SIM_BOUNDARY_MUR;
+            } else {
+                out_config->boundary_mode = SIM_BOUNDARY_CPML;
+            }
         } else if (strncmp(arg, "--probe-log=", 12) == 0) {
             const char* path = arg + 12;
             if (*path) {

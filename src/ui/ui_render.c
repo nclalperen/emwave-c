@@ -583,7 +583,8 @@ void render_block_outline(RenderContext* ctx, const RenderLayout* layout) {
     SDL_RenderDrawRect(ctx->renderer, &r);
 }
 
-void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin, double vmax) {
+void render_colorbar(RenderContext* ctx, const RenderLayout* layout,
+                     ColorMapMode mode, double vmin, double vmax) {
     if (!ctx || !layout) return;
     SDL_Rect bar = { layout->colorbar.x, layout->colorbar.y, layout->colorbar.w, layout->colorbar.h };
     if (bar.h <= 1 || bar.w <= 0) return;
@@ -592,7 +593,7 @@ void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin
     SDL_RenderFillRect(ctx->renderer, &bar);
     for (int y = 0; y < bar.h; ++y) {
         double t = 1.0 - (double)y / (double)(bar.h - 1);
-        SDL_Color c = colormap_for_mode(COLORMAP_CLASSIC, t);
+        SDL_Color c = colormap_for_mode(mode, t);
         SDL_SetRenderDrawColor(ctx->renderer, c.r, c.g, c.b, c.a);
         SDL_RenderDrawLine(ctx->renderer, bar.x, bar.y + y, bar.x + bar.w, bar.y + y);
     }
@@ -638,13 +639,17 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     const ThemeColors* theme = theme_colors();
     SDL_Color accent = theme_palette()->primary;
     const char* labels[] = {"freq", "steps", "dx", "dt", "fps", "grid", "probe"};
-    char values[7][48];
+    char values[7][64];
     snprintf(values[0], sizeof(values[0]), "%.3f GHz", state->freq * 1e-9);
     snprintf(values[1], sizeof(values[1]), "%d", ui->steps_per_frame);
     snprintf(values[2], sizeof(values[2]), "%.3f mm", state->dx * 1e3);
     snprintf(values[3], sizeof(values[3]), "%.3e s", state->dt);
     snprintf(values[4], sizeof(values[4]), "%.1f", fps_avg);
-    snprintf(values[5], sizeof(values[5]), "%d x %d", state->nx, state->ny);
+    BoundaryType btype = boundary_get_type(state);
+    const char* bname = (btype == BOUNDARY_CPML) ? "CPML" : "Mur";
+    const char* ports = state->ports_on ? "on" : "off";
+    snprintf(values[5], sizeof(values[5]), "%d x %d (%s, ports %s)",
+             state->nx, state->ny, bname, ports);
     snprintf(values[6], sizeof(values[6]), "(%d,%d)", ui->probe_x, ui->probe_y);
 
     typedef struct {
@@ -780,7 +785,7 @@ void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
     render_block_outline(ctx, &layout);
     SDL_RenderSetViewport(ctx->renderer, NULL);
 
-    render_colorbar(ctx, &layout, -vmax, vmax);
+    render_colorbar(ctx, &layout, ui->colormap_mode, -vmax, vmax);
     render_info_panel(ctx, state, ui, fps_avg, &layout);
 
     double scope_vmax = 0.0;

@@ -24,6 +24,11 @@ All fields are optional; omitted values fall back to the built-in defaults.
 | `sweep_points` | integer | Number of sweep frequencies to evaluate. |
 | `sweep_start_hz`, `sweep_stop_hz` | number | Frequency range in Hz. |
 | `sweep_steps_per_point` | integer | Steps to simulate per sweep frequency. |
+| `run_mode` | string | Optional. `"fixed"` (default) or `"sweep"`. |
+| `run_steps` | integer | When `run_mode` is `"fixed"`, total steps to run. |
+| `enable_probe_log` | boolean | Enable writing probe samples to a CSV-like text file. |
+| `probe_log_path` | string | Path for probe logging when enabled. Defaults to `"probe.txt"`. |
+| `boundary` | string | Optional. `"cpml"` (default) or `"mur"`. |
 
 ## `materials`
 

@@ -288,6 +288,33 @@ START_TEST(test_ports_sample_deactivates_when_grid_has_no_interior) {
 }
 END_TEST
 
+START_TEST(test_compute_s21_respects_amplitude_ratio) {
+    Port ports[MAX_PORTS] = {0};
+    enum { N_S21 = 64 };
+    double v0[N_S21];
+    double v1[N_S21];
+    double dt = 1.0;
+    double freq = 0.1; /* arbitrary, non-zero */
+
+    for (int i = 0; i < N_S21; ++i) {
+        double sample = sin(2.0 * M_PI * freq * dt * (double)i);
+        v0[i] = sample;
+        v1[i] = 0.5 * sample;
+    }
+
+    ports[0].V = v0;
+    ports[0].n = N_S21;
+    ports[0].head = 0;
+
+    ports[1].V = v1;
+    ports[1].n = N_S21;
+    ports[1].head = 0;
+
+    double s21 = compute_s21(ports, freq, dt);
+    ck_assert_double_eq_tol(s21, 0.5, 1e-3);
+}
+END_TEST
+
 static Suite* analysis_suite(void) {
     Suite* s = suite_create("analysis");
     TCase* tc = tcase_create("alloc");

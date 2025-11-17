@@ -129,6 +129,9 @@ typedef struct {
     /* Probe logging */
     int log_probe;
 
+    /* One-shot screenshot request */
+    int request_screenshot;
+
     /* Sliders */
     Slider freq_slider;
     Slider speed_slider;
