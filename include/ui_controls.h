@@ -10,6 +10,8 @@
 #include "types.h"
 #include <SDL2/SDL.h>
 
+#define UI_ACCENT_PRESET_COUNT 6
+
 /* Slider UI element */
 typedef struct Slider {
     int x, y, w, h;
@@ -23,6 +25,17 @@ typedef enum {
     AS_PEAK = 0,
     AS_P99 = 1
 } AutoScaleMode;
+
+typedef enum {
+    SCOPE_DOCK_PROPERTIES = 0,
+    SCOPE_DOCK_TIMELINE = 1
+} ScopeDockPosition;
+
+typedef enum {
+    THEME_DARK = 0,
+    THEME_LIGHT = 1,
+    THEME_COUNT
+} ThemeMode;
 
 /* UI state structure */
 typedef struct {
@@ -92,8 +105,15 @@ typedef struct {
 
     /* Layout */
     int scale;
-    int ui_height;
-    int side_panel_width;
+    int menu_bar_height;
+    int timeline_height;
+    int left_panel_width;
+    int right_panel_width;
+    ScopeDockPosition scope_dock;
+
+    /* Theme controls */
+    ThemeMode theme_mode;
+    int accent_index;
 
     /* Probe logging */
     int log_probe;
@@ -107,7 +127,8 @@ typedef struct {
 /* Initialization */
 UIState* ui_state_init(void);
 void ui_state_free(UIState* state);
-void ui_state_set_layout(UIState* ui, int scale, int ui_height, int side_panel_width,
+void ui_state_set_layout(UIState* ui, int scale, int menu_bar_height, int timeline_height,
+                         int left_panel_width, int right_panel_width,
                          int nx, int ny);
 void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim);
 
@@ -115,8 +136,7 @@ void ui_state_sync_with_sim(UIState* ui, const SimulationState* sim);
 void ui_update_metrics(UIState* ui, const SimulationState* sim, const Scope* scope);
 
 /* Event handling */
-int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope,
-                     int scale, int ui_height, int side_panel_width);
+int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope);
 
 /* Slider interaction */
 int slider_handle_event(Slider* s, const SDL_Event* e);

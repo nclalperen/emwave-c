@@ -10,19 +10,26 @@ static int validate_layout(int nx, int ny) {
     RenderLayout layout;
     render_layout_compute(&layout, nx, ny,
                           RENDER_DEFAULT_SCALE,
-                          RENDER_DEFAULT_SIDE_PANEL,
-                          RENDER_DEFAULT_UI_HEIGHT);
+                          RENDER_DEFAULT_LEFT_PANEL,
+                          RENDER_DEFAULT_RIGHT_PANEL,
+                          RENDER_DEFAULT_TIMELINE_HEIGHT,
+                          RENDER_DEFAULT_MENU_BAR);
 
     int ok = 1;
     int cb_right = layout.colorbar.x + layout.colorbar.w;
     int cb_bottom = layout.colorbar.y + layout.colorbar.h;
-    if (layout.colorbar.x < layout.canvas_w ||
-        cb_right > layout.window_w ||
-        cb_bottom > layout.window_h) {
-        printf("Colorbar out of bounds for %dx%d (rect %d,%d,%d,%d)\n",
+    int props_right = layout.properties_panel.x + layout.properties_panel.w;
+    int props_bottom = layout.properties_panel.y + layout.properties_panel.h;
+    if (layout.colorbar.x < layout.properties_panel.x ||
+        cb_right > props_right ||
+        layout.colorbar.y < layout.properties_panel.y ||
+        cb_bottom > props_bottom) {
+        printf("Colorbar out of bounds for %dx%d (rect %d,%d,%d,%d within props %d,%d,%d,%d)\n",
                nx, ny,
                layout.colorbar.x, layout.colorbar.y,
-               layout.colorbar.w, layout.colorbar.h);
+               layout.colorbar.w, layout.colorbar.h,
+               layout.properties_panel.x, layout.properties_panel.y,
+               layout.properties_panel.w, layout.properties_panel.h);
         ok = 0;
     }
 
@@ -37,16 +44,23 @@ static int validate_layout(int nx, int ny) {
         ok = 0;
     }
 
-    if (layout.window_w != layout.canvas_w + RENDER_DEFAULT_SIDE_PANEL) {
+    int expected_width = layout.toolbox_panel.w + layout.viewport.w + layout.properties_panel.w;
+    if (layout.window_w != expected_width) {
         printf("Window width mismatch for %dx%d (got %d, expected %d)\n",
-               nx, ny, layout.window_w,
-               layout.canvas_w + RENDER_DEFAULT_SIDE_PANEL);
+               nx, ny, layout.window_w, expected_width);
         ok = 0;
     }
-    if (layout.window_h != layout.canvas_h + RENDER_DEFAULT_UI_HEIGHT) {
+
+    int expected_height = layout.menu_bar.h + layout.viewport.h + layout.timeline_panel.h;
+    if (layout.window_h != expected_height) {
         printf("Window height mismatch for %dx%d (got %d, expected %d)\n",
-               nx, ny, layout.window_h,
-               layout.canvas_h + RENDER_DEFAULT_UI_HEIGHT);
+               nx, ny, layout.window_h, expected_height);
+        ok = 0;
+    }
+
+    if (layout.timeline_panel.y != layout.menu_bar.h + layout.viewport.h) {
+        printf("Timeline offset mismatch for %dx%d (got %d)\n",
+               nx, ny, layout.timeline_panel.y);
         ok = 0;
     }
 

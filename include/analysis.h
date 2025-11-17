@@ -6,6 +6,7 @@
 #define EMWAVE_ANALYSIS_H
 
 #include "types.h"
+#include "ports.h"
 #include <stdio.h>
 
 /* Oscilloscope functions */
@@ -16,11 +17,6 @@ void scope_clear(Scope* scope);
 
 /* FFT export */
 int dump_scope_fft_csv(const Scope* scope, const char* path, double dt, int Nfft_requested);
-
-/* Port management */
-int ports_init(Port* ports, int nx, int ny);
-void ports_free(Port* ports);
-void ports_sample(SimulationState* state, double dx, double dy);
 
 /* S-parameter computation */
 double compute_s21(const Port* ports, double freq, double dt);

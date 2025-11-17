@@ -8,7 +8,9 @@
 #include "boundary.h"
 #include "sources.h"
 #include "materials.h"
-#include "analysis.h"
+#if EMWAVE_ENABLE_PORTS
+#include "ports.h"
+#endif
 #include "config_loader.h"
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +62,7 @@ static void fdtd_reset_port_buffers(SimulationState* state) {
     if (!state) {
         return;
     }
+#if EMWAVE_ENABLE_PORTS
     for (int p = 0; p < MAX_PORTS; ++p) {
         Port* port = &state->ports[p];
         size_t bytes = (port->n > 0) ? (sizeof(double) * (size_t)port->n) : 0u;
@@ -81,6 +84,9 @@ static void fdtd_reset_port_buffers(SimulationState* state) {
             port->active = 1;
         }
     }
+#else
+    (void)state;
+#endif
 }
 
 static int alloc_field_double(int nx, int ny, double*** out_rows, double** out_data) {
@@ -154,7 +160,9 @@ static void fdtd_release_state_resources(SimulationState* state) {
     free_field_double(&state->sigma_map, &state->sigma_map_data);
     free_field_uchar(&state->tag_grid, &state->tag_grid_data);
 
+#if EMWAVE_ENABLE_PORTS
     ports_free(state->ports);
+#endif
     boundary_shutdown(state);
 
     fdtd_state_zero(state);
@@ -226,11 +234,13 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
         goto fail;
     }
 
+#if EMWAVE_ENABLE_PORTS
     if (!ports_init(state->ports, state->nx, state->ny)) {
         ports_free(state->ports);
         fprintf(stderr, "Failed to initialize simulation ports\n");
         goto fail;
     }
+#endif
 
     fdtd_clear_fields(state);
     materials_reset_to_defaults(state);
