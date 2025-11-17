@@ -1,0 +1,10 @@
+^C:\PROJECTS\EMWAVE-C\BUILD-IMGUI\CMAKEFILES\64A7E0F6BDC3CC59790FAB9803AC5954\GENERATE.STAMP.RULE
+setlocal
+C:\Users\ncl_a\AppData\Local\Programs\Python\Python311\Lib\site-packages\cmake\data\bin\cmake.exe -SC:/projects/emwave-c -BC:/projects/emwave-c/build-imgui --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/projects/emwave-c/build-imgui/EmWaveC.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

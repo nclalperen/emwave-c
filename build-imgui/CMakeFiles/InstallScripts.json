@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/projects/emwave-c/build-imgui/cmake_install.cmake",
+		"C:/projects/emwave-c/build-imgui/tests/unit/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

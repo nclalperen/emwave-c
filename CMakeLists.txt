@@ -196,14 +196,19 @@ endif()
 
 set(EMWAVE_BUNDLED_FONT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
 
-if (TARGET emwave)
-  set(_EMWAVE_FONT_RUNTIME_DIR "$<TARGET_FILE_DIR:emwave>/assets/fonts")
-  add_custom_command(TARGET emwave POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${_EMWAVE_FONT_RUNTIME_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${EMWAVE_BUNDLED_FONT}"
-      "${_EMWAVE_FONT_RUNTIME_DIR}/DejaVuSans.ttf")
-endif()
+function(emwave_copy_bundled_font target_name)
+  if (TARGET ${target_name})
+    set(_EMWAVE_FONT_RUNTIME_DIR "$<TARGET_FILE_DIR:${target_name}>/assets/fonts")
+    add_custom_command(TARGET ${target_name} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_EMWAVE_FONT_RUNTIME_DIR}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${EMWAVE_BUNDLED_FONT}"
+        "${_EMWAVE_FONT_RUNTIME_DIR}/DejaVuSans.ttf")
+  endif()
+endfunction()
+
+emwave_copy_bundled_font(emwave)
+emwave_copy_bundled_font(emwave_imgui)
 
 install(FILES "${EMWAVE_BUNDLED_FONT}" DESTINATION assets/fonts)
 
