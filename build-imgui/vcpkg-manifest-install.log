@@ -12,35 +12,35 @@ The following packages will be built and installed:
   * vcpkg-cmake-config:x64-windows@2024-05-23 -- C:\Users\ncl_a\AppData\Local\vcpkg\registries\git-trees\97a63e4bc1a17422ffe4eff71da53b4b561a7841
   * zlib:x64-windows@1.3.1 -- C:\Users\ncl_a\AppData\Local\vcpkg\registries\git-trees\3f05e04b9aededb96786a911a16193cdb711f0c9
 Additional packages (*) will be modified to complete this operation.
-Restored 9 package(s) from C:\Users\ncl_a\AppData\Local\vcpkg\archives in 348 ms. Use --debug to see more details.
+Restored 9 package(s) from C:\Users\ncl_a\AppData\Local\vcpkg\archives in 323 ms. Use --debug to see more details.
 Installing 1/9 vcpkg-cmake-config:x64-windows@2024-05-23...
-Elapsed time to handle vcpkg-cmake-config:x64-windows: 9.32 ms
+Elapsed time to handle vcpkg-cmake-config:x64-windows: 9.05 ms
 vcpkg-cmake-config:x64-windows package ABI: 78f40527ee7805fdc4911370f39d39798b8bcf06da4045dd46fc227bfc165f10
 Installing 2/9 vcpkg-cmake:x64-windows@2024-04-23...
-Elapsed time to handle vcpkg-cmake:x64-windows: 13.6 ms
+Elapsed time to handle vcpkg-cmake:x64-windows: 33.6 ms
 vcpkg-cmake:x64-windows package ABI: 8fdb266ce3fdfa21a395223aae54b6cb968eb5c57b8028aca3853560c069a088
 Installing 3/9 sdl2:x64-windows@2.30.10...
-Elapsed time to handle sdl2:x64-windows: 118 ms
+Elapsed time to handle sdl2:x64-windows: 62.6 ms
 sdl2:x64-windows package ABI: fad80b6e48a92439d8f238a0fbd45e1ffdda3030e7f39ce0f1e63518d8f3e2c6
 Installing 4/9 zlib:x64-windows@1.3.1...
-Elapsed time to handle zlib:x64-windows: 20 ms
+Elapsed time to handle zlib:x64-windows: 31.9 ms
 zlib:x64-windows package ABI: 8941de527d7c097e31cfa0daeb3e726f10d1c26710c038ea6dfd847aadddeef6
 Installing 5/9 libpng:x64-windows@1.6.44...
-Elapsed time to handle libpng:x64-windows: 33.1 ms
+Elapsed time to handle libpng:x64-windows: 37.1 ms
 libpng:x64-windows package ABI: 23fd1c21e97b034807e0ef0864a987359b6de0ba7af3f85f687a97384937372c
 Installing 6/9 bzip2[core,tool]:x64-windows@1.0.8#6...
-Elapsed time to handle bzip2:x64-windows: 18.4 ms
+Elapsed time to handle bzip2:x64-windows: 16.9 ms
 bzip2:x64-windows package ABI: 595bbd150a211ef9e19d6da092ecc93cd9b1c560094400340ae5a97feb702200
 Installing 7/9 brotli:x64-windows@1.1.0#1...
-Elapsed time to handle brotli:x64-windows: 34.2 ms
+Elapsed time to handle brotli:x64-windows: 26.5 ms
 brotli:x64-windows package ABI: dac8ab5bead47cbe568b6840eec8b63018d2156ef43002fe07a1a4b3b181b4a4
 Installing 8/9 freetype[brotli,bzip2,core,png,zlib]:x64-windows@2.13.3...
-Elapsed time to handle freetype:x64-windows: 46.5 ms
+Elapsed time to handle freetype:x64-windows: 92 ms
 freetype:x64-windows package ABI: 08e70508b74e8c6f34daf18255de22a44df7009948a68176bda5c198c6a79d74
 Installing 9/9 sdl2-ttf:x64-windows@2.22.0#1...
-Elapsed time to handle sdl2-ttf:x64-windows: 31 ms
+Elapsed time to handle sdl2-ttf:x64-windows: 26.6 ms
 sdl2-ttf:x64-windows package ABI: 146a723dc50d3c00cb3c8b2495f25ee600af917b107250b341487e9b78c2f7fa
-Total install time: 324 ms
+Total install time: 337 ms
 sdl2 provides CMake targets:
 
     find_package(SDL2 CONFIG REQUIRED)

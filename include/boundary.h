@@ -7,6 +7,10 @@
 
 #include "types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* CPML presets */
 extern const CpmlPreset CPML_PRESETS[3];
 
@@ -27,5 +31,9 @@ int cpml_get_preset_index(const SimulationState* state);
 
 /* Mur boundary application */
 void apply_mur_boundaries(SimulationState* state);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EMWAVE_BOUNDARY_H */

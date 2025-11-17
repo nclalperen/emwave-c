@@ -9,6 +9,7 @@
 #include "fdtd_core.h"
 #include "ui_render.h"
 #include "materials.h"
+#include "boundary.h"
 #include "sources.h"
 #include "expr.h"
 
@@ -231,6 +232,70 @@ static void render_grid_overlay(RenderContext* render, const SimulationState* si
     for (int j = 0; j <= sim->ny; ++j) {
         int y = j * render->scale;
         SDL_RenderDrawLine(rr, 0, y, width, y);
+    }
+}
+
+static void apply_paint_brush(SimulationState* sim,
+                              int gx,
+                              int gy,
+                              int brush_radius,
+                              int paint_type,
+                              double eps) {
+    if (!sim) return;
+    if (brush_radius < 0) brush_radius = 0;
+
+    int nx = sim->nx;
+    int ny = sim->ny;
+
+    int r = brush_radius;
+    int r2 = r * r;
+    for (int di = -r; di <= r; ++di) {
+        int i = gx + di;
+        if (i < 0 || i >= nx) continue;
+        for (int dj = -r; dj <= r; ++dj) {
+            int j = gy + dj;
+            if (j < 0 || j >= ny) continue;
+            if (di * di + dj * dj <= r2) {
+                paint_material_at(sim, i, j, paint_type, eps);
+            }
+        }
+    }
+}
+
+static void blocks_paint_pec(SimulationState* sim, int gx, int gy, int brush_radius) {
+    apply_paint_brush(sim, gx, gy, brush_radius, 1, 1.0);
+}
+
+static void blocks_paint_pmc(SimulationState* sim, int gx, int gy, int brush_radius) {
+    apply_paint_brush(sim, gx, gy, brush_radius, 2, 1.0);
+}
+
+static void blocks_paint_dielectric(SimulationState* sim,
+                                    int gx,
+                                    int gy,
+                                    int brush_radius,
+                                    double epsr) {
+    apply_paint_brush(sim, gx, gy, brush_radius, 3, epsr);
+}
+
+static void apply_selected_paint(SimulationState* sim,
+                                 int gx,
+                                 int gy,
+                                 int brush_radius,
+                                 int paint_material_type,
+                                 double paint_epsilon) {
+    if (!sim) return;
+    switch (paint_material_type) {
+        case 0:
+            blocks_paint_pec(sim, gx, gy, brush_radius);
+            break;
+        case 1:
+            blocks_paint_pmc(sim, gx, gy, brush_radius);
+            break;
+        case 2:
+        default:
+            blocks_paint_dielectric(sim, gx, gy, brush_radius, paint_epsilon);
+            break;
     }
 }
 
@@ -665,9 +730,9 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable docking
     io.FontGlobalScale = 1.0f;
-    io.IniFilename = NULL;
+    io.IniFilename = "imgui.ini";  // Enable layout persistence
 
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
@@ -703,6 +768,11 @@ int main(int argc, char** argv) {
 
     bool running = true;
     bool paused = false;
+    int steps_per_frame = 5;  // Speed control
+    bool paint_mode = false;
+    int paint_material_type = 0;  // 0=PEC, 1=PMC, 2=dielectric
+    double paint_epsilon = 4.0;   // For dielectric
+    int paint_brush_size = 3;     // Radius in grid cells
 
     Uint64 perf_freq = SDL_GetPerformanceFrequency();
     Uint64 prev = SDL_GetPerformanceCounter();
@@ -715,10 +785,170 @@ int main(int argc, char** argv) {
             if (e.type == SDL_QUIT) {
                 running = false;
             } else if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_ESCAPE) {
-                    running = false;
-                } else if (e.key.keysym.sym == SDLK_SPACE) {
-                    paused = !paused;
+                SDL_Keycode key = e.key.keysym.sym;
+
+                // Handle keyboard shortcuts (only if ImGui doesn't want keyboard input)
+                if (!io.WantCaptureKeyboard) {
+                    switch (key) {
+                        case SDLK_ESCAPE:
+                        case SDLK_q:
+                            running = false;
+                            break;
+                        case SDLK_SPACE:
+                            paused = !paused;
+                            break;
+
+                        // Source toggles
+                        case SDLK_1:
+                            if (MAX_SRC > 0) sim->sources[0].active = !sim->sources[0].active;
+                            break;
+                        case SDLK_2:
+                            if (MAX_SRC > 1) sim->sources[1].active = !sim->sources[1].active;
+                            break;
+                        case SDLK_3:
+                            if (MAX_SRC > 2) sim->sources[2].active = !sim->sources[2].active;
+                            break;
+
+                        // Source type cycling
+                        case SDLK_t:
+                        case SDLK_f:
+                            sources_cycle_type(sim->sources);
+                            fdtd_clear_fields(sim);
+                            scope_clear(&scope);
+                            ui_log_add(&app, "Cycled source type");
+                            break;
+
+                        // Simulation controls
+                        case SDLK_r:
+                            fdtd_reset(sim);
+                            scope_clear(&scope);
+                            ui_log_add(&app, "Simulation reset");
+                            break;
+                        case SDLK_c:
+                            fdtd_clear_fields(sim);
+                            scope_clear(&scope);
+                            ui_log_add(&app, "Fields cleared");
+                            break;
+
+                        // Boundary controls
+                        case SDLK_y: {
+                            BoundaryType type = boundary_get_type(sim);
+                            type = (type == BOUNDARY_CPML) ? BOUNDARY_MUR : BOUNDARY_CPML;
+                            boundary_set_type(sim, type);
+                            if (boundary_is_cpml_enabled(sim)) {
+                                cpml_build_coeffs(sim);
+                                cpml_zero_psi(sim);
+                            }
+                            const char* name = (type == BOUNDARY_CPML) ? "CPML" : "Mur";
+                            ui_log_add(&app, "Boundary: %s", name);
+                            break;
+                        }
+                        case SDLK_7:
+                        case SDLK_8:
+                        case SDLK_9: {
+                            int idx = (key == SDLK_7) ? 0 : (key == SDLK_8) ? 1 : 2;
+                            boundary_set_type(sim, BOUNDARY_CPML);
+                            cpml_apply_preset(sim, idx);
+                            if (boundary_is_cpml_enabled(sim)) {
+                                cpml_zero_psi(sim);
+                            }
+                            ui_log_add(&app, "CPML preset %d applied", idx + 1);
+                            break;
+                        }
+
+                        // S-parameter ports
+                        case SDLK_s:
+                            sim->ports_on = !sim->ports_on;
+                            ui_log_add(&app, "Ports: %s", sim->ports_on ? "ON" : "OFF");
+                            break;
+
+                        // Material painting mode
+                        case SDLK_m:
+                        case SDLK_u:
+                            paint_mode = !paint_mode;
+                            ui_log_add(&app, "Paint mode: %s", paint_mode ? "ON" : "OFF");
+                            break;
+                        case SDLK_i: {
+                            paint_material_type = (paint_material_type + 1) % 3;
+                            const char* mlabel = (paint_material_type == 0)
+                                                     ? "PEC"
+                                                     : (paint_material_type == 1) ? "PMC"
+                                                                                  : "Dielectric";
+                            ui_log_add(&app, "Paint material: %s", mlabel);
+                            break;
+                        }
+                        case SDLK_o:
+                            paint_epsilon -= 0.5;
+                            if (paint_epsilon < 1.0) paint_epsilon = 1.0;
+                            if (paint_epsilon > 20.0) paint_epsilon = 20.0;
+                            ui_log_add(&app, "Paint epsilon: %.1f", paint_epsilon);
+                            break;
+                        case SDLK_p:
+                            paint_epsilon += 0.5;
+                            if (paint_epsilon < 1.0) paint_epsilon = 1.0;
+                            if (paint_epsilon > 20.0) paint_epsilon = 20.0;
+                            ui_log_add(&app, "Paint epsilon: %.1f", paint_epsilon);
+                            break;
+
+                        // Grid overlay
+                        case SDLK_g:
+                            app.show_grid_overlay = !app.show_grid_overlay;
+                            break;
+
+                        // Screenshot
+                        case SDLK_F2:
+                            if (save_screenshot(render, "frame.bmp")) {
+                                ui_log_add(&app, "Screenshot saved: frame.bmp");
+                            } else {
+                                ui_log_add(&app, "Screenshot failed");
+                            }
+                            break;
+
+                        // FFT export
+                        case SDLK_F3:
+                            if (dump_scope_fft_csv(&scope, "scope_fft.csv", sim->dt, 1024)) {
+                                ui_log_add(&app, "FFT exported: scope_fft.csv");
+                            } else {
+                                ui_log_add(&app, "FFT export failed");
+                            }
+                            break;
+
+                        // Scene presets
+                        case SDLK_F5: {
+                            // Load waveguide preset
+                            SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+                            char errbuf[256];
+                            if (config_loader_parse_file("configs/waveguide.json", &cfg, errbuf, sizeof(errbuf))) {
+                                if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
+                                    wizard_init_from_config(wizard, &cfg);
+                                    ui_log_add(&app, "Loaded: waveguide.json");
+                                }
+                            }
+                            break;
+                        }
+                        case SDLK_F6: {
+                            // Load CPW filter preset
+                            SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+                            char errbuf[256];
+                            if (config_loader_parse_file("configs/cpw_filter.json", &cfg, errbuf, sizeof(errbuf))) {
+                                if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
+                                    wizard_init_from_config(wizard, &cfg);
+                                    ui_log_add(&app, "Loaded: cpw_filter.json");
+                                }
+                            }
+                            break;
+                        }
+
+                        default:
+                            break;
+                    }
+                } else {
+                    // ImGui wants keyboard, but still handle ESC and Space
+                    if (key == SDLK_ESCAPE) {
+                        running = false;
+                    } else if (key == SDLK_SPACE) {
+                        paused = !paused;
+                    }
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (!io.WantCaptureMouse) {
@@ -743,7 +973,9 @@ int main(int argc, char** argv) {
                     app.last_click_i = ix;
                     app.last_click_j = iy;
                     if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
-                        if (app.placing_source) {
+                        if (paint_mode) {
+                            apply_selected_paint(sim, ix, iy, paint_brush_size, paint_material_type, paint_epsilon);
+                        } else if (app.placing_source) {
                             int idx = app.selected_source;
                             if (idx < 0) idx = 0;
                             if (idx >= MAX_SRC) idx = MAX_SRC - 1;
@@ -798,6 +1030,28 @@ int main(int argc, char** argv) {
                         }
                     }
                 }
+            } else if (e.type == SDL_MOUSEMOTION) {
+                if (!io.WantCaptureMouse && paint_mode && (e.motion.state & SDL_BUTTON_LMASK)) {
+                    if (!app.viewport_valid) {
+                        continue;
+                    }
+                    int mx = e.motion.x;
+                    int my = e.motion.y;
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x < 0.0f || local_y < 0.0f) {
+                        continue;
+                    }
+                    if (local_x >= app.viewport_size.x || local_y >= app.viewport_size.y) {
+                        continue;
+                    }
+                    int ix = (int)(local_x / (float)scale);
+                    int iy = (int)(local_y / (float)scale);
+                    if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
+                        continue;
+                    }
+                    apply_selected_paint(sim, ix, iy, paint_brush_size, paint_material_type, paint_epsilon);
+                }
             }
         }
 
@@ -828,7 +1082,8 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowSize(viewport->Size);
         ImGuiWindowFlags root_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+                                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+                                      ImGuiWindowFlags_NoBackground;
         ImGui::Begin("RootLayout", nullptr, root_flags);
 
         ImVec2 full = ImGui::GetContentRegionAvail();
@@ -957,6 +1212,54 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             ImGui::Text("Space");
+
+            ImGui::Separator();
+
+            // Frequency slider
+            ImGui::TextUnformatted("Frequency");
+            ImGui::Indent();
+            float freq_ghz = (float)(sim->freq * 1e-9);
+            if (ImGui::SliderFloat("GHz", &freq_ghz, 0.001f, 5.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                double new_freq = (double)freq_ghz * 1e9;
+                if (new_freq > 0.0) {
+                    fdtd_update_grid_for_freq(sim, new_freq);
+                    sources_set_freq(sim->sources, new_freq);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Adjust simulation frequency (1 MHz - 5 GHz)");
+            }
+            ImGui::Unindent();
+
+            ImGui::Separator();
+
+            // Steps/frame slider
+            ImGui::TextUnformatted("Speed");
+            ImGui::Indent();
+            if (ImGui::SliderInt("steps/frame", &steps_per_frame, 1, 50)) {
+                // Speed is controlled per-frame in the main loop
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Number of simulation steps per rendered frame");
+            }
+            ImGui::Unindent();
+
+            ImGui::Separator();
+            ImGui::TextUnformatted("Paint Mode");
+            ImGui::Indent();
+            ImGui::Text("Active: %s (M/U)", paint_mode ? "YES" : "NO");
+            if (paint_mode) {
+                const char* types[] = {"PEC", "PMC", "Dielectric"};
+                const int type_idx = (paint_material_type >= 0 && paint_material_type < 3)
+                                         ? paint_material_type
+                                         : 0;
+                ImGui::Text("Type: %s (I)", types[type_idx]);
+                if (type_idx == 2) {
+                    ImGui::Text("Epsilon: %.1f (O/P)", paint_epsilon);
+                }
+                ImGui::Text("Brush radius: %d", paint_brush_size);
+            }
+            ImGui::Unindent();
 
             ImGui::Separator();
 
@@ -1148,43 +1451,73 @@ int main(int argc, char** argv) {
             const ImU32 block_sel_col = IM_COL32(0, 255, 128, 200);
 
             // Source labels
-            for (int k = 0; k < MAX_SRC; ++k) {
-                const Source& s = sim->sources[k];
-                if (!s.active) continue;
-                float sx = (float)(s.ix * scale);
-                float sy = (float)(s.iy * scale);
-                char label[16];
-                std::snprintf(label, sizeof(label), "%d", k);
-                dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
-            }
+            if (app.viewport_valid) {
+                for (int k = 0; k < MAX_SRC; ++k) {
+                    const Source& s = sim->sources[k];
+                    if (!s.active) continue;
+                    float sx = app.viewport_pos.x + (float)(s.ix * scale);
+                    float sy = app.viewport_pos.y + (float)(s.iy * scale);
+                    char label[16];
+                    std::snprintf(label, sizeof(label), "%d", k);
+                    dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
+                }
 
-            // Block outlines from wizard config
-            int rect_count = wizard.cfg.material_rect_count;
-            if (rect_count < 0) rect_count = 0;
-            if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
-            for (int i = 0; i < rect_count; ++i) {
-                const MaterialRectSpec& r = wizard.cfg.material_rects[i];
-                float x0 = (float)(r.x0 * (double)sim->nx * (double)scale);
-                float x1 = (float)(r.x1 * (double)sim->nx * (double)scale);
-                float y0 = (float)(r.y0 * (double)sim->ny * (double)scale);
-                float y1 = (float)(r.y1 * (double)sim->ny * (double)scale);
-                ImVec2 p0(x0, y0);
-                ImVec2 p1(x1, y1);
-                ImU32 col = (i == app.selected_block) ? block_sel_col : block_col;
-                dl->AddRect(p0, p1, col, 0.0f, 0, 1.0f);
+                // Block outlines from wizard config
+                int rect_count = wizard.cfg.material_rect_count;
+                if (rect_count < 0) rect_count = 0;
+                if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
+                for (int i = 0; i < rect_count; ++i) {
+                    const MaterialRectSpec& r = wizard.cfg.material_rects[i];
+                    float x0 = app.viewport_pos.x + (float)(r.x0 * (double)sim->nx * (double)scale);
+                    float x1 = app.viewport_pos.x + (float)(r.x1 * (double)sim->nx * (double)scale);
+                    float y0 = app.viewport_pos.y + (float)(r.y0 * (double)sim->ny * (double)scale);
+                    float y1 = app.viewport_pos.y + (float)(r.y1 * (double)sim->ny * (double)scale);
+                    ImVec2 p0(x0, y0);
+                    ImVec2 p1(x1, y1);
+                    ImU32 col = (i == app.selected_block) ? block_sel_col : block_col;
+                    dl->AddRect(p0, p1, col, 0.0f, 0, 1.0f);
 
-                char blabel[16];
-                std::snprintf(blabel, sizeof(blabel), "B%d", i);
-                dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), col, blabel);
+                    char blabel[16];
+                    std::snprintf(blabel, sizeof(blabel), "B%d", i);
+                    dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), col, blabel);
+                }
+
+                // Paint cursor indicator
+                if (paint_mode) {
+                    ImVec2 mouse_pos = io.MousePos;
+                    float local_x = mouse_pos.x - app.viewport_pos.x;
+                    float local_y = mouse_pos.y - app.viewport_pos.y;
+                    if (local_x >= 0.0f && local_y >= 0.0f &&
+                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                        int ix = (int)(local_x / (float)scale);
+                        int iy = (int)(local_y / (float)scale);
+                        if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                            float cx = app.viewport_pos.x + ((float)ix + 0.5f) * (float)scale;
+                            float cy = app.viewport_pos.y + ((float)iy + 0.5f) * (float)scale;
+                            float radius = (float)paint_brush_size * (float)scale;
+                            ImU32 col = IM_COL32(255, 255, 255, 200);
+                            if (paint_material_type == 0) {
+                                col = IM_COL32(255, 80, 80, 200);
+                            } else if (paint_material_type == 1) {
+                                col = IM_COL32(80, 160, 255, 200);
+                            } else {
+                                col = IM_COL32(120, 255, 120, 200);
+                            }
+                            dl->AddCircle(ImVec2(cx, cy), radius, col, 32, 1.5f);
+                        }
+                    }
+                }
             }
         }
 
         if (!paused) {
-            fdtd_step(sim);
-            int px = sim->nx / 2;
-            int py = sim->ny / 2;
-            double probe_val = fdtd_get_Ez(sim, px, py);
-            scope_push(&scope, probe_val);
+            for (int s = 0; s < steps_per_frame; ++s) {
+                fdtd_step(sim);
+                int px = sim->nx / 2;
+                int py = sim->ny / 2;
+                double probe_val = fdtd_get_Ez(sim, px, py);
+                scope_push(&scope, probe_val);
+            }
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
