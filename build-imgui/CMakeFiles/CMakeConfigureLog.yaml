@@ -202,7 +202,7 @@ events:
       The output was:
       0
       MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-      Build started 18/11/2025 01:11:10.
+      Build started 18/11/2025 01:53:09.
       
       Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\4.1.2\\CompilerIdC\\CompilerIdC.vcxproj" on node 1 (default targets).
       PrepareForBuild:
@@ -242,7 +242,7 @@ events:
           0 Warning(s)
           0 Error(s)
       
-      Time Elapsed 00:00:00.86
+      Time Elapsed 00:00:00.96
       
       
       Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CompilerIdC.exe"
@@ -3588,7 +3588,7 @@ events:
       The output was:
       0
       MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-      Build started 18/11/2025 01:11:11.
+      Build started 18/11/2025 01:53:11.
       
       Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\4.1.2\\CompilerIdCXX\\CompilerIdCXX.vcxproj" on node 1 (default targets).
       PrepareForBuild:
@@ -3628,7 +3628,7 @@ events:
           0 Warning(s)
           0 Error(s)
       
-      Time Elapsed 00:00:00.88
+      Time Elapsed 00:00:01.23
       
       
       Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CompilerIdCXX.exe"
@@ -5233,8 +5233,8 @@ events:
     checks:
       - "Detecting C compiler ABI info"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-ciulsk"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-ciulsk"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-4cmg5b"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-4cmg5b"
     cmakeVariables:
       CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
       CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5247,34 +5247,34 @@ events:
       variable: "CMAKE_C_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-ciulsk'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-4cmg5b'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_9cdb3.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_b888f.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:13.
+        Build started 18/11/2025 01:53:12.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-ciulsk\\cmTC_9cdb3.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-4cmg5b\\cmTC_b888f.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_9cdb3.dir\\Debug\\".
+          Creating directory "cmTC_b888f.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-ciulsk\\Debug\\".
-          Creating directory "cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-4cmg5b\\Debug\\".
+          Creating directory "cmTC_b888f.dir\\Debug\\cmTC_b888f.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.tlog\\unsuccessfulbuild".
+          Creating "cmTC_b888f.dir\\Debug\\cmTC_b888f.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_b888f.dir\\Debug\\cmTC_b888f.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_9cdb3.dir\\Debug\\\\" /Fd"cmTC_9cdb3.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_b888f.dir\\Debug\\\\" /Fd"cmTC_b888f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_9cdb3.dir\\Debug\\\\" /Fd"cmTC_9cdb3.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /Fo"cmTC_b888f.dir\\Debug\\\\" /Fd"cmTC_b888f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCCompilerABI.c"
           CMakeCCompilerABI.c
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-ciulsk\\Debug\\cmTC_9cdb3.exe" /INCREMENTAL /ILK:"cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-ciulsk/Debug/cmTC_9cdb3.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-ciulsk/Debug/cmTC_9cdb3.lib" /MACHINE:X64  /machine:x64 cmTC_9cdb3.dir\\Debug\\CMakeCCompilerABI.obj
-          cmTC_9cdb3.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-ciulsk\\Debug\\cmTC_9cdb3.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-4cmg5b\\Debug\\cmTC_b888f.exe" /INCREMENTAL /ILK:"cmTC_b888f.dir\\Debug\\cmTC_b888f.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-4cmg5b/Debug/cmTC_b888f.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-4cmg5b/Debug/cmTC_b888f.lib" /MACHINE:X64  /machine:x64 cmTC_b888f.dir\\Debug\\CMakeCCompilerABI.obj
+          cmTC_b888f.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-4cmg5b\\Debug\\cmTC_b888f.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.tlog\\unsuccessfulbuild".
-          Touching "cmTC_9cdb3.dir\\Debug\\cmTC_9cdb3.tlog\\cmTC_9cdb3.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-ciulsk\\cmTC_9cdb3.vcxproj" (default targets).
+          Deleting file "cmTC_b888f.dir\\Debug\\cmTC_b888f.tlog\\unsuccessfulbuild".
+          Touching "cmTC_b888f.dir\\Debug\\cmTC_b888f.tlog\\cmTC_b888f.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-4cmg5b\\cmTC_b888f.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
@@ -5320,8 +5320,8 @@ events:
     checks:
       - "Detecting CXX compiler ABI info"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-u8s996"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-u8s996"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-z7p0mo"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-z7p0mo"
     cmakeVariables:
       CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
       CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5335,40 +5335,40 @@ events:
       variable: "CMAKE_CXX_ABI_COMPILED"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-u8s996'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-z7p0mo'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_8ea5b.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_bd077.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:14.
+        Build started 18/11/2025 01:53:13.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-u8s996\\cmTC_8ea5b.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-z7p0mo\\cmTC_bd077.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_8ea5b.dir\\Debug\\".
+          Creating directory "cmTC_bd077.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-u8s996\\Debug\\".
-          Creating directory "cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-z7p0mo\\Debug\\".
+          Creating directory "cmTC_bd077.dir\\Debug\\cmTC_bd077.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.tlog\\unsuccessfulbuild".
+          Creating "cmTC_bd077.dir\\Debug\\cmTC_bd077.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_bd077.dir\\Debug\\cmTC_bd077.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8ea5b.dir\\Debug\\\\" /Fd"cmTC_8ea5b.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Fo"cmTC_bd077.dir\\Debug\\\\" /Fd"cmTC_bd077.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Fo"cmTC_8ea5b.dir\\Debug\\\\" /Fd"cmTC_8ea5b.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /Fo"cmTC_bd077.dir\\Debug\\\\" /Fd"cmTC_bd077.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\ncl_a\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\cmake\\data\\share\\cmake-4.1\\Modules\\CMakeCXXCompilerABI.cpp"
           CMakeCXXCompilerABI.cpp
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-u8s996\\Debug\\cmTC_8ea5b.exe" /INCREMENTAL /ILK:"cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-u8s996/Debug/cmTC_8ea5b.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-u8s996/Debug/cmTC_8ea5b.lib" /MACHINE:X64  /machine:x64 cmTC_8ea5b.dir\\Debug\\CMakeCXXCompilerABI.obj
-          cmTC_8ea5b.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-u8s996\\Debug\\cmTC_8ea5b.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-z7p0mo\\Debug\\cmTC_bd077.exe" /INCREMENTAL /ILK:"cmTC_bd077.dir\\Debug\\cmTC_bd077.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-z7p0mo/Debug/cmTC_bd077.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-z7p0mo/Debug/cmTC_bd077.lib" /MACHINE:X64  /machine:x64 cmTC_bd077.dir\\Debug\\CMakeCXXCompilerABI.obj
+          cmTC_bd077.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-z7p0mo\\Debug\\cmTC_bd077.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.tlog\\unsuccessfulbuild".
-          Touching "cmTC_8ea5b.dir\\Debug\\cmTC_8ea5b.tlog\\cmTC_8ea5b.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-u8s996\\cmTC_8ea5b.vcxproj" (default targets).
+          Deleting file "cmTC_bd077.dir\\Debug\\cmTC_bd077.tlog\\unsuccessfulbuild".
+          Touching "cmTC_bd077.dir\\Debug\\cmTC_bd077.tlog\\cmTC_bd077.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-z7p0mo\\cmTC_bd077.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
             0 Error(s)
         
-        Time Elapsed 00:00:00.50
+        Time Elapsed 00:00:00.52
         
       exitCode: 0
   -
@@ -5408,8 +5408,8 @@ events:
       - "CMakeLists.txt:11 (find_package)"
     description: "Detecting C OpenMP compiler info"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-09agh9"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-09agh9"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-0ar012"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-0ar012"
     cmakeVariables:
       CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
       CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5423,40 +5423,40 @@ events:
       variable: "OpenMP_COMPILE_RESULT_C_openmp"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-09agh9'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-0ar012'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_f20d3.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_134f5.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:14.
+        Build started 18/11/2025 01:53:14.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\cmTC_f20d3.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\cmTC_134f5.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_f20d3.dir\\Debug\\".
+          Creating directory "cmTC_134f5.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\Debug\\".
-          Creating directory "cmTC_f20d3.dir\\Debug\\cmTC_f20d3.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\Debug\\".
+          Creating directory "cmTC_134f5.dir\\Debug\\cmTC_134f5.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_f20d3.dir\\Debug\\cmTC_f20d3.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_f20d3.dir\\Debug\\cmTC_f20d3.tlog\\unsuccessfulbuild".
+          Creating "cmTC_134f5.dir\\Debug\\cmTC_134f5.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_134f5.dir\\Debug\\cmTC_134f5.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_f20d3.dir\\Debug\\\\" /Fd"cmTC_f20d3.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\OpenMPTryFlag.c"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_134f5.dir\\Debug\\\\" /Fd"cmTC_134f5.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\OpenMPTryFlag.c"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_f20d3.dir\\Debug\\\\" /Fd"cmTC_f20d3.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\OpenMPTryFlag.c"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_134f5.dir\\Debug\\\\" /Fd"cmTC_134f5.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\OpenMPTryFlag.c"
           OpenMPTryFlag.c
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\Debug\\cmTC_f20d3.exe" /INCREMENTAL /ILK:"cmTC_f20d3.dir\\Debug\\cmTC_f20d3.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-09agh9/Debug/cmTC_f20d3.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-09agh9/Debug/cmTC_f20d3.lib" /MACHINE:X64  /machine:x64 cmTC_f20d3.dir\\Debug\\OpenMPTryFlag.obj
-          cmTC_f20d3.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\Debug\\cmTC_f20d3.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\Debug\\cmTC_134f5.exe" /INCREMENTAL /ILK:"cmTC_134f5.dir\\Debug\\cmTC_134f5.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-0ar012/Debug/cmTC_134f5.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-0ar012/Debug/cmTC_134f5.lib" /MACHINE:X64  /machine:x64 cmTC_134f5.dir\\Debug\\OpenMPTryFlag.obj
+          cmTC_134f5.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\Debug\\cmTC_134f5.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_f20d3.dir\\Debug\\cmTC_f20d3.tlog\\unsuccessfulbuild".
-          Touching "cmTC_f20d3.dir\\Debug\\cmTC_f20d3.tlog\\cmTC_f20d3.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-09agh9\\cmTC_f20d3.vcxproj" (default targets).
+          Deleting file "cmTC_134f5.dir\\Debug\\cmTC_134f5.tlog\\unsuccessfulbuild".
+          Touching "cmTC_134f5.dir\\Debug\\cmTC_134f5.tlog\\cmTC_134f5.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-0ar012\\cmTC_134f5.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
             0 Error(s)
         
-        Time Elapsed 00:00:00.50
+        Time Elapsed 00:00:00.55
         
       exitCode: 0
   -
@@ -5468,8 +5468,8 @@ events:
       - "CMakeLists.txt:11 (find_package)"
     description: "Detecting CXX OpenMP compiler info"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-v8v3sg"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-v8v3sg"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-9x7iqu"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-9x7iqu"
     cmakeVariables:
       CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
       CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5483,40 +5483,40 @@ events:
       variable: "OpenMP_COMPILE_RESULT_CXX_openmp"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-v8v3sg'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-9x7iqu'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_b5d3e.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_a00d0.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:15.
+        Build started 18/11/2025 01:53:15.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\cmTC_b5d3e.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\cmTC_a00d0.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_b5d3e.dir\\Debug\\".
+          Creating directory "cmTC_a00d0.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\Debug\\".
-          Creating directory "cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\Debug\\".
+          Creating directory "cmTC_a00d0.dir\\Debug\\cmTC_a00d0.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.tlog\\unsuccessfulbuild".
+          Creating "cmTC_a00d0.dir\\Debug\\cmTC_a00d0.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_a00d0.dir\\Debug\\cmTC_a00d0.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_b5d3e.dir\\Debug\\\\" /Fd"cmTC_b5d3e.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\OpenMPTryFlag.cpp"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_a00d0.dir\\Debug\\\\" /Fd"cmTC_a00d0.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\OpenMPTryFlag.cpp"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_b5d3e.dir\\Debug\\\\" /Fd"cmTC_b5d3e.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\OpenMPTryFlag.cpp"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_a00d0.dir\\Debug\\\\" /Fd"cmTC_a00d0.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\OpenMPTryFlag.cpp"
           OpenMPTryFlag.cpp
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\Debug\\cmTC_b5d3e.exe" /INCREMENTAL /ILK:"cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-v8v3sg/Debug/cmTC_b5d3e.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-v8v3sg/Debug/cmTC_b5d3e.lib" /MACHINE:X64  /machine:x64 cmTC_b5d3e.dir\\Debug\\OpenMPTryFlag.obj
-          cmTC_b5d3e.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\Debug\\cmTC_b5d3e.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\Debug\\cmTC_a00d0.exe" /INCREMENTAL /ILK:"cmTC_a00d0.dir\\Debug\\cmTC_a00d0.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-9x7iqu/Debug/cmTC_a00d0.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-9x7iqu/Debug/cmTC_a00d0.lib" /MACHINE:X64  /machine:x64 cmTC_a00d0.dir\\Debug\\OpenMPTryFlag.obj
+          cmTC_a00d0.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\Debug\\cmTC_a00d0.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.tlog\\unsuccessfulbuild".
-          Touching "cmTC_b5d3e.dir\\Debug\\cmTC_b5d3e.tlog\\cmTC_b5d3e.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-v8v3sg\\cmTC_b5d3e.vcxproj" (default targets).
+          Deleting file "cmTC_a00d0.dir\\Debug\\cmTC_a00d0.tlog\\unsuccessfulbuild".
+          Touching "cmTC_a00d0.dir\\Debug\\cmTC_a00d0.tlog\\cmTC_a00d0.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-9x7iqu\\cmTC_a00d0.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
             0 Error(s)
         
-        Time Elapsed 00:00:00.50
+        Time Elapsed 00:00:00.53
         
       exitCode: 0
   -
@@ -5528,8 +5528,8 @@ events:
       - "CMakeLists.txt:11 (find_package)"
     description: "Detecting C OpenMP version"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-o0fsbk"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-o0fsbk"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-mqlel8"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-mqlel8"
     cmakeVariables:
       CMAKE_C_FLAGS: "/DWIN32 /D_WINDOWS"
       CMAKE_C_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5543,40 +5543,40 @@ events:
       variable: "OpenMP_SPECTEST_C_"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-o0fsbk'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-mqlel8'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_59ebe.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_7e578.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:16.
+        Build started 18/11/2025 01:53:16.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\cmTC_59ebe.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\cmTC_7e578.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_59ebe.dir\\Debug\\".
+          Creating directory "cmTC_7e578.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\Debug\\".
-          Creating directory "cmTC_59ebe.dir\\Debug\\cmTC_59ebe.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\Debug\\".
+          Creating directory "cmTC_7e578.dir\\Debug\\cmTC_7e578.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_59ebe.dir\\Debug\\cmTC_59ebe.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_59ebe.dir\\Debug\\cmTC_59ebe.tlog\\unsuccessfulbuild".
+          Creating "cmTC_7e578.dir\\Debug\\cmTC_7e578.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_7e578.dir\\Debug\\cmTC_7e578.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_59ebe.dir\\Debug\\\\" /Fd"cmTC_59ebe.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\OpenMPCheckVersion.c"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_7e578.dir\\Debug\\\\" /Fd"cmTC_7e578.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\OpenMPCheckVersion.c"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_59ebe.dir\\Debug\\\\" /Fd"cmTC_59ebe.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\OpenMPCheckVersion.c"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /RTC1 /MDd /GS /fp:precise /openmp /std:c11 /Fo"cmTC_7e578.dir\\Debug\\\\" /Fd"cmTC_7e578.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TC /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\OpenMPCheckVersion.c"
           OpenMPCheckVersion.c
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\Debug\\cmTC_59ebe.exe" /INCREMENTAL /ILK:"cmTC_59ebe.dir\\Debug\\cmTC_59ebe.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-o0fsbk/Debug/cmTC_59ebe.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-o0fsbk/Debug/cmTC_59ebe.lib" /MACHINE:X64  /machine:x64 cmTC_59ebe.dir\\Debug\\OpenMPCheckVersion.obj
-          cmTC_59ebe.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\Debug\\cmTC_59ebe.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\Debug\\cmTC_7e578.exe" /INCREMENTAL /ILK:"cmTC_7e578.dir\\Debug\\cmTC_7e578.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-mqlel8/Debug/cmTC_7e578.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-mqlel8/Debug/cmTC_7e578.lib" /MACHINE:X64  /machine:x64 cmTC_7e578.dir\\Debug\\OpenMPCheckVersion.obj
+          cmTC_7e578.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\Debug\\cmTC_7e578.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_59ebe.dir\\Debug\\cmTC_59ebe.tlog\\unsuccessfulbuild".
-          Touching "cmTC_59ebe.dir\\Debug\\cmTC_59ebe.tlog\\cmTC_59ebe.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-o0fsbk\\cmTC_59ebe.vcxproj" (default targets).
+          Deleting file "cmTC_7e578.dir\\Debug\\cmTC_7e578.tlog\\unsuccessfulbuild".
+          Touching "cmTC_7e578.dir\\Debug\\cmTC_7e578.tlog\\cmTC_7e578.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-mqlel8\\cmTC_7e578.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
             0 Error(s)
         
-        Time Elapsed 00:00:00.51
+        Time Elapsed 00:00:00.44
         
       exitCode: 0
   -
@@ -5588,8 +5588,8 @@ events:
       - "CMakeLists.txt:11 (find_package)"
     description: "Detecting CXX OpenMP version"
     directories:
-      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-uxfz5n"
-      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-uxfz5n"
+      source: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-pfvf8y"
+      binary: "C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-pfvf8y"
     cmakeVariables:
       CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
       CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
@@ -5603,40 +5603,40 @@ events:
       variable: "OpenMP_SPECTEST_CXX_"
       cached: true
       stdout: |
-        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-uxfz5n'
+        Change Dir: 'C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-pfvf8y'
         
-        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_95017.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_d1c65.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
         MSBuild version 17.13.19+0d9f5a35a for .NET Framework
-        Build started 18/11/2025 01:11:17.
+        Build started 18/11/2025 01:53:17.
         
-        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\cmTC_95017.vcxproj" on node 1 (default targets).
+        Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\cmTC_d1c65.vcxproj" on node 1 (default targets).
         PrepareForBuild:
-          Creating directory "cmTC_95017.dir\\Debug\\".
+          Creating directory "cmTC_d1c65.dir\\Debug\\".
           Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
-          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\Debug\\".
-          Creating directory "cmTC_95017.dir\\Debug\\cmTC_95017.tlog\\".
+          Creating directory "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\Debug\\".
+          Creating directory "cmTC_d1c65.dir\\Debug\\cmTC_d1c65.tlog\\".
         InitializeBuildStatus:
-          Creating "cmTC_95017.dir\\Debug\\cmTC_95017.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
-          Touching "cmTC_95017.dir\\Debug\\cmTC_95017.tlog\\unsuccessfulbuild".
+          Creating "cmTC_d1c65.dir\\Debug\\cmTC_d1c65.tlog\\unsuccessfulbuild" because "AlwaysCreate" was specified.
+          Touching "cmTC_d1c65.dir\\Debug\\cmTC_d1c65.tlog\\unsuccessfulbuild".
         ClCompile:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_95017.dir\\Debug\\\\" /Fd"cmTC_95017.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\OpenMPCheckVersion.cpp"
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_d1c65.dir\\Debug\\\\" /Fd"cmTC_d1c65.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\OpenMPCheckVersion.cpp"
           Microsoft (R) C/C++ Optimizing Compiler Version 19.43.34810 for x64
           Copyright (C) Microsoft Corporation.  All rights reserved.
-          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_95017.dir\\Debug\\\\" /Fd"cmTC_95017.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\OpenMPCheckVersion.cpp"
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /EHsc /RTC1 /MDd /GS /fp:precise /openmp /Fo"cmTC_d1c65.dir\\Debug\\\\" /Fd"cmTC_d1c65.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\OpenMPCheckVersion.cpp"
           OpenMPCheckVersion.cpp
         Link:
-          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\Debug\\cmTC_95017.exe" /INCREMENTAL /ILK:"cmTC_95017.dir\\Debug\\cmTC_95017.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-uxfz5n/Debug/cmTC_95017.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-uxfz5n/Debug/cmTC_95017.lib" /MACHINE:X64  /machine:x64 cmTC_95017.dir\\Debug\\OpenMPCheckVersion.obj
-          cmTC_95017.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\Debug\\cmTC_95017.exe
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.43.34808\\bin\\HostX64\\x64\\link.exe /OUT:"C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\Debug\\cmTC_d1c65.exe" /INCREMENTAL /ILK:"cmTC_d1c65.dir\\Debug\\cmTC_d1c65.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-pfvf8y/Debug/cmTC_d1c65.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /IMPLIB:"C:/projects/emwave-c/build-imgui/CMakeFiles/CMakeScratch/TryCompile-pfvf8y/Debug/cmTC_d1c65.lib" /MACHINE:X64  /machine:x64 cmTC_d1c65.dir\\Debug\\OpenMPCheckVersion.obj
+          cmTC_d1c65.vcxproj -> C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\Debug\\cmTC_d1c65.exe
         FinalizeBuildStatus:
-          Deleting file "cmTC_95017.dir\\Debug\\cmTC_95017.tlog\\unsuccessfulbuild".
-          Touching "cmTC_95017.dir\\Debug\\cmTC_95017.tlog\\cmTC_95017.lastbuildstate".
-        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-uxfz5n\\cmTC_95017.vcxproj" (default targets).
+          Deleting file "cmTC_d1c65.dir\\Debug\\cmTC_d1c65.tlog\\unsuccessfulbuild".
+          Touching "cmTC_d1c65.dir\\Debug\\cmTC_d1c65.tlog\\cmTC_d1c65.lastbuildstate".
+        Done Building Project "C:\\projects\\emwave-c\\build-imgui\\CMakeFiles\\CMakeScratch\\TryCompile-pfvf8y\\cmTC_d1c65.vcxproj" (default targets).
         
         Build succeeded.
             0 Warning(s)
             0 Error(s)
         
-        Time Elapsed 00:00:00.52
+        Time Elapsed 00:00:00.53
         
       exitCode: 0
   -
