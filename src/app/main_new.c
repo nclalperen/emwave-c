@@ -10,6 +10,7 @@
 #include "ui_render.h"
 #include "ui_controls.h"
 #include "cli_runner.h"
+#include "config_loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,27 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+typedef struct ScenePresetDesc {
+    int id;
+    const char* name;
+    const char* config_path;
+} ScenePresetDesc;
+
+static const ScenePresetDesc UI_SCENE_PRESETS[] = {
+    {1, "waveguide", "configs/waveguide.json"},
+    {2, "cpw_filter", "configs/cpw_filter.json"}
+};
+
+static const ScenePresetDesc* find_scene_preset(int id) {
+    size_t count = sizeof(UI_SCENE_PRESETS) / sizeof(UI_SCENE_PRESETS[0]);
+    for (size_t i = 0; i < count; ++i) {
+        if (UI_SCENE_PRESETS[i].id == id) {
+            return &UI_SCENE_PRESETS[i];
+        }
+    }
+    return NULL;
+}
 
 int main(int argc, char** argv) {
     SimulationBootstrap bootstrap;
@@ -96,6 +118,59 @@ int main(int argc, char** argv) {
         double metrics_ms = (double)(metrics_end - metrics_start) * 1000.0 / (double)perf_freq;
         if (!ui_handle_events(ui, sim, &scope)) {
             break;
+        }
+
+        if (ui->request_scene_reload) {
+            int preset_id = ui->requested_scene_preset;
+            ui->request_scene_reload = 0;
+            const ScenePresetDesc* preset = find_scene_preset(preset_id);
+            if (!preset) {
+                fprintf(stderr, "Unknown scene preset %d\n", preset_id);
+            } else {
+                SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+                char errbuf[256];
+                if (!config_loader_parse_file(preset->config_path, &cfg, errbuf, sizeof(errbuf))) {
+                    fprintf(stderr, "Failed to load scene '%s' from %s: %s\n",
+                            preset->name, preset->config_path,
+                            (errbuf[0] != '\0') ? errbuf : "unknown error");
+                } else {
+                    simulation_runner_shutdown(&runner);
+                    scope_free(&scope);
+                    simulation_bootstrap_shutdown(&bootstrap);
+
+                    if (!simulation_bootstrap_with_config(&cfg, &bootstrap)) {
+                        fprintf(stderr, "Failed to initialise scene '%s'\n", preset->name);
+                        return 1;
+                    }
+
+                    sim = bootstrap.sim;
+
+                    if (!scope_init(&scope, sim->nx * render->scale)) {
+                        fprintf(stderr, "Failed to initialize oscilloscope buffer for scene '%s'\n", preset->name);
+                        simulation_bootstrap_shutdown(&bootstrap);
+                        return 1;
+                    }
+
+                    ui_state_set_layout(ui, render->scale, render->menu_bar_height, render->timeline_height,
+                                        render->left_panel_width, render->right_panel_width,
+                                        sim->nx, sim->ny);
+                    ui_state_sync_with_sim(ui, sim);
+                    if (preset->name) {
+                        snprintf(ui->scene_name, sizeof(ui->scene_name), "%s", preset->name);
+                    } else {
+                        ui->scene_name[0] = '\0';
+                    }
+
+                    simulation_runner_options_from_config(&runner_opts, &bootstrap.config);
+                    runner_opts.progress_interval = 0;
+                    simulation_runner_init(&runner, &runner_opts);
+                    simulation_runner_reset_progress(&runner, 0);
+
+                    printf("Scene switched to '%s' (%s)\n", preset->name, preset->config_path);
+                }
+            }
+            /* Skip stepping/rendering on the old state this frame */
+            continue;
         }
 
         if (!ui->paused) {

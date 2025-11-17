@@ -22,6 +22,7 @@ const SimulationConfig SIM_CONFIG_DEFAULTS = {
     .run_mode = SIM_RUN_MODE_FIXED_STEPS,
     .run_steps = 5 * 200,
     .boundary_mode = SIM_BOUNDARY_CPML,
+    .enable_profile = 0,
     .enable_probe_log = 0,
     .probe_log_path = "probe.txt",
     .material_rect_count = 1,
@@ -34,6 +35,7 @@ const SimulationConfig SIM_CONFIG_DEFAULTS = {
         { .active = 1, .x = 0.25, .y = 0.5, .type = SRC_CW,
           .amp = 1.0, .freq = 1e9, .sigma2 = 4.0 }
     },
+    .port_count = 0,
 };
 
 static double clamp01(double v) {
@@ -82,6 +84,17 @@ void config_clamp_to_limits(SimulationConfig* cfg) {
         cfg->source_configs[i].y = clamp01(cfg->source_configs[i].y);
         if (cfg->source_configs[i].sigma2 <= 0.0) cfg->source_configs[i].sigma2 = 4.0;
         if (cfg->source_configs[i].freq <= 0.0) cfg->source_configs[i].freq = 1e9;
+    }
+
+    if (cfg->port_count < 0) cfg->port_count = 0;
+    for (int i = 0; i < cfg->port_count; ++i) {
+        PortConfigSpec* spec = &cfg->port_configs[i];
+        if (spec->x < 0.0) spec->x = 0.0;
+        if (spec->x > 1.0) spec->x = 1.0;
+        if (spec->y0 < 0.0) spec->y0 = 0.0;
+        if (spec->y0 > 1.0) spec->y0 = 1.0;
+        if (spec->y1 < 0.0) spec->y1 = 0.0;
+        if (spec->y1 > 1.0) spec->y1 = 1.0;
     }
 
     if (cfg->boundary_mode != SIM_BOUNDARY_CPML &&
@@ -138,6 +151,17 @@ int config_validate(const SimulationConfig* cfg, char* errbuf, size_t errbuf_len
             return 0;
         }
     }
+    if (cfg->port_count < 0) {
+        if (errbuf && errbuf_len) snprintf(errbuf, errbuf_len, "Port count must be non-negative");
+        return 0;
+    }
+    for (int i = 0; i < cfg->port_count; ++i) {
+        const PortConfigSpec* spec = &cfg->port_configs[i];
+        if (spec->y1 <= spec->y0) {
+            if (errbuf && errbuf_len) snprintf(errbuf, errbuf_len, "Port %d has invalid y-range", i);
+            return 0;
+        }
+    }
     if (cfg->boundary_mode != SIM_BOUNDARY_CPML &&
         cfg->boundary_mode != SIM_BOUNDARY_MUR) {
         if (errbuf && errbuf_len) snprintf(errbuf, errbuf_len, "Boundary mode must be cpml or mur");
@@ -166,6 +190,6 @@ void config_print_summary(const SimulationConfig* cfg) {
     } else {
         printf("Probe logging: disabled\n");
     }
-    printf("Materials: %d rectangles, Sources: %d\n",
-           cfg->material_rect_count, cfg->source_count);
+    printf("Materials: %d rectangles, Sources: %d, Ports: %d\n",
+           cfg->material_rect_count, cfg->source_count, cfg->port_count);
 }

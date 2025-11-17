@@ -26,6 +26,7 @@ All fields are optional; omitted values fall back to the built-in defaults.
 | `sweep_steps_per_point` | integer | Steps to simulate per sweep frequency. |
 | `run_mode` | string | Optional. `"fixed"` (default) or `"sweep"`. |
 | `run_steps` | integer | When `run_mode` is `"fixed"`, total steps to run. |
+| `enable_profile` | boolean | Enable a brief profiling summary for headless CLI runs. |
 | `enable_probe_log` | boolean | Enable writing probe samples to a CSV-like text file. |
 | `probe_log_path` | string | Path for probe logging when enabled. Defaults to `"probe.txt"`. |
 | `boundary` | string | Optional. `"cpml"` (default) or `"mur"`. |
@@ -64,3 +65,17 @@ PML to avoid numerical issues.
 
 At most `CONFIG_MAX_MATERIAL_RECTS` material rectangles and `MAX_SRC` sources are
 loaded. Excess entries are ignored.
+
+## `ports`
+
+Optional array describing measurement ports for S-parameters. Coordinates are
+normalized fractions (0.0 bottom/left, 1.0 top/right). When omitted, ports are
+placed automatically near the quarter and three-quarter points.
+
+Each entry supports the following fields:
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `active` | boolean | Whether this port is enabled. Defaults to `true`. |
+| `x` | number | Normalized horizontal location of the port sample column. |
+| `y0`, `y1` | number | Normalized vertical span of the port segment (`y1` > `y0`). |

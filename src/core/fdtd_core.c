@@ -245,6 +245,9 @@ SimulationState* fdtd_init(const SimulationConfig* cfg) {
     fdtd_clear_fields(state);
     materials_reset_to_defaults(state);
     materials_init(state);
+#if EMWAVE_ENABLE_PORTS
+    ports_apply_config(state->ports, state->nx, state->ny, &state->config);
+#endif
     sources_init(state->sources, state->nx, state->ny, &state->config);
     cpml_apply_preset(state, cpml_get_preset_index(state));
     cpml_zero_psi(state);

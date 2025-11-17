@@ -584,7 +584,7 @@ void render_block_outline(RenderContext* ctx, const RenderLayout* layout) {
 }
 
 void render_colorbar(RenderContext* ctx, const RenderLayout* layout,
-                     ColorMapMode mode, double vmin, double vmax) {
+                     ColorMapMode mode) {
     if (!ctx || !layout) return;
     SDL_Rect bar = { layout->colorbar.x, layout->colorbar.y, layout->colorbar.w, layout->colorbar.h };
     if (bar.h <= 1 || bar.w <= 0) return;
@@ -638,8 +638,8 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     if (!ctx || !state || !ui || !layout) return;
     const ThemeColors* theme = theme_colors();
     SDL_Color accent = theme_palette()->primary;
-    const char* labels[] = {"freq", "steps", "dx", "dt", "fps", "grid", "probe"};
-    char values[7][64];
+    const char* labels[] = {"freq", "steps", "dx", "dt", "fps", "grid", "probe", "scene"};
+    char values[8][64];
     snprintf(values[0], sizeof(values[0]), "%.3f GHz", state->freq * 1e-9);
     snprintf(values[1], sizeof(values[1]), "%d", ui->steps_per_frame);
     snprintf(values[2], sizeof(values[2]), "%.3f mm", state->dx * 1e3);
@@ -651,6 +651,11 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     snprintf(values[5], sizeof(values[5]), "%d x %d (%s, ports %s)",
              state->nx, state->ny, bname, ports);
     snprintf(values[6], sizeof(values[6]), "(%d,%d)", ui->probe_x, ui->probe_y);
+    if (ui->scene_name[0]) {
+        snprintf(values[7], sizeof(values[7]), "%s", ui->scene_name);
+    } else {
+        snprintf(values[7], sizeof(values[7]), "(custom)");
+    }
 
     typedef struct {
         SDL_Texture* tex;
@@ -658,10 +663,10 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
         int h;
     } TextSprite;
 
-    TextSprite label_tex[7] = {0};
-    TextSprite value_tex[7] = {0};
+    TextSprite label_tex[8] = {0};
+    TextSprite value_tex[8] = {0};
     int max_label_w = 0;
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         label_tex[i].tex = render_text(ctx, labels[i], theme->info_label, &label_tex[i].w, &label_tex[i].h);
         if (label_tex[i].w > max_label_w) max_label_w = label_tex[i].w;
         value_tex[i].tex = render_text(ctx, values[i], accent, &value_tex[i].w, &value_tex[i].h);
@@ -672,7 +677,7 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     int cursor_y = base_y;
     const int line_gap = 6;
 
-    for (int i = 0; i < 7; ++i) {
+    for (int i = 0; i < 8; ++i) {
         int row_height = label_tex[i].h;
         if (value_tex[i].h > row_height) row_height = value_tex[i].h;
 
@@ -785,7 +790,7 @@ void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
     render_block_outline(ctx, &layout);
     SDL_RenderSetViewport(ctx->renderer, NULL);
 
-    render_colorbar(ctx, &layout, ui->colormap_mode, -vmax, vmax);
+    render_colorbar(ctx, &layout, ui->colormap_mode);
     render_info_panel(ctx, state, ui, fps_avg, &layout);
 
     double scope_vmax = 0.0;

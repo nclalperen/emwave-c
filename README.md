@@ -95,6 +95,7 @@ Key flags:
 - `--run-mode=fixed|sweep` selects a fixed-step run or an S-parameter sweep (default: fixed).
 - `--run-steps=N` sets total steps when `run-mode=fixed` (otherwise falls back to sweep-derived count).
 - `--boundary=cpml|mur` chooses the absorbing boundary model (default: CPML).
+- `--profile` prints a short profiling summary (steps, wall time, steps/s).
 - `--probe-log=PATH` enables probe logging to a text file; `--no-probe-log` disables it.
 CLI flags always override values coming from the JSON config.
 

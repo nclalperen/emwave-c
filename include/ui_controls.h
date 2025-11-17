@@ -132,6 +132,11 @@ typedef struct {
     /* One-shot screenshot request */
     int request_screenshot;
 
+    /* Scene management */
+    int request_scene_reload;
+    int requested_scene_preset;
+    char scene_name[32];
+
     /* Sliders */
     Slider freq_slider;
     Slider speed_slider;
