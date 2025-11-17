@@ -14,6 +14,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 1024
+#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -29,6 +35,104 @@ static const ScenePresetDesc UI_SCENE_PRESETS[] = {
     {1, "waveguide", "configs/waveguide.json"},
     {2, "cpw_filter", "configs/cpw_filter.json"}
 };
+
+static int path_is_absolute(const char* path) {
+    if (!path || !path[0]) {
+        return 0;
+    }
+#if defined(_WIN32)
+    if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':' &&
+        (path[2] == '\\' || path[2] == '/')) {
+        return 1;
+    }
+    if (path[0] == '/' || path[0] == '\\') {
+        return 1;
+    }
+#else
+    if (path[0] == '/') {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+static int strip_last_component(char* path) {
+    if (!path) {
+        return 0;
+    }
+    size_t len = strlen(path);
+    if (len == 0) {
+        return 0;
+    }
+    while (len > 0 && (path[len - 1] == '/' || path[len - 1] == '\\')) {
+        path[--len] = '\0';
+    }
+    while (len > 0 && path[len - 1] != '/' && path[len - 1] != '\\') {
+        path[--len] = '\0';
+    }
+    if (len == 0) {
+        return 0;
+    }
+    /* keep the trailing separator */
+    path[len] = '\0';
+    return 1;
+}
+
+static int try_load_scene_from_root(const char* root, const char* relative_path,
+                                    SimulationConfig* cfg, char* resolved_path,
+                                    size_t resolved_len, char* errbuf, size_t errbuf_len) {
+    if (!root || !relative_path) {
+        return 0;
+    }
+    char candidate[PATH_MAX];
+    int written = snprintf(candidate, sizeof(candidate), "%s%s", root, relative_path);
+    if (written < 0 || written >= (int)sizeof(candidate)) {
+        return 0;
+    }
+    if (config_loader_parse_file(candidate, cfg, errbuf, errbuf_len)) {
+        if (resolved_path && resolved_len > 0) {
+            snprintf(resolved_path, resolved_len, "%s", candidate);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int load_scene_preset_config(const ScenePresetDesc* preset, SimulationConfig* cfg,
+                                    char* resolved_path, size_t resolved_len,
+                                    char* errbuf, size_t errbuf_len) {
+    if (!preset || !cfg) {
+        return 0;
+    }
+    if (config_loader_parse_file(preset->config_path, cfg, errbuf, errbuf_len)) {
+        if (resolved_path && resolved_len > 0) {
+            snprintf(resolved_path, resolved_len, "%s", preset->config_path);
+        }
+        return 1;
+    }
+    if (path_is_absolute(preset->config_path)) {
+        return 0;
+    }
+    char* base = SDL_GetBasePath();
+    if (!base) {
+        return 0;
+    }
+    char search_root[PATH_MAX];
+    snprintf(search_root, sizeof(search_root), "%s", base);
+    SDL_free(base);
+    for (int depth = 0; depth < 5 && search_root[0] != '\0'; ++depth) {
+        if (try_load_scene_from_root(search_root, preset->config_path,
+                                     cfg, resolved_path, resolved_len,
+                                     errbuf, errbuf_len)) {
+            return 1;
+        }
+        if (!strip_last_component(search_root)) {
+            break;
+        }
+    }
+    return 0;
+}
 
 static const ScenePresetDesc* find_scene_preset(int id) {
     size_t count = sizeof(UI_SCENE_PRESETS) / sizeof(UI_SCENE_PRESETS[0]);
@@ -129,9 +233,15 @@ int main(int argc, char** argv) {
             } else {
                 SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
                 char errbuf[256];
-                if (!config_loader_parse_file(preset->config_path, &cfg, errbuf, sizeof(errbuf))) {
+                char resolved_path[PATH_MAX] = {0};
+                if (!load_scene_preset_config(preset, &cfg, resolved_path,
+                                              sizeof(resolved_path), errbuf, sizeof(errbuf))) {
+                    const char* path_display = preset->config_path;
+                    if (resolved_path[0]) {
+                        path_display = resolved_path;
+                    }
                     fprintf(stderr, "Failed to load scene '%s' from %s: %s\n",
-                            preset->name, preset->config_path,
+                            preset->name, path_display,
                             (errbuf[0] != '\0') ? errbuf : "unknown error");
                 } else {
                     simulation_runner_shutdown(&runner);
@@ -166,7 +276,8 @@ int main(int argc, char** argv) {
                     simulation_runner_init(&runner, &runner_opts);
                     simulation_runner_reset_progress(&runner, 0);
 
-                    printf("Scene switched to '%s' (%s)\n", preset->name, preset->config_path);
+                    const char* path_display = resolved_path[0] ? resolved_path : preset->config_path;
+                    printf("Scene switched to '%s' (%s)\n", preset->name, path_display);
                 }
             }
             /* Skip stepping/rendering on the old state this frame */
