@@ -116,6 +116,16 @@ else()
     message(STATUS "OpenMP not found - sequential processing only")
 endif()
 
+option(EM_WAVE_ENABLE_BOUNDS_CHECK "Enable debug bounds checks on field accessors" OFF)
+
+if(EM_WAVE_ENABLE_BOUNDS_CHECK)
+    target_compile_definitions(emwave_core PUBLIC EMWAVE_BOUNDS_CHECK=1)
+    if (TARGET emwave)
+      target_compile_definitions(emwave PRIVATE EMWAVE_BOUNDS_CHECK=1)
+    endif()
+    target_compile_definitions(emwave_cli PRIVATE EMWAVE_BOUNDS_CHECK=1)
+endif()
+
 # libm is required when using GCC/Clang on Linux/Unix
 if(NOT MSVC)
     target_link_libraries(emwave_core PUBLIC m)

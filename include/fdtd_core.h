@@ -28,6 +28,25 @@ double fdtd_epsilon_at(const SimulationState* state, int i, int j);
 double fdtd_sigma_at(const SimulationState* state, int i, int j);
 
 /* Field access helpers */
+#ifdef EMWAVE_BOUNDS_CHECK
+static inline double fdtd_get_Ez(const SimulationState* state, int i, int j) {
+    if (!state || !state->Ez) return 0.0;
+    if (i < 0 || i >= state->nx || j < 0 || j >= state->ny) return 0.0;
+    return state->Ez[i][j];
+}
+
+static inline double fdtd_get_Hx(const SimulationState* state, int i, int j) {
+    if (!state || !state->Hx) return 0.0;
+    if (i < 0 || i >= state->nx || j < 0 || j >= state->ny) return 0.0;
+    return state->Hx[i][j];
+}
+
+static inline double fdtd_get_Hy(const SimulationState* state, int i, int j) {
+    if (!state || !state->Hy) return 0.0;
+    if (i < 0 || i >= state->nx || j < 0 || j >= state->ny) return 0.0;
+    return state->Hy[i][j];
+}
+#else
 static inline double fdtd_get_Ez(const SimulationState* state, int i, int j) {
     return state->Ez[i][j];
 }
@@ -39,6 +58,7 @@ static inline double fdtd_get_Hx(const SimulationState* state, int i, int j) {
 static inline double fdtd_get_Hy(const SimulationState* state, int i, int j) {
     return state->Hy[i][j];
 }
+#endif
 
 /* Utility functions */
 static inline int clampi(int v, int lo, int hi) {

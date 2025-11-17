@@ -229,6 +229,12 @@ static void json_apply_simulation(const char* json, const jsmntok_t* tokens, int
     if ((idx = json_object_find(json, tokens, total, obj_index, "run_steps")) >= 0) {
         json_token_to_int(json, &tokens[idx], &cfg->run_steps);
     }
+    if ((idx = json_object_find(json, tokens, total, obj_index, "enable_profile")) >= 0) {
+        int flag = 0;
+        if (json_token_to_bool(json, &tokens[idx], &flag)) {
+            cfg->enable_profile = flag ? 1 : 0;
+        }
+    }
     if ((idx = json_object_find(json, tokens, total, obj_index, "enable_probe_log")) >= 0) {
         int flag = 0;
         if (json_token_to_bool(json, &tokens[idx], &flag)) {
@@ -254,6 +260,60 @@ static void json_apply_simulation(const char* json, const jsmntok_t* tokens, int
             }
         }
     }
+}
+
+static int json_load_port(const char* json, const jsmntok_t* tokens, int total,
+                          int obj_index, PortConfigSpec* out) {
+    if (!out || obj_index < 0 || tokens[obj_index].type != JSMN_OBJECT) return 0;
+    PortConfigSpec spec = {0};
+    spec.active = 1;
+    spec.x = 0.25;
+    spec.y0 = 0.1;
+    spec.y1 = 0.9;
+    int idx = obj_index + 1;
+    for (int pair = 0; pair < tokens[obj_index].size; pair++) {
+        int key_idx = idx;
+        int value_idx = json_skip(tokens, total, key_idx);
+        char key[32];
+        if (!json_token_to_string(json, &tokens[key_idx], key, sizeof(key))) {
+            idx = json_skip(tokens, total, value_idx);
+            continue;
+        }
+        if (strcmp(key, "active") == 0) {
+            int flag = 0;
+            if (json_token_to_bool(json, &tokens[value_idx], &flag)) {
+                spec.active = flag ? 1 : 0;
+            }
+        } else if (strcmp(key, "x") == 0) {
+            json_token_to_double(json, &tokens[value_idx], &spec.x);
+        } else if (strcmp(key, "y0") == 0) {
+            json_token_to_double(json, &tokens[value_idx], &spec.y0);
+        } else if (strcmp(key, "y1") == 0) {
+            json_token_to_double(json, &tokens[value_idx], &spec.y1);
+        }
+        idx = json_skip(tokens, total, value_idx);
+    }
+    *out = spec;
+    return 1;
+}
+
+static void json_apply_ports(const char* json, const jsmntok_t* tokens, int total,
+                             int array_index, SimulationConfig* cfg) {
+    if (!cfg || array_index < 0) return;
+    const jsmntok_t* arr = &tokens[array_index];
+    if (arr->type != JSMN_ARRAY) return;
+    int idx = array_index + 1;
+    int count = 0;
+    for (int i = 0; i < arr->size && count < 2; ++i) {
+        int obj_index = idx;
+        idx = json_skip(tokens, total, idx);
+        if (obj_index >= total) break;
+        PortConfigSpec spec;
+        if (json_load_port(json, tokens, total, obj_index, &spec)) {
+            cfg->port_configs[count++] = spec;
+        }
+    }
+    cfg->port_count = count;
 }
 
 static int json_load_material(const char* json, const jsmntok_t* tokens, int total,
@@ -492,6 +552,10 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg,
     if (src_idx >= 0) {
         json_apply_sources(data, tokens, parsed_tokens, src_idx, cfg);
     }
+    int ports_idx = json_object_find(data, tokens, parsed_tokens, 0, "ports");
+    if (ports_idx >= 0) {
+        json_apply_ports(data, tokens, parsed_tokens, ports_idx, cfg);
+    }
 
     free(tokens);
     free(data);
@@ -513,6 +577,7 @@ static void print_usage(void) {
     printf("  --run-mode=MODE       fixed or sweep (default fixed)\n");
     printf("  --run-steps=<n>       Steps to run when mode=fixed\n");
     printf("  --boundary=MODE       cpml or mur (default cpml)\n");
+    printf("  --profile             Print profiling summary for CLI runs\n");
     printf("  --probe-log=<path>    Enable probe logging to file\n");
     printf("  --no-probe-log        Disable probe logging\n");
     printf("  --help                Show this help\n");
@@ -590,6 +655,8 @@ int config_load_from_args(int argc, char** argv, SimulationConfig* out_config) {
             } else {
                 out_config->boundary_mode = SIM_BOUNDARY_CPML;
             }
+        } else if (strcmp(arg, "--profile") == 0) {
+            out_config->enable_profile = 1;
         } else if (strncmp(arg, "--probe-log=", 12) == 0) {
             const char* path = arg + 12;
             if (*path) {

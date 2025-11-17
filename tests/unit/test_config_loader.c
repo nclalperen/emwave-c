@@ -199,6 +199,36 @@ START_TEST(test_config_truncates_excess_sources) {
 }
 END_TEST
 
+START_TEST(test_ports_array_configures_port_specs) {
+    char path[512];
+    FILE* f = NULL;
+    ck_assert_msg(create_temp_config(path, sizeof(path), &f), "Failed to create temp config");
+
+    fputs("{\n", f);
+    fputs("  \"simulation\": { \"nx\": 64, \"ny\": 32 },\n", f);
+    fputs("  \"ports\": [\n", f);
+    fputs("    { \"active\": true, \"x\": 0.25, \"y0\": 0.1, \"y1\": 0.9 }\n", f);
+    fputs("  ]\n", f);
+    fputs("}\n", f);
+    fclose(f);
+
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    char errbuf[128];
+    int ok = config_loader_parse_file(path, &cfg, errbuf, sizeof(errbuf));
+    ck_assert_msg(ok, "Config with ports array should parse");
+    ck_assert_int_eq(cfg.port_count, 1);
+    ck_assert_int_eq(cfg.port_configs[0].active, 1);
+    ck_assert_msg(cfg.port_configs[0].x >= 0.0 && cfg.port_configs[0].x <= 1.0,
+                  "Port x must be clamped into [0,1]");
+    ck_assert_msg(cfg.port_configs[0].y0 >= 0.0 && cfg.port_configs[0].y0 <= 1.0,
+                  "Port y0 must be clamped into [0,1]");
+    ck_assert_msg(cfg.port_configs[0].y1 >= 0.0 && cfg.port_configs[0].y1 <= 1.0,
+                  "Port y1 must be clamped into [0,1]");
+
+    remove(path);
+}
+END_TEST
+
 START_TEST(test_cli_overrides_json_boundary_and_mode) {
     const char* argv[] = {
         "emwave_cli",
@@ -218,6 +248,20 @@ START_TEST(test_cli_overrides_json_boundary_and_mode) {
 }
 END_TEST
 
+START_TEST(test_cli_profile_flag_sets_enable_profile) {
+    const char* argv[] = {
+        "emwave_cli",
+        "--profile"
+    };
+    int argc = (int)(sizeof(argv) / sizeof(argv[0]));
+
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    int ok = config_load_from_args(argc, (char**)argv, &cfg);
+    ck_assert_msg(ok, "config_load_from_args should succeed for --profile only");
+    ck_assert_int_eq(cfg.enable_profile, 1);
+}
+END_TEST
+
 static Suite* config_loader_suite(void) {
     Suite* s = suite_create("config_loader");
     TCase* tc = tcase_create("core");
@@ -229,7 +273,9 @@ static Suite* config_loader_suite(void) {
     tcase_add_test(tc, test_oversized_file_guard);
     tcase_add_test(tc, test_empty_file_is_rejected);
     tcase_add_test(tc, test_config_truncates_excess_sources);
+    tcase_add_test(tc, test_ports_array_configures_port_specs);
     tcase_add_test(tc, test_cli_overrides_json_boundary_and_mode);
+    tcase_add_test(tc, test_cli_profile_flag_sets_enable_profile);
     suite_add_tcase(s, tc);
     return s;
 }

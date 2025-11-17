@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static int clamp_progress_interval(int interval) {
     if (interval <= 0) return 50;
@@ -130,7 +131,8 @@ static void activate_ports(SimulationState* sim) {
     }
 }
 
-static int run_fixed_mode(const SimulationConfig* cfg, SimulationState* sim, SimulationRunner* runner) {
+static int run_fixed_mode(const SimulationConfig* cfg, SimulationState* sim,
+                          SimulationRunner* runner, long long* out_steps) {
     int total_steps = determine_fixed_steps(cfg);
     simulation_runner_reset_progress(runner, total_steps);
 
@@ -141,6 +143,10 @@ static int run_fixed_mode(const SimulationConfig* cfg, SimulationState* sim, Sim
         fdtd_step(sim);
         double probe_val = fdtd_get_Ez(sim, probe_x, probe_y);
         simulation_runner_on_step(runner, sim, probe_val, cfg->enable_probe_log);
+    }
+
+    if (out_steps) {
+        *out_steps = (long long)total_steps;
     }
 
     simulation_runner_flush(runner);
@@ -156,13 +162,20 @@ static double lerp(double a, double b, double t) {
     return a + (b - a) * t;
 }
 
-static int run_sweep_mode(const SimulationConfig* cfg, SimulationState* sim, SimulationRunner* runner) {
+static int run_sweep_mode(const SimulationConfig* cfg, SimulationState* sim,
+                          SimulationRunner* runner, long long* out_steps) {
     int points = cfg->sweep_points > 0 ? cfg->sweep_points : 1;
     int steps_per_point = cfg->sweep_steps_per_point > 0 ? cfg->sweep_steps_per_point : 200;
     if (points <= 0) return 0;
 
     activate_ports(sim);
     printf("# freq_Hz,s21_mag\n");
+
+    FILE* sweep_csv = fopen("sweep_s21.csv", "w");
+    if (sweep_csv) {
+        fprintf(sweep_csv, "# freq_Hz,s21_mag\n");
+        fprintf(sweep_csv, "freq_Hz,s21_mag\n");
+    }
 
     for (int idx = 0; idx < points; ++idx) {
         double t = (points > 1) ? ((double)idx / (double)(points - 1)) : 0.0;
@@ -182,9 +195,19 @@ static int run_sweep_mode(const SimulationConfig* cfg, SimulationState* sim, Sim
 
         double s21 = compute_s21(sim->ports, freq, sim->dt);
         printf("%.9e,%.6e\n", freq, s21);
+        if (sweep_csv) {
+            fprintf(sweep_csv, "%.12e,%.12e\n", freq, s21);
+        }
     }
 
     simulation_runner_flush(runner);
+    if (out_steps) {
+        *out_steps = (long long)points * (long long)steps_per_point;
+    }
+    if (sweep_csv) {
+        fclose(sweep_csv);
+        fprintf(stderr, "Wrote sweep_s21.csv (%d points)\n", points);
+    }
     return 1;
 }
 
@@ -198,13 +221,33 @@ int cli_runner_execute(const SimulationConfig* config, SimulationState* sim) {
     SimulationRunner runner;
     simulation_runner_init(&runner, &opts);
 
+    long long steps = 0;
+    clock_t t0 = 0;
+    if (config->enable_profile) {
+        t0 = clock();
+    }
+
     int ok = 0;
     if (config->run_mode == SIM_RUN_MODE_SWEEP) {
-        ok = run_sweep_mode(config, sim, &runner);
+        ok = run_sweep_mode(config, sim, &runner, &steps);
     } else {
-        ok = run_fixed_mode(config, sim, &runner);
+        ok = run_fixed_mode(config, sim, &runner, &steps);
+    }
+
+    clock_t t1 = 0;
+    if (config->enable_profile) {
+        t1 = clock();
     }
 
     simulation_runner_shutdown(&runner);
+
+    if (config->enable_profile && ok && steps > 0 && t1 > t0) {
+        double elapsed = (double)(t1 - t0) / (double)CLOCKS_PER_SEC;
+        if (elapsed > 0.0) {
+            double rate = (double)steps / elapsed;
+            printf("Profile: %lld steps in %.3f s (%.1f steps/s)\n",
+                   steps, elapsed, rate);
+        }
+    }
     return ok;
 }

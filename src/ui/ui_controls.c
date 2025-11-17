@@ -138,6 +138,9 @@ UIState* ui_state_init(void) {
     ui->force_metrics_recompute = 0;
     ui->debug_force_metrics = 0;
     ui->request_screenshot = 0;
+    ui->request_scene_reload = 0;
+    ui->requested_scene_preset = 0;
+    ui->scene_name[0] = '\0';
 
     return ui;
 }
@@ -365,6 +368,23 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
                 case SDLK_F1:
                     ui->show_help_overlay = !ui->show_help_overlay;
                     break;
+                case SDLK_F5:
+                    ui->requested_scene_preset = 1;
+                    ui->request_scene_reload = 1;
+                    break;
+                case SDLK_F6:
+                    ui->requested_scene_preset = 2;
+                    ui->request_scene_reload = 1;
+                    break;
+                case SDLK_F3: {
+                    int ok = dump_scope_fft_csv(scope, "scope_fft.csv", sim->dt, 1024);
+                    if (!ok) {
+                        fprintf(stderr, "Failed to write scope_fft.csv\n");
+                    } else {
+                        fprintf(stderr, "Wrote scope_fft.csv\n");
+                    }
+                    break;
+                }
                 case SDLK_SPACE:
                     ui->paused = !ui->paused;
                     break;

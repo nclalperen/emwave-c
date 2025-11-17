@@ -105,6 +105,13 @@ typedef struct {
     double sigma2;
 } SourceConfigSpec;
 
+typedef struct {
+    int active;
+    double x;   /* normalized 0..1 across X */
+    double y0;  /* normalized 0..1 along Y (start) */
+    double y1;  /* normalized 0..1 along Y (end) */
+} PortConfigSpec;
+
 /* Frequency range for UI */
 #define FREQ_MIN 1e6
 #define FREQ_MAX 5e9
@@ -135,12 +142,15 @@ typedef struct {
     SimulationRunMode run_mode;
     int run_steps;
     SimulationBoundaryMode boundary_mode;
+    int enable_profile;
     int enable_probe_log;
     char probe_log_path[SIM_PROBE_LOG_PATH_MAX];
     int material_rect_count;
     MaterialRectSpec material_rects[CONFIG_MAX_MATERIAL_RECTS];
     int source_count;
     SourceConfigSpec source_configs[MAX_SRC];
+    int port_count;
+    PortConfigSpec port_configs[2];
 } SimulationConfig;
 
 extern const SimulationConfig SIM_CONFIG_DEFAULTS;

@@ -161,6 +161,39 @@ void ports_free(Port* ports) {
     }
 }
 
+void ports_apply_config(Port* ports, int nx, int ny, const SimulationConfig* cfg) {
+    if (!ports || !cfg) {
+        return;
+    }
+    if (cfg->port_count <= 0) {
+        return;
+    }
+    int count = cfg->port_count;
+    if (count > MAX_PORTS) count = MAX_PORTS;
+
+    for (int p = 0; p < count; ++p) {
+        const PortConfigSpec* spec = &cfg->port_configs[p];
+        Port* port = &ports[p];
+        double x_norm = spec->x;
+        if (x_norm < 0.0) x_norm = 0.0;
+        if (x_norm > 1.0) x_norm = 1.0;
+        double y0_norm = spec->y0;
+        double y1_norm = spec->y1;
+        if (y0_norm < 0.0) y0_norm = 0.0;
+        if (y0_norm > 1.0) y0_norm = 1.0;
+        if (y1_norm < 0.0) y1_norm = 0.0;
+        if (y1_norm > 1.0) y1_norm = 1.0;
+        int px = util_clamp_int((int)(x_norm * (double)(nx - 1)), 1, (nx > 2) ? nx - 2 : 1);
+        int y0 = util_clamp_int((int)(y0_norm * (double)(ny - 1)), 0, ny - 1);
+        int y1 = util_clamp_int((int)(y1_norm * (double)(ny - 1)), y0, ny - 1);
+        port->x = px;
+        port->y0 = y0;
+        port->y1 = y1;
+        port->active = spec->active ? 1 : 0;
+        port->len = 0;
+    }
+}
+
 static int port_prepare_sample_range(const SimulationState* state, Port* port,
                                      int* out_y0, int* out_y1) {
     if (!state || !port || !out_y0 || !out_y1) {
@@ -257,4 +290,3 @@ void ports_sample(SimulationState* state, double dx, double dy) {
         port->head = (port->head + 1) % port->n;
     }
 }
-

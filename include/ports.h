@@ -10,9 +10,9 @@
 /* Port buffer lifecycle */
 int ports_init(Port* ports, int nx, int ny);
 void ports_free(Port* ports);
+void ports_apply_config(Port* ports, int nx, int ny, const SimulationConfig* cfg);
 
 /* Sample port voltages and currents into circular buffers */
 void ports_sample(SimulationState* state, double dx, double dy);
 
 #endif /* EMWAVE_PORTS_H */
-
