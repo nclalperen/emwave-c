@@ -48,6 +48,9 @@ struct AppState {
     /* Simple log buffer */
     char log_lines[128][256];
     int log_count;
+    ImVec2 viewport_pos;
+    ImVec2 viewport_size;
+    bool viewport_valid;
 };
 
 struct WizardState {
@@ -639,6 +642,9 @@ int main(int argc, char** argv) {
     app.show_scenes_panel = true;
     app.show_grid_overlay = true;
     app.log_count = 0;
+    app.viewport_pos = ImVec2(0.0f, 0.0f);
+    app.viewport_size = ImVec2(0.0f, 0.0f);
+    app.viewport_valid = false;
     ui_log_add(&app, "Simulation started");
 
     int scale = 2;
@@ -716,10 +722,24 @@ int main(int argc, char** argv) {
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (!io.WantCaptureMouse) {
+                    if (!app.viewport_valid) {
+                        continue;
+                    }
                     int mx = e.button.x;
                     int my = e.button.y;
-                    int ix = mx / scale;
-                    int iy = my / scale;
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x < 0.0f || local_y < 0.0f) {
+                        continue;
+                    }
+                    if (local_x >= app.viewport_size.x || local_y >= app.viewport_size.y) {
+                        continue;
+                    }
+                    int ix = (int)(local_x / (float)scale);
+                    int iy = (int)(local_y / (float)scale);
+                    if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
+                        continue;
+                    }
                     app.last_click_i = ix;
                     app.last_click_j = iy;
                     if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
@@ -875,10 +895,53 @@ int main(int argc, char** argv) {
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // Center viewport frame (empty ImGui frame; SDL field behind it)
+        // Center viewport placeholder - keep border but let SDL field stay visible and interactive
         ImGui::SetCursorPos(ImVec2(origin.x + left_w, origin.y));
-        ImGui::BeginChild("CenterViewport", ImVec2(ImMax(1.0f, center_w), main_h), true);
+        ImVec2 center_screen_pos = ImGui::GetCursorScreenPos();
+        ImVec2 center_child_size(ImMax(1.0f, center_w), ImMax(1.0f, main_h));
+        ImGuiWindowFlags center_flags =
+            ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse |
+            ImGuiWindowFlags_NoNavInputs |
+            ImGuiWindowFlags_NoNavFocus |
+            ImGuiWindowFlags_NoInputs;
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+        ImGui::BeginChild("CenterViewport",
+                          center_child_size,
+                          true,
+                          center_flags);
         ImGui::EndChild();
+        ImGui::PopStyleColor();
+        if (sim) {
+            float field_px_w = (float)(sim->nx * scale);
+            float field_px_h = (float)(sim->ny * scale);
+            float draw_origin_x = center_screen_pos.x;
+            float draw_origin_y = center_screen_pos.y;
+            float draw_w = center_child_size.x;
+            float draw_h = center_child_size.y;
+            if (field_px_w <= center_child_size.x) {
+                draw_origin_x += (center_child_size.x - field_px_w) * 0.5f;
+                draw_w = field_px_w;
+            } else {
+                draw_w = center_child_size.x;
+            }
+            if (field_px_h <= center_child_size.y) {
+                draw_origin_y += (center_child_size.y - field_px_h) * 0.5f;
+                draw_h = field_px_h;
+            } else {
+                draw_h = center_child_size.y;
+            }
+            if (draw_w > 4.0f && draw_h > 4.0f) {
+                app.viewport_pos = ImVec2(draw_origin_x, draw_origin_y);
+                app.viewport_size = ImVec2(draw_w, draw_h);
+                app.viewport_valid = true;
+            } else {
+                app.viewport_valid = false;
+            }
+        } else {
+            app.viewport_valid = false;
+        }
 
         // Right column (Simulation Controls + Wizard)
         ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
@@ -1134,6 +1197,22 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(render->renderer, 0, 0, 0, 255);
         SDL_RenderClear(render->renderer);
 
+        SDL_Rect sdl_viewport = {0, 0, 0, 0};
+        bool viewport_set = false;
+        if (app.viewport_valid) {
+            sdl_viewport.x = (int)app.viewport_pos.x;
+            sdl_viewport.y = (int)app.viewport_pos.y;
+            sdl_viewport.w = (int)app.viewport_size.x;
+            sdl_viewport.h = (int)app.viewport_size.y;
+            if (sdl_viewport.w > 0 && sdl_viewport.h > 0) {
+                SDL_RenderSetViewport(render->renderer, &sdl_viewport);
+                viewport_set = true;
+            }
+        }
+        if (!viewport_set) {
+            SDL_RenderSetViewport(render->renderer, NULL);
+        }
+
         double vmax = sim->step_Ez_absmax;
         if (vmax <= 0.0) vmax = 1.0;
         render_field_heatmap(render, sim, vmax, 1.0);
@@ -1142,6 +1221,9 @@ int main(int argc, char** argv) {
             render_grid_overlay(render, sim, grid_col);
         }
         render_sources(render, sim->sources);
+        if (viewport_set) {
+            SDL_RenderSetViewport(render->renderer, NULL);
+        }
 
         ImGui::Render();
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), render->renderer);
