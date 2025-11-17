@@ -402,6 +402,19 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
                         ui->colormap_mode = (ColorMapMode)((ui->colormap_mode + 1) % COLORMAP_COUNT);
                     }
                     break;
+                case SDLK_7:
+                case SDLK_8:
+                case SDLK_9: {
+                    int idx = 0;
+                    if (sym == SDLK_8) idx = 1;
+                    else if (sym == SDLK_9) idx = 2;
+                    boundary_set_type(sim, BOUNDARY_CPML);
+                    cpml_apply_preset(sim, idx);
+                    if (boundary_is_cpml_enabled(sim)) {
+                        cpml_zero_psi(sim);
+                    }
+                    break;
+                }
                 case SDLK_LEFTBRACKET:
                     ui_adjust_layout(ui, sim, -12, 0, 0);
                     break;

@@ -355,6 +355,7 @@ static void render_help_overlay(RenderContext* ctx,
         "  G: toggle probe logging\n"
         "  S: toggle S-parameter ports\n"
         "  H / J: hold color / scope ranges\n"
+        "  7 / 8 / 9: CPML boundary presets\n"
         "\n"
         "Tip: this overlay is F1; the side legend shows a compact version.";
 
@@ -636,13 +637,15 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     if (!ctx || !state || !ui || !layout) return;
     const ThemeColors* theme = theme_colors();
     SDL_Color accent = theme_palette()->primary;
-    const char* labels[] = {"freq", "steps", "dx", "dt", "fps"};
-    char values[5][32];
+    const char* labels[] = {"freq", "steps", "dx", "dt", "fps", "grid", "probe"};
+    char values[7][48];
     snprintf(values[0], sizeof(values[0]), "%.3f GHz", state->freq * 1e-9);
     snprintf(values[1], sizeof(values[1]), "%d", ui->steps_per_frame);
     snprintf(values[2], sizeof(values[2]), "%.3f mm", state->dx * 1e3);
     snprintf(values[3], sizeof(values[3]), "%.3e s", state->dt);
     snprintf(values[4], sizeof(values[4]), "%.1f", fps_avg);
+    snprintf(values[5], sizeof(values[5]), "%d x %d", state->nx, state->ny);
+    snprintf(values[6], sizeof(values[6]), "(%d,%d)", ui->probe_x, ui->probe_y);
 
     typedef struct {
         SDL_Texture* tex;
@@ -650,10 +653,10 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
         int h;
     } TextSprite;
 
-    TextSprite label_tex[5] = {0};
-    TextSprite value_tex[5] = {0};
+    TextSprite label_tex[7] = {0};
+    TextSprite value_tex[7] = {0};
     int max_label_w = 0;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         label_tex[i].tex = render_text(ctx, labels[i], theme->info_label, &label_tex[i].w, &label_tex[i].h);
         if (label_tex[i].w > max_label_w) max_label_w = label_tex[i].w;
         value_tex[i].tex = render_text(ctx, values[i], accent, &value_tex[i].w, &value_tex[i].h);
@@ -664,7 +667,7 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
     int cursor_y = base_y;
     const int line_gap = 6;
 
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 7; ++i) {
         int row_height = label_tex[i].h;
         if (value_tex[i].h > row_height) row_height = value_tex[i].h;
 
@@ -688,10 +691,11 @@ void render_legend(RenderContext* ctx, int x, int y, int max_width) {
         "Space: pause/resume   ESC/Q: quit\n"
         "M/U: paint mode       I: paint type\n"
         "O/P: paint eps -/+    1–3: toggle sources\n"
-        "Y: CPML/Mur boundary  S: ports   G: log probe\n"
+        "Y: CPML/Mur boundary  7/8/9: CPML presets\n"
+        "S: ports   G: log probe\n"
         "B/V: theme & accent   K: colormap\n"
         "[ ] , . - = \\\\: layout panels & scope\n"
-        "F1: full help overlay";
+        "F1: help overlay";
     SDL_Color c = theme_colors()->legend_text;
     int tw, th;
     if (max_width <= 0) max_width = 200;
