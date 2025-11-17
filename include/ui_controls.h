@@ -32,6 +32,13 @@ typedef enum {
 } ScopeDockPosition;
 
 typedef enum {
+    COLORMAP_CLASSIC = 0,
+    COLORMAP_VIRIDIS = 1,
+    COLORMAP_PLASMA = 2,
+    COLORMAP_COUNT
+} ColorMapMode;
+
+typedef enum {
     THEME_DARK = 0,
     THEME_LIGHT = 1,
     THEME_COUNT
@@ -42,6 +49,7 @@ typedef struct {
     int running;
     int paused;
     int show_legend;
+    int show_help_overlay;
     int paint_mode;
     int paint_type;
     double paint_eps;
@@ -110,6 +118,9 @@ typedef struct {
     int left_panel_width;
     int right_panel_width;
     ScopeDockPosition scope_dock;
+
+    /* Visualization */
+    ColorMapMode colormap_mode;
 
     /* Theme controls */
     ThemeMode theme_mode;

@@ -8,6 +8,7 @@
 #include "materials.h"
 #include "analysis.h"
 #include "sources.h"
+#include "boundary.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -119,11 +120,70 @@ static double clampd(double v, double lo, double hi) {
     return v;
 }
 
-static SDL_Color colormap_heat(double v, double vmax) {
-    double t = 0.5;
-    if (vmax > 0.0) {
-        t = 0.5 + 0.5 * clampd(v / vmax, -1.0, 1.0);
+static SDL_Color lerp_color(SDL_Color a, SDL_Color b, double t) {
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    SDL_Color c;
+    c.r = (Uint8)((1.0 - t) * a.r + t * b.r);
+    c.g = (Uint8)((1.0 - t) * a.g + t * b.g);
+    c.b = (Uint8)((1.0 - t) * a.b + t * b.b);
+    c.a = 255;
+    return c;
+}
+
+static SDL_Color colormap_classic(double t);
+
+static SDL_Color colormap_viridis(double t) {
+    static const SDL_Color stops[] = {
+        {68, 1, 84, 255},    /* deep purple */
+        {59, 82, 139, 255},  /* indigo */
+        {33, 144, 141, 255}, /* teal */
+        {94, 201, 98, 255},  /* green */
+        {253, 231, 37, 255}  /* yellow */
+    };
+    const int n = (int)(sizeof(stops) / sizeof(stops[0]));
+    if (t <= 0.0) return stops[0];
+    if (t >= 1.0) return stops[n - 1];
+    double pos = t * (double)(n - 1);
+    int idx = (int)pos;
+    double local = pos - (double)idx;
+    if (idx >= n - 1) return stops[n - 1];
+    return lerp_color(stops[idx], stops[idx + 1], local);
+}
+
+static SDL_Color colormap_plasma(double t) {
+    static const SDL_Color stops[] = {
+        {13, 8, 135, 255},   /* dark blue */
+        {84, 3, 163, 255},   /* purple */
+        {139, 10, 165, 255}, /* magenta */
+        {190, 55, 123, 255}, /* reddish */
+        {240, 249, 33, 255}  /* yellow */
+    };
+    const int n = (int)(sizeof(stops) / sizeof(stops[0]));
+    if (t <= 0.0) return stops[0];
+    if (t >= 1.0) return stops[n - 1];
+    double pos = t * (double)(n - 1);
+    int idx = (int)pos;
+    double local = pos - (double)idx;
+    if (idx >= n - 1) return stops[n - 1];
+    return lerp_color(stops[idx], stops[idx + 1], local);
+}
+
+static SDL_Color colormap_for_mode(ColorMapMode mode, double t) {
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    switch (mode) {
+        case COLORMAP_VIRIDIS:
+            return colormap_viridis(t);
+        case COLORMAP_PLASMA:
+            return colormap_plasma(t);
+        case COLORMAP_CLASSIC:
+        default:
+            return colormap_classic(t);
     }
+}
+
+static SDL_Color colormap_classic(double t) {
     double r = clampd(4.0 * (t - 0.25), 0.0, 1.0);
     double g = clampd(4.0 * fabs(t - 0.5) - 1.0, 0.0, 1.0);
     double b = clampd(4.0 * (0.75 - t), 0.0, 1.0);
@@ -148,6 +208,182 @@ static SDL_Rect to_sdl_rect(const IntRect* rect) {
         r.h = rect->h;
     }
     return r;
+}
+
+static void render_status_badges(RenderContext* ctx,
+                                 const SimulationState* state,
+                                 const UIState* ui,
+                                 const RenderLayout* layout) {
+    if (!ctx || !state || !ui || !layout) return;
+
+    const ThemeColors* theme = theme_colors();
+
+    char line1[64];
+    char line2[96];
+    char line3[96];
+
+    snprintf(line1, sizeof(line1), "Solver: %s", ui->paused ? "Paused" : "Running");
+
+    BoundaryType btype = boundary_get_type(state);
+    if (btype == BOUNDARY_CPML) {
+        int idx = cpml_get_preset_index(state);
+        int n_presets = (int)(sizeof(CPML_PRESETS) / sizeof(CPML_PRESETS[0]));
+        if (idx < 0) idx = 0;
+        if (idx >= n_presets) idx = n_presets - 1;
+        const CpmlPreset* preset = &CPML_PRESETS[idx];
+        snprintf(line2, sizeof(line2), "Boundary: CPML (%s)", preset->name ? preset->name : "preset");
+        snprintf(line3, sizeof(line3), "Reflections: < -60 dB   Ports: %s",
+                 state->ports_on ? "On" : "Off");
+    } else {
+        snprintf(line2, sizeof(line2), "Boundary: Mur (1st order)");
+        snprintf(line3, sizeof(line3), "Reflections: ~ -20 dB   Ports: %s",
+                 state->ports_on ? "On" : "Off");
+    }
+
+    int pad = 12;
+    int panel_w = 260;
+    int panel_h = 64;
+    SDL_Rect panel = {
+        layout->window_w - panel_w - pad,
+        layout->window_h - panel_h - pad,
+        panel_w,
+        panel_h
+    };
+
+    SDL_BlendMode prev_mode;
+    SDL_GetRenderDrawBlendMode(ctx->renderer, &prev_mode);
+    SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_SetRenderDrawColor(ctx->renderer,
+                           theme->timeline_bg.r,
+                           theme->timeline_bg.g,
+                           theme->timeline_bg.b,
+                           220);
+    SDL_RenderFillRect(ctx->renderer, &panel);
+    SDL_SetRenderDrawColor(ctx->renderer,
+                           theme->timeline_border.r,
+                           theme->timeline_border.g,
+                           theme->timeline_border.b,
+                           255);
+    SDL_RenderDrawRect(ctx->renderer, &panel);
+
+    SDL_Color label_col = theme->text_muted;
+    SDL_Color value_col = theme_palette()->primary;
+
+    int x = panel.x + 10;
+    int y = panel.y + 6;
+
+    int w, h;
+    SDL_Texture* t1 = render_text(ctx, line1, value_col, &w, &h);
+    if (t1) {
+        SDL_Rect dst = { x, y, w, h };
+        SDL_RenderCopy(ctx->renderer, t1, NULL, &dst);
+        SDL_DestroyTexture(t1);
+        y += h + 4;
+    }
+
+    SDL_Texture* t2 = render_text(ctx, line2, label_col, &w, &h);
+    if (t2) {
+        SDL_Rect dst = { x, y, w, h };
+        SDL_RenderCopy(ctx->renderer, t2, NULL, &dst);
+        SDL_DestroyTexture(t2);
+        y += h + 2;
+    }
+
+    SDL_Texture* t3 = render_text(ctx, line3, label_col, &w, &h);
+    if (t3) {
+        SDL_Rect dst = { x, y, w, h };
+        SDL_RenderCopy(ctx->renderer, t3, NULL, &dst);
+        SDL_DestroyTexture(t3);
+    }
+
+    SDL_SetRenderDrawBlendMode(ctx->renderer, prev_mode);
+}
+
+static void render_help_overlay(RenderContext* ctx,
+                                const SimulationState* state,
+                                const UIState* ui,
+                                const RenderLayout* layout) {
+    (void)state;
+    if (!ctx || !ui || !layout) return;
+
+    const ThemeColors* theme = theme_colors();
+    SDL_Color title_col = theme_palette()->primary;
+    SDL_Color text_col = theme->legend_text;
+
+    SDL_BlendMode prev_mode;
+    SDL_GetRenderDrawBlendMode(ctx->renderer, &prev_mode);
+    SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_Rect full = {0, 0, layout->window_w, layout->window_h};
+    SDL_SetRenderDrawColor(ctx->renderer, 0, 0, 0, 170);
+    SDL_RenderFillRect(ctx->renderer, &full);
+
+    int title_w = 0, title_h = 0;
+    const char* title = "emwave-c controls & shortcuts";
+    SDL_Texture* title_tex = render_text(ctx, title, title_col, &title_w, &title_h);
+    if (title_tex) {
+        int tx = layout->window_w / 2 - title_w / 2;
+        int ty = layout->menu_bar.y + layout->menu_bar.h + 20;
+        SDL_Rect dst = { tx, ty, title_w, title_h };
+        SDL_RenderCopy(ctx->renderer, title_tex, NULL, &dst);
+        SDL_DestroyTexture(title_tex);
+    }
+
+    const char* left_block =
+        "Simulation\n"
+        "  Space: pause / resume\n"
+        "  ESC / Q: quit\n"
+        "  B: dark/light theme\n"
+        "  V / Shift+V: accent palette\n"
+        "  K / Shift+K: field colormap\n"
+        "\n"
+        "Drawing & sources\n"
+        "  M / U: toggle paint mode\n"
+        "  I: cycle material (PEC / PMC / dielectric)\n"
+        "  O / P: paint epsr - / +\n"
+        "  1–3: toggle sources, drag to move\n";
+
+    const char* right_block =
+        "Layout & instrumentation\n"
+        "  [ ] : resize left toolbox\n"
+        "  , . : resize right properties\n"
+        "  - = : resize timeline tray\n"
+        "  \\\\: dock scope (timeline / properties)\n"
+        "\n"
+        "Probes & logging\n"
+        "  G: toggle probe logging\n"
+        "  S: toggle S-parameter ports\n"
+        "  H / J: hold color / scope ranges\n"
+        "\n"
+        "Tip: this overlay is F1; the side legend shows a compact version.";
+
+    int column_width = layout->viewport.w / 2 - 40;
+    if (column_width < 220) column_width = 220;
+
+    int lx = layout->toolbox_panel.x + 24;
+    int ly = layout->toolbox_panel.y + 32;
+    int rx = layout->viewport.x + layout->viewport.w / 2 + 16;
+    int ry = ly;
+
+    int lw, lh, rw, rh;
+    SDL_Texture* left_tex = render_text_wrapped(ctx, left_block, text_col,
+                                                (unsigned int)column_width, &lw, &lh);
+    if (left_tex) {
+        SDL_Rect dst = { lx, ly, lw, lh };
+        SDL_RenderCopy(ctx->renderer, left_tex, NULL, &dst);
+        SDL_DestroyTexture(left_tex);
+    }
+
+    SDL_Texture* right_tex = render_text_wrapped(ctx, right_block, text_col,
+                                                 (unsigned int)column_width, &rw, &rh);
+    if (right_tex) {
+        SDL_Rect dst = { rx, ry, rw, rh };
+        SDL_RenderCopy(ctx->renderer, right_tex, NULL, &dst);
+        SDL_DestroyTexture(right_tex);
+    }
+
+    SDL_SetRenderDrawBlendMode(ctx->renderer, prev_mode);
 }
 
 RenderContext* render_init(const char* title, int width, int height) {
@@ -280,7 +516,8 @@ SDL_Texture* render_text_wrapped(RenderContext* ctx, const char* text, SDL_Color
     return tex;
 }
 
-static double draw_grid(RenderContext* ctx, const SimulationState* state, double vmax) {
+static double draw_grid(RenderContext* ctx, const SimulationState* state,
+                        ColorMapMode mode, double vmax) {
     if (!ctx || !state) return 0.0;
     SDL_Rect pixel = {0, 0, ctx->scale, ctx->scale};
     double field_max = 0.0;
@@ -292,7 +529,11 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state, double
             if (abs_v > field_max) {
                 field_max = abs_v;
             }
-            SDL_Color c = colormap_heat(v, vmax);
+            double t = 0.5;
+            if (vmax > 0.0) {
+                t = 0.5 + 0.5 * clampd(v / vmax, -1.0, 1.0);
+            }
+            SDL_Color c = colormap_for_mode(mode, t);
             if (state->tag_grid[i][j] == 1) {
                 c = (SDL_Color){200, 200, 200, 255};
             } else if (state->tag_grid[i][j] == 2) {
@@ -311,7 +552,11 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state, double
 double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
                             double vmax, double color_scale) {
     (void)color_scale;
-    return draw_grid(ctx, state, vmax);
+    ColorMapMode mode = COLORMAP_CLASSIC;
+    /* The active colormap is selected per-frame in render_frame via UIState,
+       so this function currently uses the classic mapping by default when
+       called directly. */
+    return draw_grid(ctx, state, mode, vmax);
 }
 
 void render_sources(RenderContext* ctx, const Source* sources) {
@@ -346,8 +591,7 @@ void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin
     SDL_RenderFillRect(ctx->renderer, &bar);
     for (int y = 0; y < bar.h; ++y) {
         double t = 1.0 - (double)y / (double)(bar.h - 1);
-        double v = vmin + t * (vmax - vmin);
-        SDL_Color c = colormap_heat(v, vmax);
+        SDL_Color c = colormap_for_mode(COLORMAP_CLASSIC, t);
         SDL_SetRenderDrawColor(ctx->renderer, c.r, c.g, c.b, c.a);
         SDL_RenderDrawLine(ctx->renderer, bar.x, bar.y + y, bar.x + bar.w, bar.y + y);
     }
@@ -442,12 +686,12 @@ void render_info_panel(RenderContext* ctx, const SimulationState* state, const U
 void render_legend(RenderContext* ctx, int x, int y, int max_width) {
     const char* legend =
         "Space: pause/resume   ESC/Q: quit\n"
-        "L: legend on/off      M/U: paint mode\n"
-        "I: paint type  O/P: paint eps -/+\n"
-        "1/2/3: toggle sources  T: cycle src type\n"
-        "C: clear fields       Y: CPML/Mur\n"
-        "H/J: hold color/scope S: ports  G: log probe\n"
-        "Bottom sliders: frequency and steps per frame";
+        "M/U: paint mode       I: paint type\n"
+        "O/P: paint eps -/+    1–3: toggle sources\n"
+        "Y: CPML/Mur boundary  S: ports   G: log probe\n"
+        "B/V: theme & accent   K: colormap\n"
+        "[ ] , . - = \\\\: layout panels & scope\n"
+        "F1: full help overlay";
     SDL_Color c = theme_colors()->legend_text;
     int tw, th;
     if (max_width <= 0) max_width = 200;
@@ -527,7 +771,7 @@ void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
     SDL_RenderSetViewport(ctx->renderer, &viewport_rect);
     SDL_SetRenderDrawColor(ctx->renderer, colors->viewport_bg.r, colors->viewport_bg.g, colors->viewport_bg.b, 255);
     SDL_RenderClear(ctx->renderer);
-    double field_vmax = render_field_heatmap(ctx, state, vmax, 1.0);
+    double field_vmax = draw_grid(ctx, state, ui->colormap_mode, vmax);
     render_sources(ctx, state->sources);
     render_block_outline(ctx, &layout);
     SDL_RenderSetViewport(ctx->renderer, NULL);
@@ -558,6 +802,12 @@ void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
             legend_y = layout.toolbox_panel.y + 12;
         }
         render_legend(ctx, legend_x, legend_y, legend_w);
+    }
+
+    render_status_badges(ctx, state, ui, &layout);
+
+    if (ui->show_help_overlay) {
+        render_help_overlay(ctx, state, ui, &layout);
     }
 
     SDL_RenderPresent(ctx->renderer);
