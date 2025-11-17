@@ -4,7 +4,11 @@
       "Bash(cat:*)",
       "Bash(cmake:*)",
       "Bash(where:*)",
-      "Bash(powershell.exe -ExecutionPolicy Bypass -File build-msvc.ps1 -Clean)"
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File build-msvc.ps1 -Clean)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File build-msvc.ps1 -Config Release)",
+      "Bash(.emwave_imgui.exe --config ....configswaveguide.json)",
+      "Bash(./emwave_imgui.exe:*)",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

@@ -758,11 +758,10 @@ int main(int argc, char** argv) {
                 ImGui::MenuItem("Scene", nullptr, &app.show_scene_panel);
                 ImGui::MenuItem("Sources", nullptr, &app.show_sources_panel);
                 ImGui::MenuItem("Blocks", nullptr, &app.show_blocks_panel);
-                ImGui::MenuItem("Run", nullptr, &app.show_run_panel);
-                ImGui::MenuItem("Scope", nullptr, &app.show_scope_window);
-                ImGui::MenuItem("Wizard", nullptr, &app.show_wizard_panel);
                 ImGui::MenuItem("Probes", nullptr, &app.show_probes_panel);
-                ImGui::MenuItem("Log", nullptr, &app.show_log_panel);
+                ImGui::Separator();
+                ImGui::MenuItem("Run Controls", nullptr, &app.show_run_panel);
+                ImGui::MenuItem("Wizard", nullptr, &app.show_wizard_panel);
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
@@ -777,10 +776,11 @@ int main(int argc, char** argv) {
         ImGui::Begin("RootLayout", nullptr, root_flags);
 
         ImVec2 full = ImGui::GetContentRegionAvail();
-        float bottom_h = full.y * 0.25f;
+        // Fixed proportions for 1920x1080 studio layout
+        float bottom_h = 220.0f;  // Fixed height for bottom strip
         float main_h = full.y - bottom_h;
-        float left_w = full.x * 0.22f;
-        float right_w = full.x * 0.25f;
+        float left_w = 320.0f;    // Fixed width for left column
+        float right_w = 350.0f;   // Fixed width for right column
         float center_w = full.x - left_w - right_w;
 
         ImVec2 origin = ImGui::GetCursorPos();
@@ -807,44 +807,54 @@ int main(int argc, char** argv) {
         ImGui::BeginChild("CenterViewport", ImVec2(center_w, main_h), true);
         ImGui::EndChild();
 
-        // Right column (Run + Wizard + Log)
+        // Right column (Simulation Controls + Wizard)
         ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
         ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
-        if (app.show_run_panel && ImGui::CollapsingHeader("Run", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Basic mode", &app.basic_mode);
-            ImGui::Separator();
-            ImGui::Text("Grid: %d x %d", sim->nx, sim->ny);
-            if (!app.basic_mode) {
-                ImGui::Text("dt: %.3e s", sim->dt);
-                ImGui::Text("freq: %.3f GHz", sim->freq * 1e-9);
-            }
-            ImGui::Text("timestep: %d", sim->timestep);
-            ImGui::Text("FPS (avg): %.1f", fps_avg);
 
-            if (ImGui::Button(paused ? "Resume (Space)" : "Pause (Space)")) {
+        // Simulation Controls
+        if (app.show_run_panel && ImGui::CollapsingHeader("Simulation Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Control buttons
+            ImVec2 button_size(right_w * 0.45f, 0.0f);
+            if (ImGui::Button(paused ? "Resume" : "Pause", button_size)) {
                 paused = !paused;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Wizard")) {
-                wizard.open = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Scope")) {
-                app.show_scope_window = !app.show_scope_window;
+            ImGui::Text("Space");
+
+            ImGui::Separator();
+
+            // Status section
+            ImGui::TextUnformatted("Status");
+            ImGui::Indent();
+            ImGui::Text("Step: %d", sim->timestep);
+            ImGui::Text("FPS: %.1f", fps_avg);
+            ImGui::Unindent();
+
+            if (ImGui::TreeNode("Grid Info")) {
+                ImGui::Text("Size: %d x %d", sim->nx, sim->ny);
+                ImGui::Text("Domain: %.3f x %.3f m", sim->lx, sim->ly);
+                ImGui::Text("dt: %.3e s", sim->dt);
+                ImGui::Text("freq: %.3f GHz", sim->freq * 1e-9);
+                ImGui::TreePop();
             }
 
             ImGui::Separator();
-            ImGui::TextUnformatted("Placement & Tools");
+            ImGui::Checkbox("Basic mode", &app.basic_mode);
+        }
+
+        // Interactive Tools section
+        if (ImGui::CollapsingHeader("Interactive Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextUnformatted("Source Placement");
+            ImGui::Indent();
             int max_src = MAX_SRC;
             if (app.selected_source < 0) app.selected_source = 0;
             if (app.selected_source >= max_src) app.selected_source = max_src - 1;
             char current_src_label[64];
             const Source& ss = sim->sources[app.selected_source];
             std::snprintf(current_src_label, sizeof(current_src_label),
-                          "#%d (%s, %s)", app.selected_source,
-                          source_type_label(ss.type),
-                          ss.active ? "on" : "off");
-            if (ImGui::BeginCombo("Source to move", current_src_label)) {
+                          "#%d (%s)", app.selected_source,
+                          source_type_label(ss.type));
+            if (ImGui::BeginCombo("Source", current_src_label)) {
                 for (int i = 0; i < max_src; ++i) {
                     const Source& s = sim->sources[i];
                     char label[64];
@@ -859,37 +869,68 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndCombo();
             }
-            ImGui::Checkbox("Click to move source", &app.placing_source);
+            ImGui::Checkbox("Click to move", &app.placing_source);
+            ImGui::Unindent();
 
             ImGui::Separator();
-            ImGui::TextUnformatted("Blocks (wizard config)");
+            ImGui::TextUnformatted("Block Drawing");
+            ImGui::Indent();
             ImGui::InputInt("Block index", &app.selected_block);
             if (app.selected_block < 0) app.selected_block = 0;
             if (app.selected_block >= CONFIG_MAX_MATERIAL_RECTS) {
                 app.selected_block = CONFIG_MAX_MATERIAL_RECTS - 1;
             }
-            ImGui::Checkbox("Draw block with 2 clicks", &app.placing_block);
+            ImGui::Checkbox("Draw with 2 clicks", &app.placing_block);
             if (app.placing_block) {
                 if (!app.block_first_set) {
-                    ImGui::TextUnformatted("First click: first corner, second click: opposite corner.");
+                    ImGui::TextWrapped("Click first corner, then opposite corner.");
                 } else {
-                    ImGui::Text("First corner: (%d,%d)", app.block_first_i, app.block_first_j);
+                    ImGui::Text("First: (%d,%d)", app.block_first_i, app.block_first_j);
                 }
-                ImGui::TextUnformatted("Note: geometry changes apply after 'Apply & Restart' in the wizard.");
+            }
+            ImGui::Unindent();
+
+            if (app.last_click_i >= 0 && app.last_click_j >= 0) {
+                ImGui::Separator();
+                ImGui::Text("Last click: (%d,%d)", app.last_click_i, app.last_click_j);
+            }
+        }
+
+        // Embedded Wizard UI
+        if (app.show_wizard_panel && ImGui::CollapsingHeader("Wizard", ImGuiTreeNodeFlags_None)) {
+            bool apply_wizard = false;
+            ImGui::PushID("WizardContent");
+
+            if (ImGui::BeginTabBar("WizardTabs", ImGuiTabBarFlags_None)) {
+                if (ImGui::BeginTabItem("Grid")) {
+                    wizard_grid_tab(wizard);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Materials")) {
+                    wizard_materials_tab(wizard);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Sources")) {
+                    wizard_sources_tab(wizard);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Run")) {
+                    wizard_run_tab(wizard);
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
 
             ImGui::Separator();
-            ImGui::Text("Last field click: (%d,%d)", app.last_click_i, app.last_click_j);
-        }
-        ImGui::EndChild();
+            if (ImGui::Button("Apply & Restart")) {
+                apply_wizard = true;
+            }
 
-        ImGui::End();
+            ImGui::PopID();
 
-        // Wizard window (may trigger rebootstrap)
-        if (app.show_wizard_panel) {
-            if (wizard_draw(wizard)) {
+            // Handle wizard apply (rebootstrap simulation)
+            if (apply_wizard) {
                 if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
-                    // Resize window to match new grid (respect minimum size)
                     width = sim->nx * scale;
                     height = sim->ny * scale;
                     if (width < 1920) width = 1920;
@@ -900,37 +941,59 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Scope window
-        if (app.show_scope_window && scope.y && scope.n > 0) {
-            if (ImGui::Begin("Scope", &app.show_scope_window)) {
-                const int N = scope.n;
-                static float values[1024];
-                int max_samples = (N <= (int)(sizeof(values) / sizeof(values[0]))) ? N : (int)(sizeof(values) / sizeof(values[0]));
-                double vmin = 0.0, vmax_scope = 0.0;
-                bool first = true;
-                for (int i = 0; i < max_samples; ++i) {
-                    int idx = (scope.head + i) % N;
-                    double v = scope.y[idx];
-                    values[i] = (float)v;
-                    if (first) {
-                        vmin = vmax_scope = v;
-                        first = false;
-                    } else {
-                        if (v < vmin) vmin = v;
-                        if (v > vmax_scope) vmax_scope = v;
+        ImGui::EndChild();
+
+        // Bottom strip with tabs for Scope and Log
+        ImGui::SetCursorPos(ImVec2(origin.x, origin.y + main_h));
+        ImGui::BeginChild("BottomStrip", ImVec2(full.x, bottom_h), true);
+        if (ImGui::BeginTabBar("BottomTabs", ImGuiTabBarFlags_None)) {
+            if (ImGui::BeginTabItem("Scope")) {
+                if (scope.y && scope.n > 0) {
+                    const int N = scope.n;
+                    static float values[1024];
+                    int max_samples = (N <= (int)(sizeof(values) / sizeof(values[0]))) ? N : (int)(sizeof(values) / sizeof(values[0]));
+                    double vmin = 0.0, vmax_scope = 0.0;
+                    bool first = true;
+                    for (int i = 0; i < max_samples; ++i) {
+                        int idx = (scope.head + i) % N;
+                        double v = scope.y[idx];
+                        values[i] = (float)v;
+                        if (first) {
+                            vmin = vmax_scope = v;
+                            first = false;
+                        } else {
+                            if (v < vmin) vmin = v;
+                            if (v > vmax_scope) vmax_scope = v;
+                        }
                     }
+                    float ymin = (float)vmin;
+                    float ymax = (float)vmax_scope;
+                    if (ymin == ymax) {
+                        ymin -= 1.0f;
+                        ymax += 1.0f;
+                    }
+                    ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, bottom_h - 60.0f);
+                    ImGui::PlotLines("Probe Ez(center)", values, max_samples, 0, nullptr, ymin, ymax, plot_size);
+                } else {
+                    ImGui::TextUnformatted("Scope: no data available");
                 }
-                float ymin = (float)vmin;
-                float ymax = (float)vmax_scope;
-                if (ymin == ymax) {
-                    ymin -= 1.0f;
-                    ymax += 1.0f;
-                }
-                ImGui::PlotLines("Probe Ez(center)", values, max_samples, 0, nullptr, ymin, ymax,
-                                   ImVec2(0.0f, ImGui::GetTextLineHeight() * 6));
+                ImGui::EndTabItem();
             }
-            ImGui::End();
+            if (ImGui::BeginTabItem("Log")) {
+                ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), false);
+                for (int i = 0; i < app.log_count; ++i) {
+                    ImGui::TextUnformatted(app.log_lines[i]);
+                }
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                    ImGui::SetScrollHereY(1.0f);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
+        ImGui::EndChild();
+
+        ImGui::End();
 
         // Overlay: show source IDs and wizard blocks on top of the field
         {
