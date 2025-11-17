@@ -137,6 +137,7 @@ UIState* ui_state_init(void) {
     ui->scope_sample_generation = 0;
     ui->force_metrics_recompute = 0;
     ui->debug_force_metrics = 0;
+    ui->request_screenshot = 0;
 
     return ui;
 }
@@ -401,6 +402,9 @@ int ui_handle_events(UIState* ui, SimulationState* sim, Scope* scope) {
                     } else {
                         ui->colormap_mode = (ColorMapMode)((ui->colormap_mode + 1) % COLORMAP_COUNT);
                     }
+                    break;
+                case SDLK_F2:
+                    ui->request_screenshot = 1;
                     break;
                 case SDLK_7:
                 case SDLK_8:

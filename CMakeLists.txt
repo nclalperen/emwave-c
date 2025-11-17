@@ -173,6 +173,22 @@ endif()
 
 install(FILES "${EMWAVE_BUNDLED_FONT}" DESTINATION assets/fonts)
 
+add_test(NAME emwave_cli_smoke
+  COMMAND emwave_cli
+    --config "${CMAKE_SOURCE_DIR}/configs/waveguide.json"
+    --run-steps=500)
+
+add_test(NAME emwave_cli_sweep_smoke
+  COMMAND emwave_cli
+    --config "${CMAKE_SOURCE_DIR}/configs/cpw_filter.json"
+    --run-mode=sweep)
+
+set_tests_properties(emwave_cli_smoke PROPERTIES
+  PASS_REGULAR_EXPRESSION "Simulation complete")
+
+set_tests_properties(emwave_cli_sweep_smoke PROPERTIES
+  PASS_REGULAR_EXPRESSION "# freq_Hz,s21_mag")
+
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/CMakeLists.txt")
   add_subdirectory(tests/unit)
 endif()

@@ -34,3 +34,5 @@ target_compile_definitions(config_loader_tests PRIVATE
 add_emwave_check_test(fdtd_core_tests SOURCES test_fdtd_core.c)
 
 add_emwave_check_test(analysis_tests SOURCES test_analysis_alloc.c)
+
+add_emwave_check_test(config_runtime_tests SOURCES test_config_runtime.c)

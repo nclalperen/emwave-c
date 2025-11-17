@@ -40,7 +40,8 @@ double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
                             double vmax, double color_scale);
 void render_sources(RenderContext* ctx, const Source* sources);
 void render_block_outline(RenderContext* ctx, const RenderLayout* layout);
-void render_colorbar(RenderContext* ctx, const RenderLayout* layout, double vmin, double vmax);
+void render_colorbar(RenderContext* ctx, const RenderLayout* layout,
+                     ColorMapMode mode, double vmin, double vmax);
 double render_scope(RenderContext* ctx, const Scope* scope, int x, int y, int w, int h, double yscale);
 void render_info_panel(RenderContext* ctx, const SimulationState* state, const UIState* ui,
                        double fps_avg, const RenderLayout* layout);

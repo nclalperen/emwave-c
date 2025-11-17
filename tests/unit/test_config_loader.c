@@ -199,6 +199,25 @@ START_TEST(test_config_truncates_excess_sources) {
 }
 END_TEST
 
+START_TEST(test_cli_overrides_json_boundary_and_mode) {
+    const char* argv[] = {
+        "emwave_cli",
+        "--config=" CONFIGS_DIR "/cpw_filter.json",
+        "--boundary=mur",
+        "--run-mode=fixed",
+        "--run-steps=1234"
+    };
+    int argc = (int)(sizeof(argv) / sizeof(argv[0]));
+
+    SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
+    int ok = config_load_from_args(argc, (char**)argv, &cfg);
+    ck_assert_msg(ok, "config_load_from_args should succeed");
+    ck_assert_int_eq(cfg.boundary_mode, SIM_BOUNDARY_MUR);
+    ck_assert_int_eq(cfg.run_mode, SIM_RUN_MODE_FIXED_STEPS);
+    ck_assert_int_eq(cfg.run_steps, 1234);
+}
+END_TEST
+
 static Suite* config_loader_suite(void) {
     Suite* s = suite_create("config_loader");
     TCase* tc = tcase_create("core");
@@ -210,6 +229,7 @@ static Suite* config_loader_suite(void) {
     tcase_add_test(tc, test_oversized_file_guard);
     tcase_add_test(tc, test_empty_file_is_rejected);
     tcase_add_test(tc, test_config_truncates_excess_sources);
+    tcase_add_test(tc, test_cli_overrides_json_boundary_and_mode);
     suite_add_tcase(s, tc);
     return s;
 }

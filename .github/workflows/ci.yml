@@ -19,6 +19,7 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
-      - name: Run (optional)
-        if: ${{ false }}   # flip to true when you add non-GUI tests
-        run: ./build/bin/emwave || true
+      - name: Run tests
+        run: |
+          cd build
+          ctest --output-on-failure

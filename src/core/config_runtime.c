@@ -21,6 +21,7 @@ const SimulationConfig SIM_CONFIG_DEFAULTS = {
     .sweep_steps_per_point = 200,
     .run_mode = SIM_RUN_MODE_FIXED_STEPS,
     .run_steps = 5 * 200,
+    .boundary_mode = SIM_BOUNDARY_CPML,
     .enable_probe_log = 0,
     .probe_log_path = "probe.txt",
     .material_rect_count = 1,
@@ -82,6 +83,11 @@ void config_clamp_to_limits(SimulationConfig* cfg) {
         if (cfg->source_configs[i].sigma2 <= 0.0) cfg->source_configs[i].sigma2 = 4.0;
         if (cfg->source_configs[i].freq <= 0.0) cfg->source_configs[i].freq = 1e9;
     }
+
+    if (cfg->boundary_mode != SIM_BOUNDARY_CPML &&
+        cfg->boundary_mode != SIM_BOUNDARY_MUR) {
+        cfg->boundary_mode = SIM_BOUNDARY_CPML;
+    }
 }
 
 int config_validate(const SimulationConfig* cfg, char* errbuf, size_t errbuf_len) {
@@ -132,6 +138,11 @@ int config_validate(const SimulationConfig* cfg, char* errbuf, size_t errbuf_len
             return 0;
         }
     }
+    if (cfg->boundary_mode != SIM_BOUNDARY_CPML &&
+        cfg->boundary_mode != SIM_BOUNDARY_MUR) {
+        if (errbuf && errbuf_len) snprintf(errbuf, errbuf_len, "Boundary mode must be cpml or mur");
+        return 0;
+    }
     return 1;
 }
 
@@ -148,6 +159,8 @@ void config_print_summary(const SimulationConfig* cfg) {
     } else {
         printf("Run mode: %s (%d steps/pt)\n", mode, cfg->sweep_steps_per_point);
     }
+    const char* bmode = (cfg->boundary_mode == SIM_BOUNDARY_MUR) ? "Mur" : "CPML";
+    printf("Boundary: %s\n", bmode);
     if (cfg->enable_probe_log && cfg->probe_log_path[0]) {
         printf("Probe logging: enabled -> %s\n", cfg->probe_log_path);
     } else {
@@ -156,4 +169,3 @@ void config_print_summary(const SimulationConfig* cfg) {
     printf("Materials: %d rectangles, Sources: %d\n",
            cfg->material_rect_count, cfg->source_count);
 }
-
