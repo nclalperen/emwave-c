@@ -20,6 +20,15 @@ cd C:\projects\emwave-c
 ```
 The PowerShell wrapper locates Visual Studio, loads the MSVC environment, configures CMake with the local `vcpkg.json`, and produces `build\Release\emwave.exe` along with the required SDL DLLs and the bundled font.
 
+Need the experimental Dear ImGui front-end? Run the dedicated helper to target `emwave_imgui` and keep its build outputs isolated:
+
+```powershell
+cd C:\projects\emwave-c
+.\build-imgui.ps1           # supports -Clean / -Config Release|Debug
+.\build-imgui\Release\emwave_imgui.exe
+```
+The script uses the same MSVC + vcpkg detection but only builds the `emwave_imgui` target so you can switch between the default SDL UI and the ImGui prototype without reconfiguring the primary build directory.
+
 ### Windows (MSYS2 / MinGW-w64)
 ```bash
 pacman -Syu --needed base-devel mingw-w64-x86_64-toolchain \

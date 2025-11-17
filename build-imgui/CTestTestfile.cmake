@@ -1,0 +1,37 @@
+# CMake generated Testfile for 
+# Source directory: C:/projects/emwave-c
+# Build directory: C:/projects/emwave-c/build-imgui
+# 
+# This file includes the relevant testing commands required for 
+# testing this directory and lists subdirectories to be tested as well.
+if(CTEST_CONFIGURATION_TYPE MATCHES "^([Dd][Ee][Bb][Uu][Gg])$")
+  add_test([=[emwave_cli_smoke]=] "C:/projects/emwave-c/build-imgui/Debug/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/waveguide.json" "--run-steps=500")
+  set_tests_properties([=[emwave_cli_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "Simulation complete" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;215;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Rr][Ee][Ll][Ee][Aa][Ss][Ee])$")
+  add_test([=[emwave_cli_smoke]=] "C:/projects/emwave-c/build-imgui/Release/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/waveguide.json" "--run-steps=500")
+  set_tests_properties([=[emwave_cli_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "Simulation complete" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;215;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Mm][Ii][Nn][Ss][Ii][Zz][Ee][Rr][Ee][Ll])$")
+  add_test([=[emwave_cli_smoke]=] "C:/projects/emwave-c/build-imgui/MinSizeRel/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/waveguide.json" "--run-steps=500")
+  set_tests_properties([=[emwave_cli_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "Simulation complete" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;215;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Rr][Ee][Ll][Ww][Ii][Tt][Hh][Dd][Ee][Bb][Ii][Nn][Ff][Oo])$")
+  add_test([=[emwave_cli_smoke]=] "C:/projects/emwave-c/build-imgui/RelWithDebInfo/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/waveguide.json" "--run-steps=500")
+  set_tests_properties([=[emwave_cli_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "Simulation complete" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;215;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+else()
+  add_test([=[emwave_cli_smoke]=] NOT_AVAILABLE)
+endif()
+if(CTEST_CONFIGURATION_TYPE MATCHES "^([Dd][Ee][Bb][Uu][Gg])$")
+  add_test([=[emwave_cli_sweep_smoke]=] "C:/projects/emwave-c/build-imgui/Debug/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/cpw_filter.json" "--run-mode=sweep")
+  set_tests_properties([=[emwave_cli_sweep_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "# freq_Hz,s21_mag" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;220;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Rr][Ee][Ll][Ee][Aa][Ss][Ee])$")
+  add_test([=[emwave_cli_sweep_smoke]=] "C:/projects/emwave-c/build-imgui/Release/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/cpw_filter.json" "--run-mode=sweep")
+  set_tests_properties([=[emwave_cli_sweep_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "# freq_Hz,s21_mag" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;220;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Mm][Ii][Nn][Ss][Ii][Zz][Ee][Rr][Ee][Ll])$")
+  add_test([=[emwave_cli_sweep_smoke]=] "C:/projects/emwave-c/build-imgui/MinSizeRel/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/cpw_filter.json" "--run-mode=sweep")
+  set_tests_properties([=[emwave_cli_sweep_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "# freq_Hz,s21_mag" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;220;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+elseif(CTEST_CONFIGURATION_TYPE MATCHES "^([Rr][Ee][Ll][Ww][Ii][Tt][Hh][Dd][Ee][Bb][Ii][Nn][Ff][Oo])$")
+  add_test([=[emwave_cli_sweep_smoke]=] "C:/projects/emwave-c/build-imgui/RelWithDebInfo/emwave_cli.exe" "--config" "C:/projects/emwave-c/configs/cpw_filter.json" "--run-mode=sweep")
+  set_tests_properties([=[emwave_cli_sweep_smoke]=] PROPERTIES  PASS_REGULAR_EXPRESSION "# freq_Hz,s21_mag" _BACKTRACE_TRIPLES "C:/projects/emwave-c/CMakeLists.txt;220;add_test;C:/projects/emwave-c/CMakeLists.txt;0;")
+else()
+  add_test([=[emwave_cli_sweep_smoke]=] NOT_AVAILABLE)
+endif()
+subdirs("tests/unit")
