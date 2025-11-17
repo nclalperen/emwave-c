@@ -64,6 +64,19 @@ static int validate_layout(int nx, int ny) {
         ok = 0;
     }
 
+    int expected_timeline_x = layout.toolbox_panel.w;
+    if (layout.timeline_panel.x != expected_timeline_x) {
+        printf("Timeline x mismatch for %dx%d (got %d, expected %d)\n",
+               nx, ny, layout.timeline_panel.x, expected_timeline_x);
+        ok = 0;
+    }
+
+    if (layout.timeline_panel.w != layout.viewport.w) {
+        printf("Timeline width mismatch for %dx%d (got %d, expected %d)\n",
+               nx, ny, layout.timeline_panel.w, layout.viewport.w);
+        ok = 0;
+    }
+
     return ok;
 }
 

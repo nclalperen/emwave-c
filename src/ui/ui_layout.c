@@ -54,9 +54,9 @@ void render_layout_compute(RenderLayout* layout,
     layout->properties_panel.w = right_panel_width;
     layout->properties_panel.h = viewport_h;
 
-    layout->timeline_panel.x = 0;
+    layout->timeline_panel.x = left_panel_width;
     layout->timeline_panel.y = menu_bar_height + viewport_h;
-    layout->timeline_panel.w = total_width;
+    layout->timeline_panel.w = viewport_w;
     layout->timeline_panel.h = timeline_height;
 
     layout->menu_bar.x = 0;
