@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\projects\emwave-c\build-imgui\CMakeFiles\820aa690a065c1a84bf1506d8c20a14b\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{DF7EF812-22E6-3698-AF85-F9EB95348440}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
