@@ -62,6 +62,10 @@ void slider_draw(RenderContext* ctx, const Slider* slider);
 /* Screenshot */
 int save_screenshot(RenderContext* ctx, const char* filename);
 
+/* Global visual controls for simple front-ends (e.g., ImGui) */
+void ui_render_set_theme(ThemeMode mode, int accent_index);
+void ui_render_set_colormap(ColorMapMode mode);
+
 #ifdef __cplusplus
 }
 #endif

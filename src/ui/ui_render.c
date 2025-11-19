@@ -87,6 +87,9 @@ static const AccentPalette ACCENT_TABLE[UI_ACCENT_PRESET_COUNT] = {
 static const ThemeColors* g_active_theme = NULL;
 static const AccentPalette* g_active_palette = NULL;
 
+/* Colormap mode used by direct render_field_heatmap() callers (e.g. ImGui front-end). */
+static ColorMapMode g_direct_colormap_mode = COLORMAP_VIRIDIS;
+
 static void theme_set_active(ThemeMode mode, int accent_index) {
     int theme_idx = (mode >= 0 && mode < THEME_COUNT) ? mode : THEME_DARK;
     int palette_idx = accent_index;
@@ -112,6 +115,17 @@ static const AccentPalette* theme_palette(void) {
         g_active_palette = &ACCENT_TABLE[0];
     }
     return g_active_palette;
+}
+
+void ui_render_set_theme(ThemeMode mode, int accent_index) {
+    theme_set_active(mode, accent_index);
+}
+
+void ui_render_set_colormap(ColorMapMode mode) {
+    if (mode < 0 || mode >= COLORMAP_COUNT) {
+        mode = COLORMAP_VIRIDIS;
+    }
+    g_direct_colormap_mode = mode;
 }
 
 static double clampd(double v, double lo, double hi) {
@@ -556,10 +570,10 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state,
 double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
                             double vmax, double color_scale) {
     (void)color_scale;
-    ColorMapMode mode = COLORMAP_VIRIDIS;
-    /* The active colormap is selected per-frame in render_frame via UIState,
-       so this function currently uses the classic mapping by default when
-       called directly. */
+    ColorMapMode mode = g_direct_colormap_mode;
+    /* When called from the main SDL/ImGui front-end, the colormap is
+       controlled via ui_render_set_colormap(). Other callers can ignore
+       this and rely on the default (Viridis). */
     return draw_grid(ctx, state, mode, vmax);
 }
 

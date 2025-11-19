@@ -22,6 +22,7 @@ int config_load_from_args(int argc, char** argv, SimulationConfig* out_config);
 void config_print_summary(const SimulationConfig* cfg);
 int config_validate(const SimulationConfig* cfg, char* errbuf, size_t errbuf_len);
 void config_clamp_to_limits(SimulationConfig* cfg);
+int save_config_json(const char* path, const SimulationConfig* cfg);
 
 #ifdef __cplusplus
 }

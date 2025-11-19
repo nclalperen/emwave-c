@@ -1,0 +1,38 @@
+﻿2025-11-19T18:42:57.3131+03:00 ==== Phase 1 Auto Validation ====
+2025-11-19T18:42:57.3351+03:00 BuildDir=build-imgui Config=Debug
+2025-11-19T18:42:57.3391+03:00 BEGIN: Build emwave_imgui (Debug)
+2025-11-19T18:42:57.3638+03:00 Running: cmake --build "build-imgui" --config Debug
+2025-11-19T18:43:05.4688+03:00 PASS: Build emwave_imgui (Debug)
+2025-11-19T18:43:05.4700+03:00 BEGIN: Run unit tests (config_loader_tests/config_runtime_tests/fdtd_core_tests/analysis_tests)
+2025-11-19T18:43:05.4930+03:00 Running unit test: config_loader_tests.exe
+2025-11-19T18:43:06.5888+03:00 Running unit test: config_runtime_tests.exe
+2025-11-19T18:43:07.6834+03:00 Running unit test: fdtd_core_tests.exe
+2025-11-19T18:43:08.7818+03:00 Running unit test: analysis_tests.exe
+2025-11-19T18:43:09.8678+03:00 Running unit test: material_library_tests.exe
+2025-11-19T18:43:10.9552+03:00 PASS: Run unit tests (config_loader_tests/config_runtime_tests/fdtd_core_tests/analysis_tests)
+2025-11-19T18:43:10.9572+03:00 BEGIN: CLI smoke test on configs/waveguide.json
+2025-11-19T18:43:10.9707+03:00 Running: build-imgui\Debug\emwave_cli.exe --config configs/waveguide.json --run-steps=200
+2025-11-19T18:43:12.0345+03:00 PASS: CLI smoke test on configs/waveguide.json
+2025-11-19T18:43:12.0356+03:00 BEGIN: Config save/load roundtrip (config_runtime/config_loader)
+2025-11-19T18:43:12.0387+03:00 NOTE: No direct CLI hook for save_config_json; manual testing required for Section 8.
+2025-11-19T18:43:12.0395+03:00 PASS: Config save/load roundtrip (config_runtime/config_loader)
+2025-11-19T18:43:12.0401+03:00 ==== Sections requiring manual/interactive validation ====
+2025-11-19T18:43:12.0401+03:00 MANUAL: Section 1: Global keyboard shortcuts (ESC/Q, F1, F2/F3, F5/F6, Ctrl+S, F1 while help open)
+2025-11-19T18:43:12.0401+03:00 MANUAL: Section 2: Context shortcuts (Space/R/C, 1/2/3, T/F, S when ImGui does not capture keyboard)
+2025-11-19T18:43:12.0401+03:00 MANUAL: Section 3: Paint mode (M/U/I/O/P, cursor, brush rendering, paint vs drag interaction)
+2025-11-19T18:43:12.0401+03:00 MANUAL: Section 4: Auto-rescale modes (A/H/J/L behavior, vmax/Scope correlation)
+2025-11-19T18:43:12.0436+03:00 MANUAL: Section 5: Visual controls (B theme, K colormap, V accent, G grid, combinatorial readability)
+2025-11-19T18:43:12.0436+03:00 MANUAL: Section 6: Boundary conditions (Y toggle, 7/8/9 presets, field/scope reset behavior)
+2025-11-19T18:43:12.0436+03:00 MANUAL: Section 7: Source dragging (drag start/stop, bounds, paint-mode blocking, running vs paused)
+2025-11-19T18:43:12.0436+03:00 MANUAL: Section 8: Full configuration save/load roundtrip via UI (Ctrl+S, F5/F6, manual reload)
+2025-11-19T18:43:12.0436+03:00 MANUAL: Section 9: UI/UX polish (menus, panels, help overlay, logging, performance, viewport/scope smoothness)
+2025-11-19T18:43:12.0463+03:00 MANUAL: Section 10: Edge cases & stability (rapid key presses, window resize, 5+ minute stress run)
+2025-11-19T18:43:12.0463+03:00 ==== Bug Reporting Template ====
+2025-11-19T18:43:12.0474+03:00 **Issue**: [Brief description]
+2025-11-19T18:43:12.0474+03:00 **Steps to reproduce**:
+2025-11-19T18:43:12.0486+03:00 1. [Step 1]
+2025-11-19T18:43:12.0496+03:00 2. [Step 2]
+2025-11-19T18:43:12.0506+03:00 **Expected**: [What should happen]
+2025-11-19T18:43:12.0506+03:00 **Actual**: [What actually happens]
+2025-11-19T18:43:12.0516+03:00 **Severity**: [Critical/High/Medium/Low]
+2025-11-19T18:43:12.0526+03:00 ==== Auto validation complete ====
