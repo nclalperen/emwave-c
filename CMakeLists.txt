@@ -55,6 +55,7 @@ set(EMWAVE_CORE_SOURCES
     src/core/config_runtime.c
     src/core/sources.c
     src/core/materials.c
+    src/core/material_library.c
     src/core/analysis.c
     src/core/config_loader.c
     src/app/cli_runner.c
@@ -70,6 +71,7 @@ set(EMWAVE_UI_SOURCES
 # Build the SDL front-end only if SDL2 dependencies are present
 set(EMWAVE_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/jsmn")
 
 add_library(emwave_core STATIC ${EMWAVE_CORE_SOURCES})
@@ -83,6 +85,7 @@ add_library(emwave_solver STATIC
     src/core/config_runtime.c
     src/core/sources.c
     src/core/materials.c
+    src/core/material_library.c
     src/core/config_loader.c
     third_party/jsmn/jsmn.c
 )
@@ -107,11 +110,14 @@ if (EMWAVE_UI_AVAILABLE)
         third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp
         src/app/main_imgui.cpp
         ${EMWAVE_UI_SOURCES}
+        third_party/implot-0.16/implot.cpp
+        third_party/implot-0.16/implot_items.cpp
     )
 
     add_executable(emwave_imgui ${IMGUI_SOURCES})
     target_include_directories(emwave_imgui PRIVATE
         ${EMWAVE_INCLUDE_DIRS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/implot-0.16"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends"
     )

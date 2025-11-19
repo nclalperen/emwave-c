@@ -581,6 +581,33 @@ static int config_overlay_from_json(const char* path, SimulationConfig* cfg,
     return 1;
 }
 
+static const char* material_type_to_string(unsigned char tag) {
+    switch (tag) {
+        case 1:  return "pec";
+        case 2:  return "pmc";
+        default: return "dielectric";
+    }
+}
+
+static const char* source_type_to_string(SourceType t) {
+    switch (t) {
+        case SRC_GAUSS_PULSE: return "gaussian";
+        case SRC_RICKER:      return "ricker";
+        case SRC_EXPR:        return "expr";
+        case SRC_CW:
+        default:              return "cw";
+    }
+}
+
+static const char* source_field_to_string(SourceFieldType f) {
+    switch (f) {
+        case SRC_FIELD_HX: return "hx";
+        case SRC_FIELD_HY: return "hy";
+        case SRC_FIELD_EZ:
+        default:           return "ez";
+    }
+}
+
 static void print_usage(void) {
     printf("Options:\n");
     printf("  --config=<file>       Load configuration JSON file\n");
@@ -708,4 +735,124 @@ int config_loader_parse_file(const char* path, SimulationConfig* cfg,
         return 0;
     }
     return config_overlay_from_json(path, cfg, errbuf, errbuf_len);
+}
+
+int save_config_json(const char* path, const SimulationConfig* cfg) {
+    if (!path || !cfg) {
+        return 0;
+    }
+
+    FILE* f = fopen(path, "wb");
+    if (!f) {
+        return 0;
+    }
+
+    /* simulation block */
+    fprintf(f,
+            "{\n"
+            "  \"simulation\": {\n"
+            "    \"nx\": %d,\n"
+            "    \"ny\": %d,\n"
+            "    \"lx\": %.9g,\n"
+            "    \"ly\": %.9g,\n"
+            "    \"cfl\": %.9g,\n"
+            "    \"steps_per_frame\": %d,\n"
+            "    \"sweep_points\": %d,\n"
+            "    \"sweep_start_hz\": %.9g,\n"
+            "    \"sweep_stop_hz\": %.9g,\n"
+            "    \"sweep_steps_per_point\": %d,\n"
+            "    \"run_mode\": \"%s\",\n"
+            "    \"run_steps\": %d,\n"
+            "    \"enable_profile\": %s,\n"
+            "    \"enable_probe_log\": %s,\n"
+            "    \"probe_log_path\": \"%s\",\n"
+            "    \"boundary\": \"%s\"\n"
+            "  },\n",
+            cfg->nx,
+            cfg->ny,
+            cfg->lx,
+            cfg->ly,
+            cfg->cfl_safety,
+            cfg->steps_per_frame,
+            cfg->sweep_points,
+            cfg->sweep_start_hz,
+            cfg->sweep_stop_hz,
+            cfg->sweep_steps_per_point,
+            (cfg->run_mode == SIM_RUN_MODE_SWEEP) ? "sweep" : "fixed",
+            cfg->run_steps,
+            cfg->enable_profile ? "true" : "false",
+            cfg->enable_probe_log ? "true" : "false",
+            cfg->probe_log_path,
+            (cfg->boundary_mode == SIM_BOUNDARY_MUR) ? "mur" : "cpml");
+
+    /* materials array */
+    fprintf(f, "  \"materials\": [\n");
+    for (int i = 0; i < cfg->material_rect_count; ++i) {
+        const MaterialRectSpec* r = &cfg->material_rects[i];
+        fprintf(f,
+                "    { \"type\": \"%s\", \"x0\": %.9g, \"x1\": %.9g, "
+                "\"y0\": %.9g, \"y1\": %.9g, \"epsr\": %.9g, \"sigma\": %.9g }%s\n",
+                material_type_to_string(r->tag),
+                r->x0,
+                r->x1,
+                r->y0,
+                r->y1,
+                r->epsr,
+                r->sigma,
+                (i + 1 < cfg->material_rect_count) ? "," : "");
+    }
+    if (cfg->material_rect_count == 0) {
+        fprintf(f, "    \n");
+    }
+    fprintf(f, "  ],\n");
+
+    /* sources array */
+    fprintf(f, "  \"sources\": [\n");
+    for (int i = 0; i < cfg->source_count; ++i) {
+        const SourceConfigSpec* s = &cfg->source_configs[i];
+        fprintf(f,
+                "    { \"type\": \"%s\", \"field\": \"%s\", \"x\": %.9g, "
+                "\"y\": %.9g, \"amp\": %.9g, \"freq\": %.9g, \"sigma2\": %.9g, "
+                "\"active\": %s",
+                source_type_to_string(s->type),
+                source_field_to_string(s->field),
+                s->x,
+                s->y,
+                s->amp,
+                s->freq,
+                s->sigma2,
+                s->active ? "true" : "false");
+        if (s->expr[0] != '\0') {
+            /* simple string emission without escaping newlines etc. */
+            fprintf(f, ", \"expr\": \"%s\"", s->expr);
+        }
+        fprintf(f, " }%s\n", (i + 1 < cfg->source_count) ? "," : "");
+    }
+    if (cfg->source_count == 0) {
+        fprintf(f, "    \n");
+    }
+    fprintf(f, "  ]");
+
+    /* optional ports */
+    if (cfg->port_count > 0) {
+        fprintf(f, ",\n  \"ports\": [\n");
+        for (int i = 0; i < cfg->port_count; ++i) {
+            const PortConfigSpec* p = &cfg->port_configs[i];
+            fprintf(f,
+                    "    { \"active\": %s, \"x\": %.9g, \"y0\": %.9g, \"y1\": %.9g }%s\n",
+                    p->active ? "true" : "false",
+                    p->x,
+                    p->y0,
+                    p->y1,
+                    (i + 1 < cfg->port_count) ? "," : "");
+        }
+        fprintf(f, "  ]\n");
+    } else {
+        fprintf(f, "\n");
+    }
+
+    fprintf(f, "}\n");
+
+    fclose(f);
+    return 1;
 }
