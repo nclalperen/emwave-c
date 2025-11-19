@@ -1,0 +1,678 @@
+diff --git a/src/app/main_imgui.cpp b/src/app/main_imgui.cpp
+index 3fe5787..36733dd 100644
+--- a/src/app/main_imgui.cpp
++++ b/src/app/main_imgui.cpp
+@@ -142,9 +142,133 @@ static const char* source_field_label(SourceFieldType f) {
+     }
+ }
+ 
++static double clamp01(double v) {
++    if (v < 0.0) return 0.0;
++    if (v > 1.0) return 1.0;
++    return v;
++}
++
++static int normalized_to_cell_index(double frac, int n) {
++    if (n <= 0) return 0;
++    const int pad = 2;
++    double clamped = clamp01(frac);
++    int idx = (n > 1) ? (int)std::lround(clamped * (double)(n - 1)) : 0;
++    if (idx < pad) idx = pad;
++    if (idx >= n - pad && n > pad) idx = n - pad - 1;
++    if (idx < 0) idx = 0;
++    if (idx >= n) idx = n - 1;
++    return idx;
++}
++
++static void ui_source_free_expression(Source* s) {
++    if (!s || !s->expr_program) return;
++    expr_free((ExprProgram*)s->expr_program);
++    s->expr_program = NULL;
++}
++
++static void ui_source_compile_expression(Source* s) {
++    if (!s) return;
++    ui_source_free_expression(s);
++    if (s->type != SRC_EXPR) return;
++    if (s->expr_text[0] == '\0') return;
++
++    ExprProgram* prog = NULL;
++    char errbuf[128];
++    if (!expr_compile(s->expr_text, &prog, errbuf, (int)sizeof(errbuf))) {
++        return;
++    }
++    s->expr_program = prog;
++}
++
++static void ui_apply_source_spec_to_runtime(SimulationState* sim,
++                                            int idx,
++                                            const SourceConfigSpec* spec) {
++    if (!sim || !spec) return;
++    if (idx < 0 || idx >= MAX_SRC) return;
++
++    Source* dst = &sim->sources[idx];
++    dst->active = spec->active;
++    dst->type = spec->type;
++    dst->field = spec->field;
++    dst->amp = spec->amp;
++    dst->freq = spec->freq;
++    dst->sigma2 = (spec->sigma2 > 0.0) ? spec->sigma2 : 1.0;
++    dst->ix = normalized_to_cell_index(spec->x, sim->nx);
++    dst->iy = normalized_to_cell_index(spec->y, sim->ny);
++
++    if (spec->expr[0] != '\0') {
++        std::strncpy(dst->expr_text, spec->expr, SOURCE_EXPR_MAX_LEN - 1);
++        dst->expr_text[SOURCE_EXPR_MAX_LEN - 1] = '\0';
++    } else {
++        dst->expr_text[0] = '\0';
++    }
++
++    source_reparam(dst);
++    ui_source_compile_expression(dst);
++}
++
++static void create_new_source(WizardState& wizard, SimulationState* sim, AppState* app) {
++    if (!sim) return;
++    int count = wizard.cfg.source_count;
++    if (count >= MAX_SRC) return;
++
++    SourceConfigSpec spec = {};
++    spec.active = 1;
++    spec.type = SRC_CW;
++    spec.field = SRC_FIELD_EZ;
++    spec.x = 0.5;
++    spec.y = 0.5;
++    spec.amp = 1.0;
++    spec.freq = 2.4e9;
++    spec.sigma2 = 1.0;
++    spec.expr[0] = '\0';
++
++    wizard.cfg.source_configs[count] = spec;
++    wizard.cfg.source_count = count + 1;
++    ui_apply_source_spec_to_runtime(sim, count, &wizard.cfg.source_configs[count]);
++
++    if (app) {
++        app->selected_source = count;
++        ui_log_add(app, "Created source #%d (CW @ %.1f GHz)",
++                   count, spec.freq * 1e-9);
++    }
++}
++
++static void delete_source(WizardState& wizard, SimulationState* sim, AppState* app, int idx) {
++    if (!sim) return;
++    int count = wizard.cfg.source_count;
++    if (idx < 0 || idx >= count) return;
++
++    for (int j = idx; j < count - 1; ++j) {
++        wizard.cfg.source_configs[j] = wizard.cfg.source_configs[j + 1];
++    }
++    wizard.cfg.source_count = count - 1;
++
++    int remaining = wizard.cfg.source_count;
++    for (int j = idx; j < remaining; ++j) {
++        ui_apply_source_spec_to_runtime(sim, j, &wizard.cfg.source_configs[j]);
++    }
++    for (int j = remaining; j < MAX_SRC; ++j) {
++        Source* s = &sim->sources[j];
++        ui_source_free_expression(s);
++        s->active = 0;
++        s->expr_text[0] = '\0';
++    }
++
++    if (app) {
++        if (remaining <= 0) {
++            app->selected_source = -1;
++        } else if (app->selected_source >= remaining) {
++            app->selected_source = remaining - 1;
++        }
++        ui_log_add(app, "Deleted source #%d", idx);
++    }
++}
++
+ /* Scene overview panel ---------------------------------------------------- */
+ static void draw_scene_panel(const SimulationState* sim, const WizardState& wizard) {
+-    if (!ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen)) return;
++    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++    if (!ImGui::CollapsingHeader("Scene")) return;
+ 
+     ImGui::Indent();
+     if (sim) {
+@@ -174,77 +298,215 @@ static void draw_scene_panel(const SimulationState* sim, const WizardState& wiza
+ /* Sources panel ----------------------------------------------------------- */
+ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppState* app) {
+     if (!sim || !app) return;
+-    if (!ImGui::CollapsingHeader("Sources", ImGuiTreeNodeFlags_DefaultOpen)) return;
++    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++    if (!ImGui::CollapsingHeader("Sources")) return;
+ 
+     ImGui::Indent();
+-    int max_src = MAX_SRC;
+-    if (wizard.cfg.source_count > max_src) {
+-        wizard.cfg.source_count = max_src;
++    int count = wizard.cfg.source_count;
++    if (count < 0) count = 0;
++    if (count > MAX_SRC) count = MAX_SRC;
++    wizard.cfg.source_count = count;
++
++    if (count == 0) {
++        app->selected_source = -1;
++    } else {
++        if (app->selected_source < 0) app->selected_source = 0;
++        if (app->selected_source >= count) app->selected_source = count - 1;
++    }
++
++    ImGui::Text("Configured: %d / %d", count, MAX_SRC);
++    ImGui::SameLine();
++    bool at_limit = (count >= MAX_SRC);
++    if (at_limit) ImGui::BeginDisabled();
++    if (ImGui::Button("+ New Source")) {
++        create_new_source(wizard, sim, app);
++        count = wizard.cfg.source_count;
++    }
++    if (at_limit) {
++        ImGui::EndDisabled();
++        ImGui::SameLine();
++        ImGui::TextDisabled("Maximum reached");
+     }
+ 
+-    ImGui::Text("Configured: %d / %d", wizard.cfg.source_count, max_src);
+     ImGui::Separator();
+ 
+-    ImGui::TextUnformatted("Source list");
+-    ImGui::Indent();
+-    for (int i = 0; i < max_src; ++i) {
+-        Source& s = sim->sources[i];
+-        bool active = (s.active != 0);
+-        char label[64];
+-        std::snprintf(label, sizeof(label), "#%d %s", i, source_type_label(s.type));
+-        bool selected = (app->selected_source == i);
+-        if (ImGui::Selectable(label, selected)) {
+-            app->selected_source = i;
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Checkbox("##on", &active)) {
+-            s.active = active ? 1 : 0;
+-            if (i < wizard.cfg.source_count) {
+-                wizard.cfg.source_configs[i].active = s.active;
++    if (count == 0) {
++        ImGui::TextDisabled("No sources configured. Add a source to begin.");
++    } else {
++        int pending_delete = -1;
++        for (int i = 0; i < count; ++i) {
++            ImGui::PushID(i);
++            Source& s = sim->sources[i];
++            SourceConfigSpec& spec = wizard.cfg.source_configs[i];
++
++            ImGui::Text("#%d %s", i, source_type_label(s.type));
++            ImGui::SameLine();
++            if (s.type == SRC_CW || s.type == SRC_EXPR) {
++                ImGui::TextDisabled("@ %.3f GHz", s.freq * 1e-9);
++            } else {
++                ImGui::TextDisabled("Pulse");
++            }
++            ImGui::TextDisabled("Pos: (%.3f, %.3f)  Grid: (%d,%d)",
++                                spec.x, spec.y, s.ix, s.iy);
++
++            bool active = (s.active != 0);
++            if (ImGui::Checkbox("Active", &active)) {
++                s.active = active ? 1 : 0;
++                spec.active = s.active;
++            }
++            ImGui::SameLine();
++            if (ImGui::Button("Edit")) {
++                app->selected_source = i;
+             }
++            ImGui::SameLine();
++            if (ImGui::Button("Delete")) {
++                ImGui::OpenPopup("DeleteSourceConfirm");
++            }
++
++            if (ImGui::BeginPopupModal("DeleteSourceConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
++                ImGui::Text("Delete source #%d?", i);
++                ImGui::Separator();
++                if (ImGui::Button("Delete", ImVec2(120, 0))) {
++                    pending_delete = i;
++                    ImGui::CloseCurrentPopup();
++                }
++                ImGui::SameLine();
++                if (ImGui::Button("Cancel", ImVec2(120, 0))) {
++                    ImGui::CloseCurrentPopup();
++                }
++                ImGui::EndPopup();
++            }
++
++            ImGui::PopID();
++            ImGui::Separator();
++        }
++        if (pending_delete >= 0) {
++            delete_source(wizard, sim, app, pending_delete);
++            count = wizard.cfg.source_count;
++            pending_delete = -1;
+         }
+-        ImGui::SameLine();
+-        ImGui::Text("%s", source_field_label(s.field));
+     }
+-    ImGui::Unindent();
+ 
++    ImGui::TextUnformatted("Source Editor");
++    ImGui::Indent();
+     int idx = app->selected_source;
+-    if (idx >= 0 && idx < max_src) {
+-        ImGui::Separator();
+-        ImGui::Text("Selected source #%d", idx);
+-        ImGui::Indent();
+-
++    if (idx < 0 || idx >= wizard.cfg.source_count) {
++        ImGui::TextDisabled("Select a source from the list to edit its properties.");
++    } else {
+         Source& s = sim->sources[idx];
++        SourceConfigSpec& spec = wizard.cfg.source_configs[idx];
+ 
+-        int type_idx = (int)s.type;
+-        const char* types[] = { "CW", "Gaussian", "Ricker", "Expr" };
+-        if (ImGui::Combo("Type", &type_idx, types, IM_ARRAYSIZE(types))) {
+-            s.type = (SourceType)type_idx;
+-            source_reparam(&s);
++        const char* type_items[] = { "CW", "Gaussian", "Ricker", "Expression" };
++        int type_idx = (int)spec.type;
++        if (type_idx < 0 || type_idx >= (int)IM_ARRAYSIZE(type_items)) type_idx = 0;
++        if (ImGui::Combo("Type", &type_idx, type_items, IM_ARRAYSIZE(type_items))) {
++            spec.type = (SourceType)type_idx;
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
+         }
+ 
+-        int field_idx = (int)s.field;
+         const char* field_items[] = { "Ez", "Hx", "Hy" };
++        int field_idx = (int)spec.field;
++        if (field_idx < 0 || field_idx >= (int)IM_ARRAYSIZE(field_items)) field_idx = 0;
+         if (ImGui::Combo("Field", &field_idx, field_items, IM_ARRAYSIZE(field_items))) {
+-            s.field = (SourceFieldType)field_idx;
++            spec.field = (SourceFieldType)field_idx;
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
+         }
+ 
+-        double amp = s.amp;
++        float norm_x = (float)spec.x;
++        if (ImGui::SliderFloat("X (0-1)", &norm_x, 0.0f, 1.0f)) {
++            spec.x = clamp01((double)norm_x);
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
++        }
++        float norm_y = (float)spec.y;
++        if (ImGui::SliderFloat("Y (0-1)", &norm_y, 0.0f, 1.0f)) {
++            spec.y = clamp01((double)norm_y);
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
++        }
++        ImGui::TextDisabled("Grid cell: (%d,%d)", s.ix, s.iy);
++
++        double amp = spec.amp;
+         if (ImGui::InputDouble("Amplitude", &amp, 0.1, 1.0, "%.3f")) {
+-            s.amp = amp;
++            spec.amp = amp;
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
+         }
+-        double freq = s.freq;
+-        if (ImGui::InputDouble("Frequency (Hz)", &freq, 1e6, 1e8, "%.3e")) {
+-            if (freq > 0.0) {
+-                s.freq = freq;
+-                source_reparam(&s);
++
++        double freq_ghz = spec.freq * 1e-9;
++        if (ImGui::InputDouble("Frequency (GHz)", &freq_ghz, 0.1, 1.0, "%.3f")) {
++            if (freq_ghz < 0.0) freq_ghz = 0.0;
++            spec.freq = freq_ghz * 1e9;
++            ui_apply_source_spec_to_runtime(sim, idx, &spec);
++        }
++        ImGui::SameLine();
++        ImGui::TextDisabled("(%.3e Hz)", spec.freq);
++
++        if (spec.type == SRC_GAUSS_PULSE || spec.type == SRC_RICKER) {
++            double sigma = spec.sigma2;
++            if (ImGui::InputDouble("Sigma^2 (cells^2)", &sigma, 0.1, 1.0, "%.3f")) {
++                if (sigma < 0.1) sigma = 0.1;
++                spec.sigma2 = sigma;
++                ui_apply_source_spec_to_runtime(sim, idx, &spec);
+             }
++        } else {
++            ImGui::TextDisabled("Sigma^2 applies to Gaussian/Ricker pulses.");
+         }
+ 
+-        ImGui::Text("Position: (%d,%d)", s.ix, s.iy);
+-        ImGui::Unindent();
++        if (spec.type == SRC_EXPR) {
++            if (ImGui::InputTextMultiline("Expression",
++                                          spec.expr,
++                                          SOURCE_EXPR_MAX_LEN,
++                                          ImVec2(-1.0f, ImGui::GetTextLineHeight() * 4))) {
++                spec.expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
++                ui_apply_source_spec_to_runtime(sim, idx, &spec);
++            }
++            ImGui::TextDisabled("Variables: t (s), amp, freq, pi");
++            ImGui::TextDisabled("Examples:");
++            ImGui::BulletText("CW: amp * sin(2*pi*freq*t)");
++            ImGui::BulletText("Gaussian: amp * exp(-(t-1e-9)^2 / sigma2)");
++            ImGui::BulletText("AM: amp * sin(2*pi*freq*t) * (1 + 0.5*sin(2*pi*1e8*t))");
++
++            if (spec.expr[0] != '\0') {
++                char errbuf[128];
++                ExprProgram* prog = nullptr;
++                if (expr_compile(spec.expr, &prog, errbuf, (int)sizeof(errbuf))) {
++                    const int N = 128;
++                    float values[N];
++                    double period = (spec.freq > 0.0) ? (1.0 / spec.freq) : 1e-9;
++                    double t_max = (period > 0.0) ? 3.0 * period : 3e-9;
++                    double vmin = 0.0;
++                    double vmax = 0.0;
++                    bool first = true;
++                    for (int k = 0; k < N; ++k) {
++                        double t = t_max * (double)k / (double)(N - 1);
++                        double v = expr_eval(prog, t, spec.amp, spec.freq);
++                        values[k] = (float)v;
++                        if (first) {
++                            vmin = vmax = v;
++                            first = false;
++                        } else {
++                            if (v < vmin) vmin = v;
++                            if (v > vmax) vmax = v;
++                        }
++                    }
++                    float ymin = (float)vmin;
++                    float ymax = (float)vmax;
++                    if (ymin == ymax) {
++                        ymin -= 1.0f;
++                        ymax += 1.0f;
++                    }
++                    ImGui::PlotLines("Preview", values, N, 0, nullptr, ymin, ymax,
++                                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 5));
++                    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
++                                       "Expression compiled successfully");
++                    expr_free(prog);
++                } else {
++                    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f),
++                                       "Expression error: %s", errbuf);
++                }
++            }
++        }
+     }
+     ImGui::Unindent();
++    ImGui::Unindent();
+ }
+ 
+ /* Blocks panel ------------------------------------------------------------ */
+@@ -572,17 +834,12 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
+     (void)sim;
+     if (!app || !app->show_material_legend) return;
+ 
+-    ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f), ImGuiCond_FirstUseEver);
+-    ImGui::SetNextWindowPos(ImVec2(10.0f, 400.0f), ImGuiCond_FirstUseEver);
+-
+-    if (!ImGui::Begin("Material Legend", &app->show_material_legend)) {
+-        ImGui::End();
+-        return;
+-    }
++    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++    if (!ImGui::CollapsingHeader("Material Legend")) return;
+ 
+     ImGui::TextUnformatted("Materials in Scene:");
+     ImGui::Separator();
+-    ImGui::BeginChild("LegendList", ImVec2(0, -30.0f), true);
++    ImGui::BeginChild("LegendList", ImVec2(0.0f, 140.0f), true);
+ 
+     int mat_count = material_library_get_count();
+     for (int i = 0; i < mat_count; ++i) {
+@@ -607,16 +864,15 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
+         } else if (mat->type == MAT_TYPE_PMC) {
+             ImGui::TextDisabled("PMC");
+         } else {
+-            ImGui::TextDisabled("εᵣ=%.1f", mat->epsilon_r);
++            ImGui::TextDisabled("eps=%.1f", mat->epsilon_r);
+         }
+     }
+ 
+     ImGui::EndChild();
+-    ImGui::Separator();
+-    ImGui::TextDisabled("Legend uses library colors (not usage stats yet)");
+-    ImGui::End();
++    ImGui::TextDisabled("Legend uses library colors (usage stats coming soon)");
+ }
+ 
++
+ static void draw_resistance_circle(double r_norm) {
+     if (r_norm < 0.0) return;
+     double cx = r_norm / (1.0 + r_norm);
+@@ -1574,7 +1830,8 @@ static void draw_blocks_panel(WizardState& wizard,
+                               SimulationState* sim,
+                               AppState* app) {
+     (void)app;
+-    if (!ImGui::CollapsingHeader("Blocks", ImGuiTreeNodeFlags_DefaultOpen)) return;
++    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++    if (!ImGui::CollapsingHeader("Blocks")) return;
+ 
+     ImGui::Indent();
+     int count = wizard.cfg.material_rect_count;
+@@ -1622,7 +1879,8 @@ static void draw_blocks_panel(WizardState& wizard,
+ 
+ /* Probes panel ------------------------------------------------------------ */
+ static void draw_probes_panel(const SimulationState* sim) {
+-    if (!ImGui::CollapsingHeader("Probes", ImGuiTreeNodeFlags_DefaultOpen)) return;
++    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++    if (!ImGui::CollapsingHeader("Probes")) return;
+ 
+     ImGui::Indent();
+ #if EMWAVE_ENABLE_PORTS
+@@ -1685,7 +1943,7 @@ int main(int argc, char** argv) {
+ 
+     AppState app = {};
+     app.basic_mode = true;
+-    app.selected_source = 0;
++    app.selected_source = (wizard.cfg.source_count > 0) ? 0 : -1;
+     app.selected_block = 0;
+     app.placing_source = false;
+     app.placing_block = false;
+@@ -1789,6 +2047,10 @@ int main(int argc, char** argv) {
+     int current_colormap = 0;     // 0=Classic, 1=Viridis, 2=Plasma
+     int current_accent = 0;       // 0-5 accent palette index
+     SDL_Color viewport_clear_color = theme_viewport_clear_color(current_theme);
++    ImVec2 layout_full = ImVec2(0.0f, 0.0f);
++    float layout_bottom_h = 0.0f;
++    float layout_main_h = 0.0f;
++    ImVec2 layout_origin = ImVec2(0.0f, 0.0f);
+     bool auto_rescale = true;
+     bool hold_color = false;
+     bool hold_scope = false;
+@@ -2487,7 +2749,7 @@ int main(int argc, char** argv) {
+                                       ImGuiWindowFlags_NoBackground;
+         ImGui::Begin("RootLayout", nullptr, root_flags);
+ 
+-        ImVec2 full = ImGui::GetContentRegionAvail();
++        layout_full = ImGui::GetContentRegionAvail();
+         // Responsive proportions tuned for the 1920x1080 studio layout baseline
+         const float target_left_w = 300.0f;
+         const float target_right_w = 360.0f;
+@@ -2496,33 +2758,33 @@ int main(int argc, char** argv) {
+         const float min_main_h = 420.0f;
+ 
+         float width_needed = target_left_w + target_right_w + min_center_w;
+-        float width_scale = (width_needed > 0.0f && full.x < width_needed)
+-                                ? (full.x / width_needed)
++        float width_scale = (width_needed > 0.0f && layout_full.x < width_needed)
++                                ? (layout_full.x / width_needed)
+                                 : 1.0f;
+         float left_w = target_left_w * width_scale;
+         float right_w = target_right_w * width_scale;
+-        if (left_w + right_w > full.x) {
+-            float squeeze = (left_w + right_w > 0.0f) ? (full.x / (left_w + right_w)) : 1.0f;
++        if (left_w + right_w > layout_full.x) {
++            float squeeze = (left_w + right_w > 0.0f) ? (layout_full.x / (left_w + right_w)) : 1.0f;
+             left_w *= squeeze;
+             right_w *= squeeze;
+         }
+-        float center_w = ImMax(0.0f, full.x - left_w - right_w);
++        float center_w = ImMax(0.0f, layout_full.x - left_w - right_w);
+ 
+         float height_needed = target_bottom_h + min_main_h;
+-        float height_scale = (height_needed > 0.0f && full.y < height_needed)
+-                                 ? (full.y / height_needed)
++        float height_scale = (height_needed > 0.0f && layout_full.y < height_needed)
++                                 ? (layout_full.y / height_needed)
+                                  : 1.0f;
+-        float bottom_h = target_bottom_h * height_scale;
+-        float main_h = ImMax(0.0f, full.y - bottom_h);
++        layout_bottom_h = target_bottom_h * height_scale;
++        layout_main_h = ImMax(0.0f, layout_full.y - layout_bottom_h);
+ 
+-        ImVec2 origin = ImGui::GetCursorPos();
++        layout_origin = ImGui::GetCursorPos();
+         const ImVec4 column_bg = ImVec4(0.24f, 0.24f, 0.24f, 0.95f);
+         const ImVec4 bottom_bg = ImVec4(0.15f, 0.15f, 0.15f, 0.95f);
+ 
+         // Left column
+-        ImGui::SetCursorPos(origin);
++        ImGui::SetCursorPos(layout_origin);
+         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
+-        ImGui::BeginChild("LeftColumn", ImVec2(left_w, main_h), true);
++        ImGui::BeginChild("LeftColumn", ImVec2(left_w, layout_main_h), true);
+         bool first_left_panel = true;
+         auto left_spacing = [&]() {
+             if (!first_left_panel) {
+@@ -2548,13 +2810,17 @@ int main(int argc, char** argv) {
+             left_spacing();
+             draw_probes_panel(sim);
+         }
++        if (app.show_material_legend) {
++            left_spacing();
++            draw_material_legend(&app, sim);
++        }
+         ImGui::EndChild();
+         ImGui::PopStyleColor();
+ 
+         // Center viewport placeholder - keep border but let SDL field stay visible and interactive
+-        ImGui::SetCursorPos(ImVec2(origin.x + left_w, origin.y));
++        ImGui::SetCursorPos(ImVec2(layout_origin.x + left_w, layout_origin.y));
+         ImVec2 center_screen_pos = ImGui::GetCursorScreenPos();
+-        ImVec2 center_child_size(ImMax(1.0f, center_w), ImMax(1.0f, main_h));
++        ImVec2 center_child_size(ImMax(1.0f, center_w), ImMax(1.0f, layout_main_h));
+         ImGuiWindowFlags center_flags =
+             ImGuiWindowFlags_NoBackground |
+             ImGuiWindowFlags_NoScrollbar |
+@@ -2600,12 +2866,14 @@ int main(int argc, char** argv) {
+         }
+ 
+         // Right column (Simulation Controls + Wizard)
+-        ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
++        ImGui::SetCursorPos(ImVec2(layout_origin.x + left_w + center_w, layout_origin.y));
+         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
+-        ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
++        ImGui::BeginChild("RightColumn", ImVec2(right_w, layout_main_h), true);
+ 
+         // Simulation Controls
+-        if (app.show_run_panel && ImGui::CollapsingHeader("Simulation Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
++        if (app.show_run_panel) {
++            ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++            if (ImGui::CollapsingHeader("Simulation Controls")) {
+             // Control buttons
+             ImVec2 button_size(right_w * 0.45f, 0.0f);
+             if (ImGui::Button(paused ? "Resume" : "Pause", button_size)) {
+@@ -2730,35 +2998,44 @@ int main(int argc, char** argv) {
+                 app.show_grid_overlay = !app.show_grid_overlay;
+             }
+         }
++        }
+ 
+         // Interactive Tools section
+-        if (ImGui::CollapsingHeader("Interactive Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
++        ImGui::SetNextItemOpen(false, ImGuiCond_Once);
++        if (ImGui::CollapsingHeader("Interactive Tools")) {
+             ImGui::TextUnformatted("Source Placement");
+             ImGui::Indent();
+-            int max_src = MAX_SRC;
+-            if (app.selected_source < 0) app.selected_source = 0;
+-            if (app.selected_source >= max_src) app.selected_source = max_src - 1;
+-            char current_src_label[64];
+-            const Source& ss = sim->sources[app.selected_source];
+-            std::snprintf(current_src_label, sizeof(current_src_label),
+-                          "#%d (%s)", app.selected_source,
+-                          source_type_label(ss.type));
+-            if (ImGui::BeginCombo("Source", current_src_label)) {
+-                for (int i = 0; i < max_src; ++i) {
+-                    const Source& s = sim->sources[i];
+-                    char label[64];
+-                    std::snprintf(label, sizeof(label), "#%d (%s, %s)", i,
+-                                  source_type_label(s.type),
+-                                  s.active ? "on" : "off");
+-                    bool selected = (i == app.selected_source);
+-                    if (ImGui::Selectable(label, selected)) {
+-                        app.selected_source = i;
++            int selectable_sources = wizard.cfg.source_count;
++            if (selectable_sources <= 0) {
++                app.selected_source = -1;
++                ImGui::TextDisabled("No sources available");
++            } else {
++                if (app.selected_source < 0) app.selected_source = 0;
++                if (app.selected_source >= selectable_sources) {
++                    app.selected_source = selectable_sources - 1;
++                }
++                const Source& ss = sim->sources[app.selected_source];
++                char current_src_label[64];
++                std::snprintf(current_src_label, sizeof(current_src_label),
++                              "#%d (%s)", app.selected_source,
++                              source_type_label(ss.type));
++                if (ImGui::BeginCombo("Source", current_src_label)) {
++                    for (int i = 0; i < selectable_sources; ++i) {
++                        const Source& s = sim->sources[i];
++                        char label[64];
++                        std::snprintf(label, sizeof(label), "#%d (%s, %s)", i,
++                                      source_type_label(s.type),
++                                      s.active ? "on" : "off");
++                        bool selected = (i == app.selected_source);
++                        if (ImGui::Selectable(label, selected)) {
++                            app.selected_source = i;
++                        }
++                        if (selected) ImGui::SetItemDefaultFocus();
+                     }
+-                    if (selected) ImGui::SetItemDefaultFocus();
++                    ImGui::EndCombo();
+                 }
+-                ImGui::EndCombo();
++                ImGui::Checkbox("Click to move", &app.placing_source);
+             }
+-            ImGui::Checkbox("Click to move", &app.placing_source);
+             ImGui::Unindent();
+ 
+             ImGui::Separator();
+@@ -2783,6 +3060,7 @@ int main(int argc, char** argv) {
+                 ImGui::Separator();
+                 ImGui::Text("Last click: (%d,%d)", app.last_click_i, app.last_click_j);
+             }
++            }
+         }
+ 
+         // Embedded Wizard UI
+@@ -2834,9 +3112,9 @@ int main(int argc, char** argv) {
+         ImGui::PopStyleColor();
+ 
+         // Bottom strip with tabs for Scope and Log
+-        ImGui::SetCursorPos(ImVec2(origin.x, origin.y + main_h));
++        ImGui::SetCursorPos(ImVec2(layout_origin.x, layout_origin.y + layout_main_h));
+         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.09f, 1.00f));
+-        ImGui::BeginChild("BottomStrip", ImVec2(full.x, bottom_h), true);
++        ImGui::BeginChild("BottomStrip", ImVec2(layout_full.x, layout_bottom_h), true);
+             if (ImGui::BeginTabBar("BottomTabs", ImGuiTabBarFlags_None)) {
+                 if (ImGui::BeginTabItem("Scope")) {
+                     if (scope.y && scope.n > 0) {
+@@ -2872,7 +3150,7 @@ int main(int argc, char** argv) {
+                         }
+                     }
+ 
+-                    ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, bottom_h - 60.0f);
++                    ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, layout_bottom_h - 60.0f);
+                     ImGui::PlotLines("Probe Ez(center)", values, max_samples, 0, nullptr, ymin, ymax, plot_size);
+                 } else {
+                     ImGui::TextUnformatted("Scope: no data available");
+@@ -3295,7 +3573,6 @@ int main(int argc, char** argv) {
+             SDL_RenderSetViewport(render->renderer, NULL);
+         }
+ 
+-        draw_material_legend(&app, sim);
+         draw_sparameter_window(&app);
+         draw_smith_chart(&app);
+ 

@@ -48,6 +48,8 @@ struct AppState {
     bool show_sources_panel;
     bool show_blocks_panel;
     bool show_run_panel;
+    bool show_grid_panel;
+    bool show_run_settings_panel;
     bool show_wizard_panel;
     bool show_probes_panel;
     bool show_log_panel;
@@ -93,6 +95,8 @@ struct AppState {
     bool smith_show_vswr_circles;
     double smith_z0;
     int smith_freq_index;
+    bool request_rebootstrap;
+    char rebootstrap_message[128];
 };
 
 struct WizardState {
@@ -144,7 +148,8 @@ static const char* source_field_label(SourceFieldType f) {
 
 /* Scene overview panel ---------------------------------------------------- */
 static void draw_scene_panel(const SimulationState* sim, const WizardState& wizard) {
-    if (!ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Scene")) return;
 
     ImGui::Indent();
     if (sim) {
@@ -171,10 +176,62 @@ static void draw_scene_panel(const SimulationState* sim, const WizardState& wiza
     ImGui::Unindent();
 }
 
+static void draw_grid_panel(WizardState* wizard, AppState* app) {
+    if (!wizard) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Grid & Domain")) return;
+
+    ImGui::Indent();
+    int nx = wizard->cfg.nx;
+    if (ImGui::InputInt("Cells X (nx)", &nx)) {
+        if (nx < 8) nx = 8;
+        wizard->cfg.nx = nx;
+    }
+    int ny = wizard->cfg.ny;
+    if (ImGui::InputInt("Cells Y (ny)", &ny)) {
+        if (ny < 8) ny = 8;
+        wizard->cfg.ny = ny;
+    }
+
+    double lx = wizard->cfg.lx;
+    if (ImGui::InputDouble("Width (meters)", &lx, 0.01, 0.1, "%.3f")) {
+        if (lx < 1e-3) lx = 1e-3;
+        wizard->cfg.lx = lx;
+    }
+    double ly = wizard->cfg.ly;
+    if (ImGui::InputDouble("Height (meters)", &ly, 0.01, 0.1, "%.3f")) {
+        if (ly < 1e-3) ly = 1e-3;
+        wizard->cfg.ly = ly;
+    }
+
+    float cfl = (float)wizard->cfg.cfl_safety;
+    if (ImGui::SliderFloat("CFL Safety", &cfl, 0.1f, 0.99f, "%.2f")) {
+        wizard->cfg.cfl_safety = (double)cfl;
+    }
+
+    const char* boundary_items[] = {"CPML", "Mur"};
+    int boundary_idx = (wizard->cfg.boundary_mode == SIM_BOUNDARY_MUR) ? 1 : 0;
+    if (ImGui::Combo("Boundary", &boundary_idx, boundary_items, IM_ARRAYSIZE(boundary_items))) {
+        wizard->cfg.boundary_mode = (boundary_idx == 1) ? SIM_BOUNDARY_MUR : SIM_BOUNDARY_CPML;
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Apply Grid Changes & Restart")) {
+        if (app) {
+            app->request_rebootstrap = true;
+            std::snprintf(app->rebootstrap_message,
+                          sizeof(app->rebootstrap_message),
+                          "Rebooted after grid/domain update");
+        }
+    }
+    ImGui::Unindent();
+}
+
 /* Sources panel ----------------------------------------------------------- */
 static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppState* app) {
     if (!sim || !app) return;
-    if (!ImGui::CollapsingHeader("Sources", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Sources")) return;
 
     ImGui::Indent();
     int max_src = MAX_SRC;
@@ -243,6 +300,64 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
 
         ImGui::Text("Position: (%d,%d)", s.ix, s.iy);
         ImGui::Unindent();
+    }
+    ImGui::Unindent();
+}
+
+static void draw_run_settings_panel(WizardState* wizard, AppState* app) {
+    if (!wizard) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Run Settings")) return;
+
+    ImGui::Indent();
+    const char* run_modes[] = {"Fixed steps", "Sweep"};
+    int run_mode_idx = (wizard->cfg.run_mode == SIM_RUN_MODE_SWEEP) ? 1 : 0;
+    if (ImGui::Combo("Run Mode", &run_mode_idx, run_modes, IM_ARRAYSIZE(run_modes))) {
+        wizard->cfg.run_mode = (run_mode_idx == 1) ? SIM_RUN_MODE_SWEEP : SIM_RUN_MODE_FIXED_STEPS;
+    }
+
+    if (wizard->cfg.run_mode == SIM_RUN_MODE_FIXED_STEPS) {
+        ImGui::InputInt("Run steps", &wizard->cfg.run_steps);
+        if (wizard->cfg.run_steps < 1) wizard->cfg.run_steps = 1;
+    } else {
+        ImGui::InputInt("Sweep points", &wizard->cfg.sweep_points);
+        if (wizard->cfg.sweep_points < 1) wizard->cfg.sweep_points = 1;
+        ImGui::InputDouble("Sweep start (Hz)", &wizard->cfg.sweep_start_hz, 1e6, 1e8, "%.3e");
+        if (wizard->cfg.sweep_start_hz < 1.0) wizard->cfg.sweep_start_hz = 1.0;
+        ImGui::InputDouble("Sweep stop (Hz)", &wizard->cfg.sweep_stop_hz, 1e6, 1e8, "%.3e");
+        if (wizard->cfg.sweep_stop_hz < wizard->cfg.sweep_start_hz) {
+            wizard->cfg.sweep_stop_hz = wizard->cfg.sweep_start_hz;
+        }
+        ImGui::InputInt("Steps / point", &wizard->cfg.sweep_steps_per_point);
+        if (wizard->cfg.sweep_steps_per_point < 1) wizard->cfg.sweep_steps_per_point = 1;
+    }
+
+    if (wizard->advanced) {
+        ImGui::Separator();
+        bool profile = wizard->cfg.enable_profile != 0;
+        if (ImGui::Checkbox("Enable profiling", &profile)) {
+            wizard->cfg.enable_profile = profile ? 1 : 0;
+        }
+        bool probe_log = wizard->cfg.enable_probe_log != 0;
+        if (ImGui::Checkbox("Enable probe log", &probe_log)) {
+            wizard->cfg.enable_probe_log = probe_log ? 1 : 0;
+        }
+        ImGui::InputText("Probe log path",
+                         wizard->cfg.probe_log_path,
+                         SIM_PROBE_LOG_PATH_MAX);
+    } else {
+        ImGui::Separator();
+        ImGui::TextDisabled("Switch to Advanced mode for profiling/logging options.");
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Apply Run Settings & Restart")) {
+        if (app) {
+            app->request_rebootstrap = true;
+            std::snprintf(app->rebootstrap_message,
+                          sizeof(app->rebootstrap_message),
+                          "Rebooted after run settings update");
+        }
     }
     ImGui::Unindent();
 }
@@ -570,19 +685,15 @@ static void draw_material_browser(AppState* app, int* active_material_id) {
 
 static void draw_material_legend(AppState* app, const SimulationState* sim) {
     (void)sim;
-    if (!app || !app->show_material_legend) return;
+    if (!app) return;
+    if (!app->show_material_legend) return;
 
-    ImGui::SetNextWindowSize(ImVec2(300.0f, 400.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(10.0f, 400.0f), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Material Legend", &app->show_material_legend)) {
-        ImGui::End();
-        return;
-    }
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Material Legend")) return;
 
     ImGui::TextUnformatted("Materials in Scene:");
     ImGui::Separator();
-    ImGui::BeginChild("LegendList", ImVec2(0, -30.0f), true);
+    ImGui::BeginChild("LegendList", ImVec2(0.0f, 140.0f), true);
 
     int mat_count = material_library_get_count();
     for (int i = 0; i < mat_count; ++i) {
@@ -612,9 +723,7 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
     }
 
     ImGui::EndChild();
-    ImGui::Separator();
-    ImGui::TextDisabled("Legend uses library colors (not usage stats yet)");
-    ImGui::End();
+    ImGui::TextDisabled("Legend uses library colors (usage stats coming soon)");
 }
 
 static void draw_resistance_circle(double r_norm) {
@@ -1574,7 +1683,8 @@ static void draw_blocks_panel(WizardState& wizard,
                               SimulationState* sim,
                               AppState* app) {
     (void)app;
-    if (!ImGui::CollapsingHeader("Blocks", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Blocks")) return;
 
     ImGui::Indent();
     int count = wizard.cfg.material_rect_count;
@@ -1622,7 +1732,8 @@ static void draw_blocks_panel(WizardState& wizard,
 
 /* Probes panel ------------------------------------------------------------ */
 static void draw_probes_panel(const SimulationState* sim) {
-    if (!ImGui::CollapsingHeader("Probes", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+    if (!ImGui::CollapsingHeader("Probes")) return;
 
     ImGui::Indent();
 #if EMWAVE_ENABLE_PORTS
@@ -1638,9 +1749,6 @@ static void draw_probes_panel(const SimulationState* sim) {
         ImGui::Text("Port %d: x=%d, y0=%d, y1=%d, n=%d", p, port.x, port.y0, port.y1, port.n);
     }
 #else
-    if (!ImGui::CollapsingHeader("Probes", ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
     ImGui::TextUnformatted("Ports are disabled in this build.");
 #endif
     ImGui::Unindent();
@@ -1697,6 +1805,8 @@ int main(int argc, char** argv) {
     app.show_sources_panel = true;
     app.show_blocks_panel = true;
     app.show_run_panel = true;
+    app.show_grid_panel = true;
+    app.show_run_settings_panel = true;
     app.show_wizard_panel = false;  // Wizard UI removed - use F5/F6 presets + direct manipulation
     app.show_probes_panel = true;
     app.show_log_panel = true;
@@ -1732,6 +1842,8 @@ int main(int argc, char** argv) {
     app.smith_show_vswr_circles = true;
     app.smith_z0 = 50.0;
     app.smith_freq_index = 0;
+    app.request_rebootstrap = false;
+    app.rebootstrap_message[0] = '\0';
     ui_log_add(&app, "Simulation started");
 
     int scale = 2;
@@ -2459,11 +2571,13 @@ int main(int argc, char** argv) {
         ImGui::Separator();
         ImGui::TextUnformatted("Panels");
         ImGui::Separator();
+        ImGui::MenuItem("Grid Settings", nullptr, &app.show_grid_panel);
         ImGui::MenuItem("Scene", nullptr, &app.show_scene_panel);
         ImGui::MenuItem("Sources", nullptr, &app.show_sources_panel);
         ImGui::MenuItem("Blocks", nullptr, &app.show_blocks_panel);
         ImGui::MenuItem("Probes", nullptr, &app.show_probes_panel);
         ImGui::MenuItem("Run Controls", nullptr, &app.show_run_panel);
+        ImGui::MenuItem("Run Settings", nullptr, &app.show_run_settings_panel);
         ImGui::EndMenu();
     }
 
@@ -2532,6 +2646,10 @@ int main(int argc, char** argv) {
             }
             first_left_panel = false;
         };
+        if (app.show_grid_panel) {
+            left_spacing();
+            draw_grid_panel(&wizard, &app);
+        }
         if (app.show_scene_panel) {
             left_spacing();
             draw_scene_panel(sim, wizard);
@@ -2547,6 +2665,10 @@ int main(int argc, char** argv) {
         if (app.show_probes_panel) {
             left_spacing();
             draw_probes_panel(sim);
+        }
+        if (app.show_material_legend) {
+            left_spacing();
+            draw_material_legend(&app, sim);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -2605,7 +2727,9 @@ int main(int argc, char** argv) {
         ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
 
         // Simulation Controls
-        if (app.show_run_panel && ImGui::CollapsingHeader("Simulation Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (app.show_run_panel) {
+            ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+            if (ImGui::CollapsingHeader("Simulation Controls")) {
             // Control buttons
             ImVec2 button_size(right_w * 0.45f, 0.0f);
             if (ImGui::Button(paused ? "Resume" : "Pause", button_size)) {
@@ -2729,10 +2853,16 @@ int main(int argc, char** argv) {
             if (ImGui::Button(app.show_grid_overlay ? "Hide grid" : "Show grid")) {
                 app.show_grid_overlay = !app.show_grid_overlay;
             }
+            }
+        }
+        if (app.show_run_settings_panel) {
+            ImGui::Spacing();
+            draw_run_settings_panel(&wizard, &app);
         }
 
         // Interactive Tools section
-        if (ImGui::CollapsingHeader("Interactive Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+        if (ImGui::CollapsingHeader("Interactive Tools")) {
             ImGui::TextUnformatted("Source Placement");
             ImGui::Indent();
             int max_src = MAX_SRC;
@@ -2818,14 +2948,25 @@ int main(int argc, char** argv) {
             ImGui::PopID();
 
             // Handle wizard apply (rebootstrap simulation)
-            if (apply_wizard) {
+            if (apply_wizard || app.request_rebootstrap) {
+                const char* restart_msg =
+                    apply_wizard ? "Rebooted simulation from wizard config"
+                                 : ((app.rebootstrap_message[0] != '\0')
+                                        ? app.rebootstrap_message
+                                        : "Rebooted simulation");
                 if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
                     width = sim->nx * scale;
                     height = sim->ny * scale;
                     if (width < 1920) width = 1920;
                     if (height < 1080) height = 1080;
                     SDL_SetWindowSize(render->window, width, height);
-                    ui_log_add(&app, "Rebooted simulation from wizard config");
+                    ui_log_add(&app, "%s", restart_msg);
+                } else {
+                    ui_log_add(&app, "Failed to rebootstrap simulation");
+                }
+                if (app.request_rebootstrap) {
+                    app.request_rebootstrap = false;
+                    app.rebootstrap_message[0] = '\0';
                 }
             }
         }
@@ -3295,7 +3436,6 @@ int main(int argc, char** argv) {
             SDL_RenderSetViewport(render->renderer, NULL);
         }
 
-        draw_material_legend(&app, sim);
         draw_sparameter_window(&app);
         draw_smith_chart(&app);
 

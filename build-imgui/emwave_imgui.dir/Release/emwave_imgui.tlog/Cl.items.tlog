@@ -1,0 +1,12 @@
+C:\projects\emwave-c\third_party\imgui\imgui.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui.obj
+C:\projects\emwave-c\third_party\imgui\imgui_draw.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui_draw.obj
+C:\projects\emwave-c\third_party\imgui\imgui_widgets.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui_widgets.obj
+C:\projects\emwave-c\third_party\imgui\imgui_tables.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui_tables.obj
+C:\projects\emwave-c\third_party\imgui\backends\imgui_impl_sdl2.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui_impl_sdl2.obj
+C:\projects\emwave-c\third_party\imgui\backends\imgui_impl_sdlrenderer2.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\imgui_impl_sdlrenderer2.obj
+C:\projects\emwave-c\src\app\main_imgui.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\main_imgui.obj
+C:\projects\emwave-c\src\ui\ui_controls.c;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\ui_controls.obj
+C:\projects\emwave-c\src\ui\ui_render.c;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\ui_render.obj
+C:\projects\emwave-c\src\ui\ui_layout.c;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\ui_layout.obj
+C:\projects\emwave-c\third_party\implot-0.16\implot.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\implot.obj
+C:\projects\emwave-c\third_party\implot-0.16\implot_items.cpp;C:\projects\emwave-c\build-imgui\emwave_imgui.dir\Release\implot_items.obj
