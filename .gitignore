@@ -14,6 +14,7 @@ cmake_install.cmake
 *.pdb
 
 imgui.ini
+nul
 
 # generated demo frames & bulk images
 frame_*.bmp
