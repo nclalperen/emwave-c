@@ -419,8 +419,12 @@ RenderContext* render_init(const char* title, int width, int height) {
         return NULL;
     }
 
-    ctx->window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                   width, height, SDL_WINDOW_SHOWN);
+    ctx->window = SDL_CreateWindow(title,
+                                   SDL_WINDOWPOS_CENTERED,
+                                   SDL_WINDOWPOS_CENTERED,
+                                   width,
+                                   height,
+                                   SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!ctx->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         free(ctx);
@@ -428,6 +432,8 @@ RenderContext* render_init(const char* title, int width, int height) {
         SDL_Quit();
         return NULL;
     }
+
+    SDL_SetWindowMinimumSize(ctx->window, 1280, 720);
 
     ctx->renderer = SDL_CreateRenderer(ctx->window, -1, SDL_RENDERER_ACCELERATED);
     if (!ctx->renderer) {
@@ -438,6 +444,9 @@ RenderContext* render_init(const char* title, int width, int height) {
         SDL_Quit();
         return NULL;
     }
+
+    ctx->offset_x = 0.0f;
+    ctx->offset_y = 0.0f;
 
     const char* bundled_relative_font = "assets/fonts/DejaVuSans.ttf";
     char* base_path = SDL_GetBasePath();
@@ -535,6 +544,8 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state,
                         ColorMapMode mode, double vmax) {
     if (!ctx || !state) return 0.0;
     SDL_Rect pixel = {0, 0, ctx->scale, ctx->scale};
+    int offset_x = (int)lround(ctx->offset_x);
+    int offset_y = (int)lround(ctx->offset_y);
     double field_max = 0.0;
 
     for (int i = 0; i < state->nx; ++i) {
@@ -558,8 +569,8 @@ static double draw_grid(RenderContext* ctx, const SimulationState* state,
                 c = (SDL_Color){120, 180, 200, 255};
             }
             SDL_SetRenderDrawColor(ctx->renderer, c.r, c.g, c.b, c.a);
-            pixel.x = i * ctx->scale;
-            pixel.y = j * ctx->scale;
+            pixel.x = i * ctx->scale + offset_x;
+            pixel.y = j * ctx->scale + offset_y;
             SDL_RenderFillRect(ctx->renderer, &pixel);
         }
     }
@@ -581,10 +592,12 @@ void render_sources(RenderContext* ctx, const Source* sources) {
     if (!ctx || !sources) return;
     SDL_Color accent = theme_palette()->primary;
     SDL_SetRenderDrawColor(ctx->renderer, accent.r, accent.g, accent.b, accent.a);
+    int offset_x = (int)lround(ctx->offset_x);
+    int offset_y = (int)lround(ctx->offset_y);
     for (int k = 0; k < MAX_SRC; ++k) {
         if (!sources[k].active) continue;
-        int x = sources[k].ix * ctx->scale;
-        int y = sources[k].iy * ctx->scale;
+        int x = sources[k].ix * ctx->scale + offset_x;
+        int y = sources[k].iy * ctx->scale + offset_y;
         SDL_RenderDrawLine(ctx->renderer, x - 4, y, x + 4, y);
         SDL_RenderDrawLine(ctx->renderer, x, y - 4, x, y + 4);
     }

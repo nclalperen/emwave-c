@@ -1081,6 +1081,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -1568,6 +1570,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -2050,6 +2054,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -2426,6 +2432,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -2826,6 +2834,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -3202,6 +3212,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -3267,6 +3279,8 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/sbin/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/VC/vcpackages/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/TestWindow/"
@@ -3309,6 +3323,8 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/sbin/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/VC/vcpackages/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/TestWindow/"
@@ -3351,6 +3367,8 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/sbin/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/VC/vcpackages/"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/TestWindow/"
@@ -3408,6 +3426,12 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.com"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.exe"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.com"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.exe"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc"
@@ -3534,6 +3558,12 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.com"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.exe"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.com"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.exe"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc"
@@ -3660,6 +3690,12 @@ events:
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.com"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc.exe"
       - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli/rc"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.com"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc.exe"
+      - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2/rc"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.com"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc.exe"
       - "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.43.34808/bin/Hostx64/x64/rc"
@@ -3689,6 +3725,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -3809,6 +3847,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"
@@ -4400,6 +4440,8 @@ events:
     search_context:
       CMAKE_PROGRAM_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/brotli"
+        - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/tools/bzip2"
       CMAKE_PREFIX_PATH:
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows"
         - "C:/projects/emwave-c/build-imgui/vcpkg_installed/x64-windows/debug"

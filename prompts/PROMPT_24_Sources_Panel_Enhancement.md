@@ -40,17 +40,17 @@ Transform the Sources panel from a basic display into a **full source editor** w
 
 **UI Layout:**
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Sources                              ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ Sources                              
+
 
 Source 0: CW @ 2.400 GHz
   Position: (0.25, 0.50)
-  [✓ Active] [✎ Edit] [🗑 Delete]
+  [ Active] [ Edit] [ Delete]
 
 Source 1: Gaussian Pulse
   Position: (0.75, 0.50)
-  [  Inactive] [✎ Edit] [🗑 Delete]
+  [  Inactive] [ Edit] [ Delete]
 
 [+ New Source]
 ```
@@ -89,14 +89,14 @@ Source 1: Gaussian Pulse
 
 **UI Layout:**
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Edit Source 0                        ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-Type: [CW ▼]
+ Edit Source 0                        
+
+
+Type: [CW ]
 Options: CW | Gaussian | Ricker | Expression
 
-Field Component: [Ez ▼]
+Field Component: [Ez ]
 Options: Ez | Hx | Hy
 
 Position (normalized 0-1):
@@ -107,7 +107,7 @@ Amplitude: [1.0     ]
 
 Frequency: [2.400e9 ] Hz  (2.400 GHz)
 
-Sigma² (pulse width): [1.0     ]
+Sigma (pulse width): [1.0     ]
   (for Gaussian/Ricker types)
 
 [Apply Changes] [Cancel]
@@ -155,11 +155,11 @@ Sigma² (pulse width): [1.0     ]
    ImGui::TextDisabled("(%.3e Hz)", sources[i].freq);
    ```
 
-5. **Conditional Sigma² Input:**
+5. **Conditional Sigma Input:**
    - Only show for Gaussian/Ricker types:
    ```cpp
    if (sources[i].type == SRC_GAUSS_PULSE || sources[i].type == SRC_RICKER) {
-       ImGui::InputDouble("Sigma²", &sources[i].sigma2, 0.1, 1.0);
+       ImGui::InputDouble("Sigma", &sources[i].sigma2, 0.1, 1.0);
    }
    ```
 
@@ -173,22 +173,22 @@ Sigma² (pulse width): [1.0     ]
 
 **UI Layout:**
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Expression Editor                    ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ Expression Editor                    
+
 
 Expression (C-like syntax):
-┌────────────────────────────────────────┐
-│ amp * sin(2*pi*freq*t)                 │
-│   * exp(-(t - 1e-9)^2 / sigma2)        │
-│                                        │
-└────────────────────────────────────────┘
+
+ amp * sin(2*pi*freq*t)                 
+   * exp(-(t - 1e-9)^2 / sigma2)        
+                                        
+
 
 Available Variables:
   t      - Time (seconds)
   amp    - Amplitude
   freq   - Frequency (Hz)
-  pi     - π (3.14159...)
+  pi     -  (3.14159...)
 
 Example Expressions:
   CW: amp * sin(2*pi*freq*t)
@@ -196,14 +196,14 @@ Example Expressions:
   Modulated: amp * sin(2*pi*freq*t) * (1 + 0.5*sin(2*pi*1e8*t))
 
 Preview (3 periods):
-┌────────────────────────────────────────┐
-│  1.0┤     ╱╲    ╱╲    ╱╲               │
-│  0.0┤────╱──╲──╱──╲──╱──╲──            │
-│ -1.0┤        ╲╱    ╲╱    ╲╱             │
-│     └────────────────────> Time (ns)   │
-└────────────────────────────────────────┘
 
-✓ Expression compiled successfully
+  1.0                            
+  0.0            
+ -1.0                             
+     > Time (ns)   
+
+
+ Expression compiled successfully
 
 [Apply Expression]
 ```
@@ -263,7 +263,7 @@ if (sources[i].expr[0] != '\0') {
                         ImVec2(-1.0f, ImGui::GetTextLineHeight() * 6));
 
         ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
-                          "✓ Expression compiled successfully");
+                          " Expression compiled successfully");
 
         expr_free(prog);
     } else {
@@ -361,7 +361,7 @@ static void delete_source(SimulationState* sim, int source_index);
 ```
 
 **Code to Extract from Wizard:**
-- Lines 1371-1415 in `wizard_sources_tab()` → expression editor logic
+- Lines 1371-1415 in `wizard_sources_tab()`  expression editor logic
 - Adapt to work with `sim->sources[i]` instead of `wizard.cfg.source_configs[i]`
 
 ---
@@ -373,7 +373,7 @@ static void delete_source(SimulationState* sim, int source_index);
 - [ ] Click "New Source" - source created with defaults
 - [ ] Source appears in list with "Active" checked
 - [ ] Click "Edit" - property editor opens
-- [ ] Change type from CW → Gaussian - sigma² field appears
+- [ ] Change type from CW  Gaussian - sigma field appears
 - [ ] Change frequency to 5.0 GHz - updates correctly
 - [ ] Uncheck "Active" - source stops emitting in simulation
 - [ ] Click "Delete" - confirmation popup appears
@@ -386,7 +386,7 @@ static void delete_source(SimulationState* sim, int source_index);
 - [ ] Preview plot shows sinusoid (3 periods)
 - [ ] Change to: `amp * exp(-t/1e-9)` - plot shows exponential decay
 - [ ] Enter invalid expression: `amp * (` - error message shows in red
-- [ ] Enter valid expression again - "✓ Expression compiled successfully"
+- [ ] Enter valid expression again - " Expression compiled successfully"
 - [ ] Run simulation - custom waveform excites field
 
 ### Edge Cases:
@@ -407,13 +407,13 @@ static void delete_source(SimulationState* sim, int source_index);
 ## Success Criteria
 
 **Phase 2.5 Week 1 complete when:**
-1. ✅ Sources can be created/deleted via UI
-2. ✅ All source properties editable (type, field, position, freq, amp, sigma²)
-3. ✅ Expression editor functional with live preview plot
-4. ✅ Active/inactive toggle works per source
-5. ✅ No need to use wizard for source configuration
-6. ✅ Expression compilation errors displayed clearly
-7. ✅ Example expressions documented in help text
+1.  Sources can be created/deleted via UI
+2.  All source properties editable (type, field, position, freq, amp, sigma)
+3.  Expression editor functional with live preview plot
+4.  Active/inactive toggle works per source
+5.  No need to use wizard for source configuration
+6.  Expression compilation errors displayed clearly
+7.  Example expressions documented in help text
 
 ---
 
@@ -443,9 +443,9 @@ struct AppState {
 - Cache compiled ExprProgram* for active expressions
 
 ### Error Handling:
-- Invalid expression → show error in red, don't crash
-- Division by zero → clamp to ±1e30, show warning
-- Empty expression → treat as `0.0` (no excitation)
+- Invalid expression  show error in red, don't crash
+- Division by zero  clamp to 1e30, show warning
+- Empty expression  treat as `0.0` (no excitation)
 
 ---
 
@@ -471,34 +471,34 @@ Content:
 
 **Screenshot Goal:**
 ```
-╔═══════════════════════════════════════════════╗
-║ Sources Panel                                 ║
-╠═══════════════════════════════════════════════╣
-║ Source 0: Custom Chirp                        ║
-║   [✓ Active] [Edit ▼]                         ║
-║                                               ║
-║   Type: Expression                            ║
-║   Position: (0.25, 0.50)                      ║
-║   Amplitude: 1.0                              ║
-║   Frequency: 2.4 GHz                          ║
-║                                               ║
-║   Expression:                                 ║
-║   ┌─────────────────────────────────────────┐ ║
-║   │ amp*sin(2*pi*(freq+5e8*t)*t)            │ ║
-║   └─────────────────────────────────────────┘ ║
-║                                               ║
-║   Preview:                                    ║
-║   [Chirp waveform plot with increasing freq] ║
-║   ✓ Expression compiled successfully          ║
-║                                               ║
-║   [Apply] [Cancel] [Delete]                   ║
-║                                               ║
-║ [+ New Source]                                ║
-╚═══════════════════════════════════════════════╝
+
+ Sources Panel                                 
+
+ Source 0: Custom Chirp                        
+   [ Active] [Edit ]                         
+                                               
+   Type: Expression                            
+   Position: (0.25, 0.50)                      
+   Amplitude: 1.0                              
+   Frequency: 2.4 GHz                          
+                                               
+   Expression:                                 
+    
+    amp*sin(2*pi*(freq+5e8*t)*t)             
+    
+                                               
+   Preview:                                    
+   [Chirp waveform plot with increasing freq] 
+    Expression compiled successfully          
+                                               
+   [Apply] [Cancel] [Delete]                   
+                                               
+ [+ New Source]                                
+
 ```
 
 ---
 
-**Ready for implementation!** 🚀
+**Ready for implementation!** 
 
 Hand this prompt to your implementation agent and proceed with Week 1.

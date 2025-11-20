@@ -23,6 +23,8 @@ typedef struct {
     SDL_Renderer* renderer;
     TTF_Font* font;
     int scale;
+    float offset_x;
+    float offset_y;
     int logical_w;
     int logical_h;
     int menu_bar_height;
