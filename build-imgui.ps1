@@ -23,6 +23,8 @@ Write-Host "Build folder : $buildDirName" -ForegroundColor Gray
 Write-Host "Build config : $Config" -ForegroundColor Gray
 Write-Host ""
 
+$envConfigured = $false
+
 # Find Visual Studio installation so MSVC tools are available
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 
@@ -34,9 +36,23 @@ if (Test-Path $vswhere) {
     if ($vsPath) {
         Write-Host "Found Visual Studio at: $vsPath" -ForegroundColor Green
 
+        # Prefer VsDevShell (PowerShell) to avoid long cmd lines
+        $vsDevShell = Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1"
+        if (Test-Path $vsDevShell) {
+            Write-Host "Setting up MSVC environment (VsDevShell)..." -ForegroundColor Cyan
+            try {
+                & $vsDevShell -Arch x64 -HostArch x64 -SkipAutomaticLocation -NoLogo | Out-Null
+                $envConfigured = $true
+                Write-Host "MSVC environment configured" -ForegroundColor Green
+                Write-Host ""
+            } catch {
+                Write-Host "VsDevShell failed, falling back to vcvarsall.bat" -ForegroundColor Yellow
+            }
+        }
+
         $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
 
-        if (Test-Path $vcvarsall) {
+        if (-not $envConfigured -and (Test-Path $vcvarsall)) {
             Write-Host "Setting up MSVC environment..." -ForegroundColor Cyan
 
             $tempFile = [IO.Path]::GetTempFileName()
@@ -51,6 +67,7 @@ if (Test-Path $vswhere) {
 
             Write-Host "MSVC environment configured" -ForegroundColor Green
             Write-Host ""
+            $envConfigured = $true
         }
     } else {
         Write-Host "WARNING: Visual Studio not found via vswhere" -ForegroundColor Yellow
