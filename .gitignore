@@ -2,6 +2,7 @@
 /build/
 /dist/
 /bin/
+/build-imgui/
 /CMakeFiles/
 /CMakeCache.txt
 cmake_install.cmake
