@@ -3864,7 +3864,6 @@ int main(int argc, char** argv) {
                                             app.temp_annotation.text[0] = '\0';
                                             app.temp_annotation.grid_pos = ImVec2((float)ix, (float)iy);
                                             app.temp_annotation.visible = true;
-                                            ImGui::OpenPopup("AddAnnotation");
                                         }
                                     }
                                 }
@@ -4127,46 +4126,31 @@ int main(int argc, char** argv) {
                     float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
                     if (local_x >= 0.0f && local_y >= 0.0f &&
                         local_x < vp->size.x && local_y < vp->size.y) {
-                        if (app.area_mode) {
-                            if (app.current_area.vertices.size() >= 3) {
-                                close_area_measurement(&app, sim);
-                                continue;
-                            }
-                            ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
-                            float field_x = local_x - viewport_offset.x;
-                            float field_y = local_y - viewport_offset.y;
-                            int ix = (int)(field_x / (float)scale_local);
-                            int iy = (int)(field_y / (float)scale_local);
-                            if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
-                                app.current_area.vertices.push_back(ImVec2((float)ix, (float)iy));
-                                if (app.current_area.vertices.size() >= 3) {
-                                    ImVec2 first = app.current_area.vertices.front();
-                                    float dx = (float)ix - first.x;
-                                    float dy = (float)iy - first.y;
-                                    if (std::sqrt(dx * dx + dy * dy) < 3.0f) {
-                                        close_area_measurement(&app, sim);
-                                    }
-                                }
-                            }
-                            continue;
-                        }
                         ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
                         float field_x = local_x - viewport_offset.x;
                         float field_y = local_y - viewport_offset.y;
                         int ix = (int)(field_x / (float)scale_local);
                         int iy = (int)(field_y / (float)scale_local);
                         if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                            if (app.area_mode) {
+                                if (app.current_area.vertices.size() >= 3) {
+                                    close_area_measurement(&app, sim);
+                                } else {
+                                    ui_log_add(&app, "Area tool: need at least 3 vertices to finish");
+                                }
+                                continue;
+                            }
                             app.show_context_menu = true;
                             app.context_menu_pos = ImVec2((float)mx, (float)my);
                             app.context_menu_cell_i = ix;
                             app.context_menu_cell_j = iy;
                         }
                     }
+        }
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            if (!app.viewport_valid) {
+                continue;
             }
-            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-                if (!app.viewport_valid) {
-                    continue;
-                }
 
                 int mx = e.button.x;
                 int my = e.button.y;
@@ -4188,6 +4172,10 @@ int main(int argc, char** argv) {
                     int ix = (int)(field_x / (float)scale_local);
                     int iy = (int)(field_y / (float)scale_local);
                     if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
+                        continue;
+                    }
+                    if (app.area_mode) {
+                        app.current_area.vertices.push_back(ImVec2((float)ix, (float)iy));
                         continue;
                     }
                     if (app.ruler_mode) {
@@ -5604,11 +5592,16 @@ int main(int argc, char** argv) {
                 ImVec2 win_origin = ImGui::GetWindowPos();
                 const char* labels[] = {"A", "B", "C", "D"};
                 const char* viz_labels[] = {"Field", "Material", "Overlay", "Magnitude"};
+                int hovered_idx = -1;
+                ImVec2 mp = ImGui::GetIO().MousePos;
                 for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
                     const ViewportInstance& vp = app.viewports[vp_idx];
                     if (!vp.valid) continue;
                     ImVec2 p0 = ImVec2(win_origin.x + vp.pos.x, win_origin.y + vp.pos.y);
                     ImVec2 p1 = ImVec2(p0.x + vp.size.x, p0.y + vp.size.y);
+                    if (mp.x >= p0.x && mp.x < p1.x && mp.y >= p0.y && mp.y < p1.y) {
+                        hovered_idx = vp_idx;
+                    }
                     ImU32 col = (vp_idx == app.active_viewport_idx)
                                     ? IM_COL32(80, 160, 255, 255)
                                     : IM_COL32(80, 80, 80, 180);
@@ -5625,6 +5618,13 @@ int main(int argc, char** argv) {
                     overlay_dl->AddText(ImVec2(l0.x + pad.x, l0.y + pad.y),
                                         IM_COL32(230, 230, 230, 255),
                                         label_buf);
+                }
+
+                if (hovered_idx >= 0 && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+                    app.active_viewport_idx = hovered_idx;
+                    active_vp = ensure_active_viewport();
+                    active_scale = active_vp ? (int)std::lround(active_vp->zoom) : active_scale;
+                    if (active_scale < 1) active_scale = 1;
                 }
 
                 if (frame_counter <= 120) {
