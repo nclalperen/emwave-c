@@ -31,6 +31,8 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <string>
 
 struct AppState {
     bool basic_mode;
@@ -55,12 +57,37 @@ struct AppState {
     bool show_expression_panel;
     bool show_scenes_panel;
     bool show_grid_overlay;
+    int theme_preset;
+    ImVec4 accent_color;
     /* Simple log buffer */
     char log_lines[128][256];
     int log_count;
     ImVec2 viewport_pos;
     ImVec2 viewport_size;
     bool viewport_valid;
+    /* Viewport transform */
+    float viewport_zoom;
+    float viewport_pan_x;
+    float viewport_pan_y;
+    bool viewport_panning;
+    ImVec2 pan_start_mouse;
+    ImVec2 pan_start_offset;
+    float hud_zoom_value;
+    float hud_zoom_timer;
+    ImVec2 hud_pan_value;
+    float hud_pan_timer;
+    bool show_axis_overlay;
+    bool ruler_mode;
+    bool ruler_first_point_set;
+    ImVec2 ruler_point_a;
+    ImVec2 ruler_point_b;
+    bool show_context_menu;
+    ImVec2 context_menu_pos;
+    int context_menu_cell_i;
+    int context_menu_cell_j;
+    /* Window state */
+    int window_width;
+    int window_height;
     /* Material browser */
     int selected_material_id;
     int paint_material_id;
@@ -170,6 +197,184 @@ static int normalized_to_cell_index(double frac, int n) {
     return idx;
 }
 
+static ImVec2 compute_center_offset(const AppState& app, const SimulationState* sim, int scale) {
+    ImVec2 offset(0.0f, 0.0f);
+    if (!sim || scale <= 0) return offset;
+    float field_px_w = (float)(sim->nx * scale);
+    float field_px_h = (float)(sim->ny * scale);
+    if (app.viewport_size.x > field_px_w) {
+        offset.x = (app.viewport_size.x - field_px_w) * 0.5f;
+    }
+    if (app.viewport_size.y > field_px_h) {
+        offset.y = (app.viewport_size.y - field_px_h) * 0.5f;
+    }
+    return offset;
+}
+
+static ImVec2 compute_viewport_offset(const AppState& app, const SimulationState* sim, int scale) {
+    ImVec2 centered = compute_center_offset(app, sim, scale);
+    return ImVec2(app.viewport_pan_x + centered.x, app.viewport_pan_y + centered.y);
+}
+
+static int compute_grid_step_from_scale(int scale) {
+    if (scale < 2) return 10;
+    if (scale < 8) return 5;
+    return 1;
+}
+
+enum LayoutPreset {
+    LAYOUT_BEGINNER = 0,
+    LAYOUT_POWER_USER = 1,
+    LAYOUT_ANALYSIS = 2,
+    LAYOUT_CANVAS_FIRST = 3
+};
+
+static constexpr float kDefaultViewportZoom = 2.0f;
+
+static void apply_layout_preset(ImGuiID dockspace_id, LayoutPreset preset) {
+    if (dockspace_id == 0) return;
+    ImGui::DockBuilderRemoveNode(dockspace_id);
+    ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+
+    ImGuiID dock_center = dockspace_id;
+    ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.25f, nullptr, &dock_center);
+    ImGuiID dock_left = dock_center;
+    ImGuiID dock_right = dock_center;
+
+    switch (preset) {
+        case LAYOUT_BEGINNER: {
+            ImGui::DockBuilderDockWindow("Viewport", dock_center);
+            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
+            ImGui::DockBuilderDockWindow("Sources", dock_right);
+            ImGui::DockBuilderDockWindow("Scope", dock_bottom);
+            ImGui::DockBuilderDockWindow("Log", dock_bottom);
+            break;
+        }
+        case LAYOUT_POWER_USER: {
+            dock_left = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.2f, nullptr, &dock_center);
+            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.22f, nullptr, &dock_center);
+
+            ImGui::DockBuilderDockWindow("Viewport", dock_center);
+            ImGui::DockBuilderDockWindow("Sources", dock_left);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", dock_left);
+            ImGui::DockBuilderDockWindow("Scope", dock_bottom);
+            ImGui::DockBuilderDockWindow("Log", dock_bottom);
+            ImGui::DockBuilderDockWindow("Material Legend", dock_right);
+            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
+            break;
+        }
+        case LAYOUT_ANALYSIS: {
+            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.4f, nullptr, &dock_center);
+            ImGuiID dock_right_bottom = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.5f, nullptr, &dock_right);
+
+            ImGui::DockBuilderDockWindow("Viewport", dock_center);
+            ImGui::DockBuilderDockWindow("Scope", dock_bottom);
+            ImGui::DockBuilderDockWindow("S-Parameters", dock_right);
+            ImGui::DockBuilderDockWindow("Smith Chart", dock_right_bottom);
+            ImGui::DockBuilderDockWindow("Log", dock_bottom);
+            break;
+        }
+        case LAYOUT_CANVAS_FIRST: {
+            dock_left = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.16f, nullptr, &dock_center);
+            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.18f, nullptr, &dock_center);
+
+            ImGui::DockBuilderDockWindow("Viewport", dock_center);
+            ImGui::DockBuilderDockWindow("Sources", dock_left);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", dock_left);
+            ImGui::DockBuilderDockWindow("Grid & Domain", dock_left);
+            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
+            ImGui::DockBuilderDockWindow("Material Legend", dock_right);
+            ImGui::DockBuilderDockWindow("Scope", dock_bottom);
+            ImGui::DockBuilderDockWindow("Log", dock_bottom);
+            break;
+        }
+        default:
+            break;
+    }
+
+    ImGui::DockBuilderFinish(dockspace_id);
+}
+
+static void clamp_pan_offset(AppState* app,
+                             const SimulationState* sim,
+                             int scale) {
+    if (!app || !sim || scale <= 0) return;
+    ImVec2 center_offset = compute_center_offset(*app, sim, scale);
+    float field_w = (float)(sim->nx * scale);
+    float field_h = (float)(sim->ny * scale);
+    float viewport_w = app->viewport_size.x;
+    float viewport_h = app->viewport_size.y;
+
+    float min_pan_x = -(field_w * 0.9f);
+    float max_pan_x = viewport_w * 0.9f;
+    float min_pan_y = -(field_h * 0.9f);
+    float max_pan_y = viewport_h * 0.9f;
+
+    float effective_pan_x = app->viewport_pan_x + center_offset.x;
+    float effective_pan_y = app->viewport_pan_y + center_offset.y;
+
+    effective_pan_x = std::clamp(effective_pan_x, min_pan_x, max_pan_x);
+    effective_pan_y = std::clamp(effective_pan_y, min_pan_y, max_pan_y);
+
+    app->viewport_pan_x = std::round(effective_pan_x - center_offset.x);
+    app->viewport_pan_y = std::round(effective_pan_y - center_offset.y);
+}
+
+static void apply_zoom_at_point(AppState* app,
+                                RenderContext* render,
+                                const SimulationState* sim,
+                                int* scale,
+                                float focus_x,
+                                float focus_y,
+                                float zoom_multiplier,
+                                bool smooth) {
+    if (!app || !render || !sim || !scale) return;
+    if (*scale <= 0) return;
+
+    ImVec2 center_before = compute_center_offset(*app, sim, *scale);
+    float field_x = focus_x - (app->viewport_pan_x + center_before.x);
+    float field_y = focus_y - (app->viewport_pan_y + center_before.y);
+    float grid_x = field_x / (float)(*scale);
+    float grid_y = field_y / (float)(*scale);
+
+    const float target_zoom = std::clamp(app->viewport_zoom * zoom_multiplier, 0.5f, 32.0f);
+    float new_zoom = target_zoom;
+    if (smooth) {
+        const float zoom_alpha = 0.25f;  // ease wheel only; buttons stay snappy
+        new_zoom = ImLerp(app->viewport_zoom, target_zoom, zoom_alpha);
+    }
+    app->viewport_zoom = new_zoom;
+
+    *scale = (int)std::lround(new_zoom);
+    if (*scale < 1) *scale = 1;
+    render->scale = *scale;
+
+    ImVec2 center_after = compute_center_offset(*app, sim, *scale);
+    float effective_pan_x = focus_x - grid_x * (float)(*scale);
+    float effective_pan_y = focus_y - grid_y * (float)(*scale);
+    app->viewport_pan_x = effective_pan_x - center_after.x;
+    app->viewport_pan_y = effective_pan_y - center_after.y;
+
+    clamp_pan_offset(app, sim, *scale);
+}
+
+static void reset_view_transform(AppState* app,
+                                 RenderContext* render,
+                                 const SimulationState* sim,
+                                 int* scale,
+                                 float default_zoom) {
+    if (!app || !render || !sim || !scale) return;
+    app->viewport_zoom = default_zoom;
+    *scale = (int)std::lround(default_zoom);
+    if (*scale < 1) *scale = 1;
+    render->scale = *scale;
+    app->viewport_pan_x = 0.0f;
+    app->viewport_pan_y = 0.0f;
+    app->viewport_panning = false;
+    app->pan_start_mouse = ImVec2(0.0f, 0.0f);
+    app->pan_start_offset = ImVec2(0.0f, 0.0f);
+}
+
 static void free_source_expression(Source* s) {
     if (!s || !s->expr_program) return;
     expr_free((ExprProgram*)s->expr_program);
@@ -232,6 +437,66 @@ static void create_new_source(WizardState* wizard, SimulationState* sim, AppStat
     if (app) {
         app->selected_source = count;
         ui_log_add(app, "Added source #%d", count);
+    }
+}
+
+static void create_new_source_at(WizardState* wizard,
+                                 SimulationState* sim,
+                                 AppState* app,
+                                 int ix,
+                                 int iy) {
+    if (!wizard || !sim) return;
+    if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) return;
+    int count = wizard->cfg.source_count;
+    if (count >= MAX_SRC) return;
+    SourceConfigSpec* spec = &wizard->cfg.source_configs[count];
+    spec->active = 1;
+    spec->type = SRC_CW;
+    spec->field = SRC_FIELD_EZ;
+    spec->amp = 1.0;
+    spec->freq = sim->freq > 0.0 ? sim->freq : 1.0e9;
+    spec->sigma2 = 4.0;
+    spec->expr[0] = '\0';
+
+    double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
+    double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
+    spec->x = (double)ix / nx1;
+    spec->y = (double)iy / ny1;
+
+    wizard->cfg.source_count = count + 1;
+    apply_source_spec_to_runtime(sim, count, spec);
+    if (app) {
+        app->selected_source = count;
+        ui_log_add(app, "Added source #%d at (%d, %d)", count, ix, iy);
+    }
+}
+
+static void create_block_at(WizardState* wizard,
+                            SimulationBootstrap* bootstrap,
+                            SimulationState* sim,
+                            AppState* app,
+                            int ix,
+                            int iy) {
+    if (!wizard || !sim || !bootstrap) return;
+    if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) return;
+    if (wizard->cfg.material_rect_count >= CONFIG_MAX_MATERIAL_RECTS) return;
+
+    int idx = wizard->cfg.material_rect_count;
+    MaterialRectSpec& r = wizard->cfg.material_rects[idx];
+    double nx_d = (double)sim->nx;
+    double ny_d = (double)sim->ny;
+    r.x0 = (double)ix / nx_d;
+    r.x1 = (double)(ix + 1) / nx_d;
+    r.y0 = (double)iy / ny_d;
+    r.y1 = (double)(iy + 1) / ny_d;
+    r.epsr = 4.0;
+    r.sigma = 0.0;
+    r.tag = 0;
+    wizard->cfg.material_rect_count = idx + 1;
+    apply_wizard_materials_to_sim(*wizard, bootstrap, sim);
+    if (app) {
+        app->selected_block = idx;
+        ui_log_add(app, "Added block at (%d, %d)", ix, iy);
     }
 }
 
@@ -1395,20 +1660,23 @@ static void draw_probes_panel(const SimulationState* sim);
 /* Log panel --------------------------------------------------------------- */
 static void draw_log_panel(AppState* app);
 
-static void render_grid_overlay(RenderContext* render, const SimulationState* sim, SDL_Color color) {
+static void render_grid_overlay(RenderContext* render, const SimulationState* sim, SDL_Color color, int grid_step) {
     if (!render || !sim) return;
     SDL_Renderer* rr = render->renderer;
     if (!rr) return;
+    if (grid_step < 1) grid_step = 1;
     int width = sim->nx * render->scale;
     int height = sim->ny * render->scale;
+    int offset_x = (int)std::lround(render->offset_x);
+    int offset_y = (int)std::lround(render->offset_y);
     SDL_SetRenderDrawColor(rr, color.r, color.g, color.b, color.a);
-    for (int i = 0; i <= sim->nx; ++i) {
-        int x = i * render->scale;
-        SDL_RenderDrawLine(rr, x, 0, x, height);
+    for (int i = 0; i <= sim->nx; i += grid_step) {
+        int x = i * render->scale + offset_x;
+        SDL_RenderDrawLine(rr, x, offset_y, x, height + offset_y);
     }
-    for (int j = 0; j <= sim->ny; ++j) {
-        int y = j * render->scale;
-        SDL_RenderDrawLine(rr, 0, y, width, y);
+    for (int j = 0; j <= sim->ny; j += grid_step) {
+        int y = j * render->scale + offset_y;
+        SDL_RenderDrawLine(rr, offset_x, y, width + offset_x, y);
     }
 }
 
@@ -1441,60 +1709,66 @@ static SDL_Color material_color_from_epsilon(double eps) {
     return color;
 }
 
-static void render_material_distribution(SDL_Renderer* renderer,
+static void render_material_distribution(RenderContext* render,
                                          const SimulationState* sim,
                                          int scale) {
-    if (!renderer || !sim || scale <= 0) return;
+    if (!render || !render->renderer || !sim || scale <= 0) return;
+    int offset_x = (int)std::lround(render->offset_x);
+    int offset_y = (int)std::lround(render->offset_y);
     for (int j = 0; j < sim->ny; ++j) {
         for (int i = 0; i < sim->nx; ++i) {
             double eps = fdtd_epsilon_at(sim, i, j);
             SDL_Color color = material_color_from_epsilon(eps);
-            SDL_Rect rect = {i * scale, j * scale, scale, scale};
-            SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-            SDL_RenderFillRect(renderer, &rect);
+            SDL_Rect rect = {i * scale + offset_x, j * scale + offset_y, scale, scale};
+            SDL_SetRenderDrawColor(render->renderer, color.r, color.g, color.b, color.a);
+            SDL_RenderFillRect(render->renderer, &rect);
         }
     }
 }
 
-static void render_material_overlay(SDL_Renderer* renderer,
+static void render_material_overlay(RenderContext* render,
                                     const SimulationState* sim,
                                     int scale,
                                     float alpha) {
-    if (!renderer || !sim || scale <= 0) return;
+    if (!render || !render->renderer || !sim || scale <= 0) return;
     if (alpha <= 0.0f) return;
+    int offset_x = (int)std::lround(render->offset_x);
+    int offset_y = (int)std::lround(render->offset_y);
     Uint8 a = (Uint8)(std::fmin(std::fmax(alpha, 0.0f), 1.0f) * 255.0f);
     for (int j = 0; j < sim->ny; ++j) {
         for (int i = 0; i < sim->nx; ++i) {
             double eps = fdtd_epsilon_at(sim, i, j);
             SDL_Color base = material_color_from_epsilon(eps);
-            SDL_Rect rect = {i * scale, j * scale, scale, scale};
-            SDL_SetRenderDrawColor(renderer, base.r, base.g, base.b, a);
-            SDL_RenderFillRect(renderer, &rect);
+            SDL_Rect rect = {i * scale + offset_x, j * scale + offset_y, scale, scale};
+            SDL_SetRenderDrawColor(render->renderer, base.r, base.g, base.b, a);
+            SDL_RenderFillRect(render->renderer, &rect);
         }
     }
 }
 
-static void render_material_outlines(SDL_Renderer* renderer,
+static void render_material_outlines(RenderContext* render,
                                      const SimulationState* sim,
                                      int scale) {
-    if (!renderer || !sim || scale <= 0) return;
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 160);
+    if (!render || !render->renderer || !sim || scale <= 0) return;
+    int offset_x = (int)std::lround(render->offset_x);
+    int offset_y = (int)std::lround(render->offset_y);
+    SDL_SetRenderDrawColor(render->renderer, 255, 255, 255, 160);
     for (int j = 0; j < sim->ny - 1; ++j) {
         for (int i = 0; i < sim->nx - 1; ++i) {
             double eps_here = fdtd_epsilon_at(sim, i, j);
             double eps_right = fdtd_epsilon_at(sim, i + 1, j);
             double eps_down = fdtd_epsilon_at(sim, i, j + 1);
             if (std::fabs(eps_here - eps_right) > 0.1) {
-                int x = (i + 1) * scale;
-                int y0 = j * scale;
-                int y1 = (j + 1) * scale;
-                SDL_RenderDrawLine(renderer, x, y0, x, y1);
+                int x = (i + 1) * scale + offset_x;
+                int y0 = j * scale + offset_y;
+                int y1 = (j + 1) * scale + offset_y;
+                SDL_RenderDrawLine(render->renderer, x, y0, x, y1);
             }
             if (std::fabs(eps_here - eps_down) > 0.1) {
-                int x0 = i * scale;
-                int x1 = (i + 1) * scale;
-                int y = (j + 1) * scale;
-                SDL_RenderDrawLine(renderer, x0, y, x1, y);
+                int x0 = i * scale + offset_x;
+                int x1 = (i + 1) * scale + offset_x;
+                int y = (j + 1) * scale + offset_y;
+                SDL_RenderDrawLine(render->renderer, x0, y, x1, y);
             }
         }
     }
@@ -1615,92 +1889,154 @@ static int find_source_at_position(const SimulationState* sim, int gx, int gy, i
 
 // Theme and visual styling helpers -----------------------------------------
 
-static void apply_theme(int theme_id) {
-    if (theme_id == 0) {
-        ImGui::StyleColorsDark();
-    } else {
-        ImGui::StyleColorsLight();
-    }
+enum ThemePreset {
+    THEME_PRESET_DARK_PRO = 0,
+    THEME_PRESET_BLENDER = 1,
+    THEME_PRESET_LIGHT = 2,
+    THEME_PRESET_HIGH_CONTRAST = 3
+};
 
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.ScrollbarSize = 14.0f;
-    style.FramePadding = ImVec2(8.0f, 4.0f);
-    style.ItemSpacing = ImVec2(8.0f, 6.0f);
-    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
-    style.IndentSpacing = 20.0f;
-    style.WindowPadding = ImVec2(8.0f, 8.0f);
+static const char* theme_preset_name(ThemePreset preset) {
+    switch (preset) {
+        case THEME_PRESET_DARK_PRO: return "Dark Professional";
+        case THEME_PRESET_BLENDER: return "Blender Inspired";
+        case THEME_PRESET_LIGHT: return "Light Mode";
+        case THEME_PRESET_HIGH_CONTRAST: return "High Contrast";
+        default: return "Unknown";
+    }
 }
 
-static const ImVec4 ACCENT_PALETTES[6][3] = {
-    { ImVec4(0.26f, 0.59f, 0.98f, 1.00f),
-      ImVec4(0.36f, 0.69f, 1.00f, 1.00f),
-      ImVec4(0.16f, 0.49f, 0.88f, 1.00f) },
-
-    { ImVec4(0.20f, 0.70f, 0.50f, 1.00f),
-      ImVec4(0.30f, 0.80f, 0.60f, 1.00f),
-      ImVec4(0.10f, 0.60f, 0.40f, 1.00f) },
-
-    { ImVec4(0.90f, 0.40f, 0.20f, 1.00f),
-      ImVec4(1.00f, 0.50f, 0.30f, 1.00f),
-      ImVec4(0.80f, 0.30f, 0.10f, 1.00f) },
-
-    { ImVec4(0.70f, 0.30f, 0.80f, 1.00f),
-      ImVec4(0.80f, 0.40f, 0.90f, 1.00f),
-      ImVec4(0.60f, 0.20f, 0.70f, 1.00f) },
-
-    { ImVec4(0.90f, 0.20f, 0.30f, 1.00f),
-      ImVec4(1.00f, 0.30f, 0.40f, 1.00f),
-      ImVec4(0.80f, 0.10f, 0.20f, 1.00f) },
-
-    { ImVec4(0.90f, 0.70f, 0.10f, 1.00f),
-      ImVec4(1.00f, 0.80f, 0.20f, 1.00f),
-      ImVec4(0.80f, 0.60f, 0.00f, 1.00f) }
+static const ImVec4 ACCENT_PALETTES[6] = {
+    ImVec4(0.26f, 0.59f, 0.98f, 1.00f),
+    ImVec4(0.20f, 0.70f, 0.50f, 1.00f),
+    ImVec4(0.90f, 0.40f, 0.20f, 1.00f),
+    ImVec4(0.70f, 0.30f, 0.80f, 1.00f),
+    ImVec4(0.90f, 0.20f, 0.30f, 1.00f),
+    ImVec4(0.90f, 0.70f, 0.10f, 1.00f)
 };
 
 static const char* ACCENT_NAMES[6] = {
     "Blue", "Teal", "Orange", "Purple", "Red", "Gold"
 };
 
-static void apply_accent_palette(int accent_id) {
+static ImVec4 accent_from_palette(int accent_id) {
     if (accent_id < 0 || accent_id >= 6) accent_id = 0;
-
-    ImGuiStyle& style = ImGui::GetStyle();
-    const ImVec4* palette = ACCENT_PALETTES[accent_id];
-
-    style.Colors[ImGuiCol_Header] = palette[0];
-    style.Colors[ImGuiCol_HeaderHovered] = palette[1];
-    style.Colors[ImGuiCol_HeaderActive] = palette[2];
-
-    style.Colors[ImGuiCol_Tab] =
-        ImVec4(palette[0].x * 0.7f, palette[0].y * 0.7f, palette[0].z * 0.7f, 0.86f);
-    style.Colors[ImGuiCol_TabHovered] = palette[1];
-    style.Colors[ImGuiCol_TabActive] = palette[2];
-
-    style.Colors[ImGuiCol_Button] =
-        ImVec4(palette[0].x * 0.6f, palette[0].y * 0.6f, palette[0].z * 0.6f, 0.40f);
-    style.Colors[ImGuiCol_ButtonHovered] =
-        ImVec4(palette[1].x * 0.8f, palette[1].y * 0.8f, palette[1].z * 0.8f, 1.00f);
-    style.Colors[ImGuiCol_ButtonActive] = palette[2];
-
-    style.Colors[ImGuiCol_CheckMark] = palette[2];
-    style.Colors[ImGuiCol_SliderGrab] = palette[0];
-    style.Colors[ImGuiCol_SliderGrabActive] = palette[2];
+    return ACCENT_PALETTES[accent_id];
 }
 
-static SDL_Color theme_viewport_clear_color(int theme_id) {
+static void apply_accent_to_style(ImGuiStyle& style, const ImVec4& accent) {
+    ImVec4 hover = ImVec4(std::min(accent.x + 0.08f, 1.0f),
+                          std::min(accent.y + 0.08f, 1.0f),
+                          std::min(accent.z + 0.08f, 1.0f),
+                          accent.w);
+    ImVec4 active = ImVec4(std::min(accent.x + 0.12f, 1.0f),
+                           std::min(accent.y + 0.12f, 1.0f),
+                           std::min(accent.z + 0.12f, 1.0f),
+                           accent.w);
+
+    style.Colors[ImGuiCol_Header] = accent;
+    style.Colors[ImGuiCol_HeaderHovered] = hover;
+    style.Colors[ImGuiCol_HeaderActive] = active;
+    style.Colors[ImGuiCol_Button] =
+        ImVec4(accent.x * 0.5f, accent.y * 0.5f, accent.z * 0.5f, 0.70f);
+    style.Colors[ImGuiCol_ButtonHovered] = hover;
+    style.Colors[ImGuiCol_ButtonActive] = active;
+    style.Colors[ImGuiCol_CheckMark] = active;
+    style.Colors[ImGuiCol_SliderGrab] = accent;
+    style.Colors[ImGuiCol_SliderGrabActive] = active;
+    style.Colors[ImGuiCol_Tab] =
+        ImVec4(accent.x * 0.55f, accent.y * 0.55f, accent.z * 0.55f, 0.80f);
+    style.Colors[ImGuiCol_TabHovered] = hover;
+    style.Colors[ImGuiCol_TabActive] = active;
+}
+
+static void apply_theme(ThemePreset preset, const ImVec4& accent) {
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::StyleColorsDark();
+
+    style.WindowRounding = 6.0f;
+    style.FrameRounding = 4.0f;
+    style.GrabRounding = 3.0f;
+    style.TabRounding = 4.0f;
+    style.ScrollbarSize = 14.0f;
+    style.FramePadding = ImVec2(8.0f, 4.0f);
+    style.ItemSpacing = ImVec2(8.0f, 6.0f);
+    style.ItemInnerSpacing = ImVec2(6.0f, 4.0f);
+    style.IndentSpacing = 20.0f;
+    style.WindowPadding = ImVec2(8.0f, 8.0f);
+
+    ImVec4* colors = style.Colors;
+    switch (preset) {
+        case THEME_PRESET_DARK_PRO: {
+            colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.10f, 0.11f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.12f, 0.13f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.25f, 0.25f, 0.28f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.30f, 0.30f, 0.35f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.08f, 0.08f, 0.09f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
+            break;
+        }
+        case THEME_PRESET_BLENDER: {
+            colors[ImGuiCol_WindowBg] = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.22f, 0.22f, 0.24f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.26f, 0.46f, 0.76f, 1.00f);
+            break;
+        }
+        case THEME_PRESET_LIGHT: {
+            ImGui::StyleColorsLight();
+            style = ImGui::GetStyle();
+            style.WindowRounding = 6.0f;
+            style.FrameRounding = 4.0f;
+            style.TabRounding = 4.0f;
+            style.FramePadding = ImVec2(8.0f, 5.0f);
+            colors = style.Colors;
+            colors[ImGuiCol_WindowBg] = ImVec4(0.95f, 0.95f, 0.96f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.97f, 0.97f, 0.98f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.86f, 0.90f, 0.96f, 1.00f);
+            colors[ImGuiCol_TitleBg] = ImVec4(0.88f, 0.88f, 0.90f, 1.00f);
+            colors[ImGuiCol_TitleBgActive] = ImVec4(0.82f, 0.84f, 0.88f, 1.00f);
+            break;
+        }
+        case THEME_PRESET_HIGH_CONTRAST: {
+            ImGui::StyleColorsDark();
+            style = ImGui::GetStyle();
+            style.WindowRounding = 0.0f;
+            style.FrameRounding = 0.0f;
+            style.TabRounding = 0.0f;
+            colors = style.Colors;
+            colors[ImGuiCol_WindowBg] = ImVec4(0.02f, 0.02f, 0.02f, 1.00f);
+            colors[ImGuiCol_ChildBg] = ImVec4(0.03f, 0.03f, 0.03f, 1.00f);
+            colors[ImGuiCol_Text] = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+            colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
+            colors[ImGuiCol_FrameBgHovered] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+            colors[ImGuiCol_FrameBgActive] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
+            break;
+        }
+        default:
+            break;
+    }
+
+    apply_accent_to_style(style, accent);
+}
+
+static SDL_Color theme_viewport_clear_color(ThemePreset preset) {
     SDL_Color color;
-    if (theme_id == 0) {
-        color.r = 8;
-        color.g = 8;
-        color.b = 10;
-        color.a = 255;
-    } else {
-        color.r = 235;
-        color.g = 236;
-        color.b = 240;
-        color.a = 255;
+    switch (preset) {
+        case THEME_PRESET_LIGHT:
+            color = SDL_Color{235, 236, 240, 255};
+            break;
+        case THEME_PRESET_HIGH_CONTRAST:
+            color = SDL_Color{4, 4, 4, 255};
+            break;
+        case THEME_PRESET_BLENDER:
+        case THEME_PRESET_DARK_PRO:
+        default:
+            color = SDL_Color{8, 8, 10, 255};
+            break;
     }
     return color;
 }
@@ -2056,7 +2392,7 @@ int main(int argc, char** argv) {
     app.block_first_set = false;
     app.block_first_i = app.block_first_j = -1;
     app.last_click_i = app.last_click_j = -1;
-    app.show_scope_window = false;
+    app.show_scope_window = true;
     app.show_scene_panel = true;
     app.show_sources_panel = true;
     app.show_blocks_panel = true;
@@ -2068,10 +2404,33 @@ int main(int argc, char** argv) {
     app.show_expression_panel = true;
     app.show_scenes_panel = true;
     app.show_grid_overlay = true;
+    app.theme_preset = 0;
+    app.accent_color = ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
     app.log_count = 0;
     app.viewport_pos = ImVec2(0.0f, 0.0f);
     app.viewport_size = ImVec2(0.0f, 0.0f);
     app.viewport_valid = false;
+    app.viewport_zoom = 1.0f;
+    app.viewport_pan_x = 0.0f;
+    app.viewport_pan_y = 0.0f;
+    app.viewport_panning = false;
+    app.pan_start_mouse = ImVec2(0.0f, 0.0f);
+    app.pan_start_offset = ImVec2(0.0f, 0.0f);
+    app.hud_zoom_value = kDefaultViewportZoom;
+    app.hud_zoom_timer = 0.0f;
+    app.hud_pan_value = ImVec2(0.0f, 0.0f);
+    app.hud_pan_timer = 0.0f;
+    app.show_axis_overlay = true;
+    app.ruler_mode = false;
+    app.ruler_first_point_set = false;
+    app.ruler_point_a = ImVec2(0.0f, 0.0f);
+    app.ruler_point_b = ImVec2(0.0f, 0.0f);
+    app.show_context_menu = false;
+    app.context_menu_pos = ImVec2(0.0f, 0.0f);
+    app.context_menu_cell_i = 0;
+    app.context_menu_cell_j = 0;
+    app.window_width = 0;
+    app.window_height = 0;
     app.selected_material_id = -1;
     app.paint_material_id = -1;
     app.material_browser_open = false;
@@ -2105,11 +2464,16 @@ int main(int argc, char** argv) {
     app.rebootstrap_message[0] = '\0';
     ui_log_add(&app, "Simulation started");
 
-    int scale = 2;
+    const int min_window_width = 1280;
+    const int min_window_height = 720;
+    int scale = (int)std::lround(kDefaultViewportZoom);
     int width = sim->nx * scale;
     int height = sim->ny * scale;
-    if (width < 1920) width = 1920;
-    if (height < 1080) height = 1080;
+    if (width < min_window_width) width = min_window_width;
+    if (height < min_window_height) height = min_window_height;
+    app.viewport_zoom = kDefaultViewportZoom;
+    app.window_width = width;
+    app.window_height = height;
 
     RenderContext* render = render_init("emwave-c (ImGui)", width, height);
     if (!render) {
@@ -2118,6 +2482,7 @@ int main(int argc, char** argv) {
         simulation_bootstrap_shutdown(&bootstrap);
         return 1;
     }
+    SDL_GetWindowSize(render->window, &app.window_width, &app.window_height);
     render->scale = scale;
 
     // Set up Dear ImGui
@@ -2128,6 +2493,39 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable docking
     io.FontGlobalScale = 1.0f;
     io.IniFilename = "imgui.ini";  // Enable layout persistence
+    float dpi_scale = 1.0f;
+    int display_index = SDL_GetWindowDisplayIndex(render->window);
+    float ddpi = 0.0f, hdpi = 0.0f, vdpi = 0.0f;
+    if (SDL_GetDisplayDPI(display_index, &ddpi, &hdpi, &vdpi) == 0 && ddpi > 1.0f) {
+        dpi_scale = ddpi / 96.0f;
+    }
+    auto find_font_path = []() -> std::string {
+        const char* candidates[] = {
+            "third_party/fonts/DejaVuSans.ttf",
+            "../third_party/fonts/DejaVuSans.ttf",
+            "../../third_party/fonts/DejaVuSans.ttf",
+            "assets/fonts/DejaVuSans.ttf"
+        };
+        for (const char* c : candidates) {
+            if (std::filesystem::exists(c)) {
+                return std::string(c);
+            }
+        }
+        return std::string();
+    };
+    std::string font_path = find_font_path();
+    float base_font_px = (dpi_scale > 1.4f) ? 18.0f * dpi_scale : 16.0f * dpi_scale;
+    io.Fonts->Clear();
+    if (!font_path.empty()) {
+        io.Fonts->AddFontFromFileTTF(font_path.c_str(), base_font_px);
+    } else {
+        io.Fonts->AddFontDefault();
+    }
+    if (dpi_scale > 1.1f) {
+        ImGui::GetStyle().ScaleAllSizes(dpi_scale * 0.9f);
+    }
+    bool layout_initialized = false;
+    bool has_saved_layout = (io.IniFilename && std::filesystem::exists(io.IniFilename));
 
     ImGui_ImplSDL2_InitForSDLRenderer(render->window, render->renderer);
     ImGui_ImplSDLRenderer2_Init(render->renderer);
@@ -2156,7 +2554,11 @@ int main(int argc, char** argv) {
     bool show_help_overlay = false;
     bool dragging_source = false;
     int dragged_source_idx = -1;
-    int current_theme = 0;        // 0=Dark, 1=Light
+    bool shift_right_panning = false;
+    LayoutPreset current_layout = LAYOUT_POWER_USER;
+    bool layout_dirty = false;
+    ImGuiID last_dockspace_id = 0;
+    ThemePreset current_theme = THEME_PRESET_DARK_PRO;
     int current_colormap = 0;     // 0=Classic, 1=Viridis, 2=Plasma
     int current_accent = 0;       // 0-5 accent palette index
     SDL_Color viewport_clear_color = theme_viewport_clear_color(current_theme);
@@ -2168,10 +2570,12 @@ int main(int argc, char** argv) {
     double scope_vmax = 1.0;
 
     // Apply initial theme, accent, and colormap to both ImGui and SDL renderer
-    apply_theme(current_theme);
-    apply_accent_palette(current_accent);
-    ui_render_set_theme((ThemeMode)current_theme, current_accent);
+    app.accent_color = accent_from_palette(current_accent);
+    apply_theme(current_theme, app.accent_color);
+    ThemeMode render_theme = (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+    ui_render_set_theme(render_theme, current_accent);
     ui_render_set_colormap((ColorMapMode)current_colormap);
+    app.theme_preset = (int)current_theme;
 
     Uint64 perf_freq = SDL_GetPerformanceFrequency();
     Uint64 prev = SDL_GetPerformanceCounter();
@@ -2183,6 +2587,40 @@ int main(int argc, char** argv) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) {
                 running = false;
+            } else if (e.type == SDL_WINDOWEVENT) {
+                if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
+                    e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                    int new_w = e.window.data1;
+                    int new_h = e.window.data2;
+                    if (new_w < min_window_width) new_w = min_window_width;
+                    if (new_h < min_window_height) new_h = min_window_height;
+                    app.window_width = new_w;
+                    app.window_height = new_h;
+                    width = new_w;
+                    height = new_h;
+                } else if (e.window.event == SDL_WINDOWEVENT_MAXIMIZED ||
+                           e.window.event == SDL_WINDOWEVENT_RESTORED) {
+                    SDL_GetWindowSize(render->window, &width, &height);
+                    app.window_width = width;
+                    app.window_height = height;
+                }
+            } else if (e.type == SDL_MOUSEWHEEL) {
+                if (io.WantCaptureMouse) {
+                    continue;
+                }
+                if (app.viewport_valid && sim) {
+                    int mx, my;
+                    SDL_GetMouseState(&mx, &my);
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x >= 0.0f && local_x < app.viewport_size.x &&
+                        local_y >= 0.0f && local_y < app.viewport_size.y) {
+                        float zoom_multiplier = 1.0f + (float)e.wheel.y * 0.1f;
+                        apply_zoom_at_point(&app, render, sim, &scale, local_x, local_y, zoom_multiplier, true);
+                        app.hud_zoom_value = app.viewport_zoom;
+                        app.hud_zoom_timer = 1.0f;
+                    }
+                }
             } else if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode key = e.key.keysym.sym;
 
@@ -2204,20 +2642,30 @@ int main(int argc, char** argv) {
                         break;
 
                     case SDLK_F2:
-                        if (save_screenshot(render, "frame.bmp")) {
-                            ui_log_add(&app, "Screenshot saved: frame.bmp");
-                        } else {
-                            ui_log_add(&app, "Screenshot failed");
-                        }
+                        current_layout = LAYOUT_BEGINNER;
+                        layout_dirty = true;
+                        ui_log_add(&app, "Layout: Beginner");
                         handled_globally = true;
                         break;
 
                     case SDLK_F3:
-                        if (dump_scope_fft_csv(&scope, "scope_fft.csv", sim->dt, 1024)) {
-                            ui_log_add(&app, "FFT exported: scope_fft.csv");
-                        } else {
-                            ui_log_add(&app, "FFT export failed");
-                        }
+                        current_layout = LAYOUT_POWER_USER;
+                        layout_dirty = true;
+                        ui_log_add(&app, "Layout: Power User");
+                        handled_globally = true;
+                        break;
+
+                    case SDLK_F4:
+                        current_layout = LAYOUT_ANALYSIS;
+                        layout_dirty = true;
+                        ui_log_add(&app, "Layout: Analysis");
+                        handled_globally = true;
+                        break;
+
+                    case SDLK_F7:
+                        current_layout = LAYOUT_CANVAS_FIRST;
+                        layout_dirty = true;
+                        ui_log_add(&app, "Layout: Canvas First");
                         handled_globally = true;
                         break;
 
@@ -2231,13 +2679,20 @@ int main(int argc, char** argv) {
                                                      sizeof(errbuf))) {
                             if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                                 wizard_init_from_config(wizard, &cfg);
+                                reset_view_transform(&app,
+                                                     render,
+                                                     sim,
+                                                     &scale,
+                                                     kDefaultViewportZoom);
 
                                 // Resize window to match new grid
                                 width = sim->nx * scale;
                                 height = sim->ny * scale;
-                                if (width < 1920) width = 1920;
-                                if (height < 1080) height = 1080;
+                                if (width < min_window_width) width = min_window_width;
+                                if (height < min_window_height) height = min_window_height;
                                 SDL_SetWindowSize(render->window, width, height);
+                                app.window_width = width;
+                                app.window_height = height;
 
                                 // Reset visualization scaling
                                 vmax_smooth = sim->step_Ez_absmax;
@@ -2268,13 +2723,20 @@ int main(int argc, char** argv) {
                                                      sizeof(errbuf))) {
                             if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                                 wizard_init_from_config(wizard, &cfg);
+                                reset_view_transform(&app,
+                                                     render,
+                                                     sim,
+                                                     &scale,
+                                                     kDefaultViewportZoom);
 
                                 // Resize window to match new grid
                                 width = sim->nx * scale;
                                 height = sim->ny * scale;
-                                if (width < 1920) width = 1920;
-                                if (height < 1080) height = 1080;
+                                if (width < min_window_width) width = min_window_width;
+                                if (height < min_window_height) height = min_window_height;
                                 SDL_SetWindowSize(render->window, width, height);
+                                app.window_width = width;
+                                app.window_height = height;
 
                                 // Reset visualization scaling
                                 vmax_smooth = sim->step_Ez_absmax;
@@ -2319,7 +2781,106 @@ int main(int argc, char** argv) {
                 // CONTEXT SHORTCUTS - Only work when ImGui doesn't want keyboard
                 // ============================================================
                 if (!handled_globally && !io.WantCaptureKeyboard) {
-                    switch (key) {
+                    SDL_Keymod mod = SDL_GetModState();
+                        switch (key) {
+                            case SDLK_EQUALS:
+                            case SDLK_KP_PLUS:
+                                if (mod & KMOD_CTRL) {
+                                    if (app.viewport_valid && sim) {
+                                        float focus_x = app.viewport_size.x * 0.5f;
+                                        float focus_y = app.viewport_size.y * 0.5f;
+                                        apply_zoom_at_point(&app,
+                                                            render,
+                                                            sim,
+                                                            &scale,
+                                                            focus_x,
+                                                            focus_y,
+                                                            1.2f,
+                                                            false);
+                                        app.hud_zoom_value = app.viewport_zoom;
+                                        app.hud_zoom_timer = 1.0f;
+                                    }
+                                    break;
+                                }
+                            break;
+
+                        case SDLK_MINUS:
+                        case SDLK_KP_MINUS:
+                                if (mod & KMOD_CTRL) {
+                                    if (app.viewport_valid && sim) {
+                                        float focus_x = app.viewport_size.x * 0.5f;
+                                        float focus_y = app.viewport_size.y * 0.5f;
+                                        apply_zoom_at_point(&app,
+                                                            render,
+                                                            sim,
+                                                            &scale,
+                                                            focus_x,
+                                                            focus_y,
+                                                            0.8f,
+                                                            false);
+                                        app.hud_zoom_value = app.viewport_zoom;
+                                        app.hud_zoom_timer = 1.0f;
+                                    }
+                                    break;
+                                }
+                            break;
+
+                        case SDLK_LEFT:
+                            if (app.viewport_valid && sim) {
+                                float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
+                                app.viewport_pan_x += pan_step;
+                                clamp_pan_offset(&app, sim, scale);
+                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                app.hud_pan_timer = 1.0f;
+                            }
+                            break;
+                        case SDLK_RIGHT:
+                            if (app.viewport_valid && sim) {
+                                float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
+                                app.viewport_pan_x -= pan_step;
+                                clamp_pan_offset(&app, sim, scale);
+                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                app.hud_pan_timer = 1.0f;
+                            }
+                            break;
+                        case SDLK_UP:
+                            if (app.viewport_valid && sim) {
+                                float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
+                                app.viewport_pan_y += pan_step;
+                                clamp_pan_offset(&app, sim, scale);
+                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                app.hud_pan_timer = 1.0f;
+                            }
+                            break;
+                        case SDLK_DOWN:
+                            if (app.viewport_valid && sim) {
+                                float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
+                                app.viewport_pan_y -= pan_step;
+                                clamp_pan_offset(&app, sim, scale);
+                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                app.hud_pan_timer = 1.0f;
+                            }
+                            break;
+
+                        case SDLK_0:
+                        case SDLK_HOME:
+                            if ((mod & KMOD_CTRL) || key == SDLK_HOME) {
+                                if (app.viewport_valid && sim) {
+                                    reset_view_transform(&app,
+                                                         render,
+                                                         sim,
+                                                         &scale,
+                                                         kDefaultViewportZoom);
+                                    clamp_pan_offset(&app, sim, scale);
+                                    app.hud_zoom_value = app.viewport_zoom;
+                                    app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                    app.hud_zoom_timer = 1.0f;
+                                    app.hud_pan_timer = 1.0f;
+                                }
+                                break;
+                            }
+                            break;
+
                         // Simulation controls
                         case SDLK_SPACE:
                             paused = !paused;
@@ -2347,9 +2908,16 @@ int main(int argc, char** argv) {
 
                         // Simulation controls
                         case SDLK_r:
-                            fdtd_reset(sim);
-                            scope_clear(&scope);
-                            ui_log_add(&app, "Simulation reset");
+                            if (mod & KMOD_CTRL) {
+                                fdtd_reset(sim);
+                                scope_clear(&scope);
+                                ui_log_add(&app, "Simulation reset");
+                            } else {
+                                app.ruler_mode = !app.ruler_mode;
+                                app.ruler_first_point_set = false;
+                                ui_log_add(&app, "Ruler tool: %s",
+                                           app.ruler_mode ? "ON (click two points)" : "OFF");
+                            }
                             break;
                         case SDLK_c:
                             fdtd_clear_fields(sim);
@@ -2450,13 +3018,13 @@ int main(int argc, char** argv) {
 
                         // Visual controls
                         case SDLK_b:
-                            current_theme = (current_theme == 0) ? 1 : 0;
-                            apply_theme(current_theme);
-                            apply_accent_palette(current_accent);
+                            current_theme = (ThemePreset)(((int)current_theme + 1) % 4);
+                            apply_theme(current_theme, app.accent_color);
                             viewport_clear_color = theme_viewport_clear_color(current_theme);
-                            ui_render_set_theme((ThemeMode)current_theme, current_accent);
-                            ui_log_add(&app, "Theme: %s",
-                                       (current_theme == 0) ? "Dark" : "Light");
+                            render_theme = (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+                            ui_render_set_theme(render_theme, current_accent);
+                            app.theme_preset = (int)current_theme;
+                            ui_log_add(&app, "Theme: %s", theme_preset_name(current_theme));
                             break;
                         case SDLK_k: {
                             int shift = (SDL_GetModState() & KMOD_SHIFT) ? -1 : 1;
@@ -2471,8 +3039,10 @@ int main(int argc, char** argv) {
                             int shift = (SDL_GetModState() & KMOD_SHIFT) ? -1 : 1;
                             current_accent =
                                 (current_accent + shift + 6) % 6;
-                            apply_accent_palette(current_accent);
-                            ui_render_set_theme((ThemeMode)current_theme, current_accent);
+                            app.accent_color = accent_from_palette(current_accent);
+                            apply_theme(current_theme, app.accent_color);
+                            render_theme = (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+                            ui_render_set_theme(render_theme, current_accent);
                             ui_log_add(&app, "Accent: %s", ACCENT_NAMES[current_accent]);
                             break;
                         }
@@ -2515,6 +3085,57 @@ int main(int argc, char** argv) {
                             break;
                     }
                 }
+            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_MIDDLE) {
+                if (!app.viewport_valid || !sim || io.WantCaptureMouse) {
+                    continue;
+                }
+                int mx = e.button.x;
+                int my = e.button.y;
+                float local_x = (float)mx - app.viewport_pos.x;
+                float local_y = (float)my - app.viewport_pos.y;
+                if (local_x >= 0.0f && local_y >= 0.0f &&
+                    local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                    app.viewport_panning = true;
+                    app.pan_start_mouse = ImVec2((float)mx, (float)my);
+                    app.pan_start_offset = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                }
+            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
+                SDL_Keymod btn_mod = SDL_GetModState();
+                if (!app.viewport_valid || !sim) {
+                    continue;
+                }
+                if (btn_mod & KMOD_SHIFT) {
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x >= 0.0f && local_y >= 0.0f &&
+                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                        shift_right_panning = true;
+                        app.viewport_panning = true;
+                        app.pan_start_mouse = ImVec2((float)mx, (float)my);
+                        app.pan_start_offset = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                    }
+                } else {
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x >= 0.0f && local_y >= 0.0f &&
+                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                        ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                        float field_x = local_x - viewport_offset.x;
+                        float field_y = local_y - viewport_offset.y;
+                        int ix = (int)(field_x / (float)scale);
+                        int iy = (int)(field_y / (float)scale);
+                        if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                            app.show_context_menu = true;
+                            app.context_menu_pos = ImVec2((float)mx, (float)my);
+                            app.context_menu_cell_i = ix;
+                            app.context_menu_cell_j = iy;
+                        }
+                    }
+                }
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (!app.viewport_valid) {
                     continue;
@@ -2527,9 +3148,37 @@ int main(int argc, char** argv) {
 
                 if (local_x >= 0.0f && local_y >= 0.0f &&
                     local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
-                    int ix = (int)(local_x / (float)scale);
-                    int iy = (int)(local_y / (float)scale);
+                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    float field_x = local_x - viewport_offset.x;
+                    float field_y = local_y - viewport_offset.y;
+                    int ix = (int)(field_x / (float)scale);
+                    int iy = (int)(field_y / (float)scale);
                     if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
+                        continue;
+                    }
+                    if (app.ruler_mode) {
+                        ImVec2 grid_pt((float)ix, (float)iy);
+                        if (!app.ruler_first_point_set) {
+                            app.ruler_point_a = grid_pt;
+                            app.ruler_first_point_set = true;
+                            ui_log_add(&app,
+                                       "Ruler: first point (%d, %d)",
+                                       (int)grid_pt.x,
+                                       (int)grid_pt.y);
+                        } else {
+                            app.ruler_point_b = grid_pt;
+                            double dx_m = ((double)app.ruler_point_b.x - (double)app.ruler_point_a.x) *
+                                          (sim->lx / (double)sim->nx);
+                            double dy_m = ((double)app.ruler_point_b.y - (double)app.ruler_point_a.y) *
+                                          (sim->ly / (double)sim->ny);
+                            double distance_m = std::sqrt(dx_m * dx_m + dy_m * dy_m);
+                            double angle_deg = std::atan2(dy_m, dx_m) * 180.0 / IM_PI;
+                            ui_log_add(&app,
+                                       "Ruler: %.3f m @ %.1f deg",
+                                       distance_m,
+                                       angle_deg);
+                            app.ruler_first_point_set = false;
+                        }
                         continue;
                     }
 
@@ -2611,6 +3260,19 @@ int main(int argc, char** argv) {
                     }
                 }
             } else if (e.type == SDL_MOUSEMOTION) {
+                if (app.viewport_panning) {
+                    if (!app.viewport_valid || !sim) {
+                        continue;
+                    }
+                    float delta_x = (float)e.motion.x - app.pan_start_mouse.x;
+                float delta_y = (float)e.motion.y - app.pan_start_mouse.y;
+                app.viewport_pan_x = app.pan_start_offset.x + delta_x;
+                app.viewport_pan_y = app.pan_start_offset.y + delta_y;
+                clamp_pan_offset(&app, sim, scale);
+                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                app.hud_pan_timer = 1.0f;
+                continue;
+            }
                 // Handle source dragging first
                 if (dragging_source &&
                     dragged_source_idx >= 0 &&
@@ -2629,8 +3291,11 @@ int main(int argc, char** argv) {
                         continue;
                     }
 
-                    int ix = (int)(local_x / (float)scale);
-                    int iy = (int)(local_y / (float)scale);
+                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    float field_x = local_x - viewport_offset.x;
+                    float field_y = local_y - viewport_offset.y;
+                    int ix = (int)(field_x / (float)scale);
+                    int iy = (int)(field_y / (float)scale);
 
                     // Clamp to valid grid range (1 cell margin)
                     if (ix < 1) ix = 1;
@@ -2666,8 +3331,11 @@ int main(int argc, char** argv) {
                     if (local_x >= app.viewport_size.x || local_y >= app.viewport_size.y) {
                         continue;
                     }
-                    int ix = (int)(local_x / (float)scale);
-                    int iy = (int)(local_y / (float)scale);
+                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    float field_x = local_x - viewport_offset.x;
+                    float field_y = local_y - viewport_offset.y;
+                    int ix = (int)(field_x / (float)scale);
+                    int iy = (int)(field_y / (float)scale);
                     if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
                         continue;
                     }
@@ -2681,6 +3349,16 @@ int main(int argc, char** argv) {
                                              paint_material_type,
                                              paint_epsilon);
                     }
+                }
+            } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_MIDDLE) {
+                if (app.viewport_panning) {
+                    app.viewport_panning = false;
+                    shift_right_panning = false;
+                }
+            } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) {
+                if (shift_right_panning || app.viewport_panning) {
+                    app.viewport_panning = false;
+                    shift_right_panning = false;
                 }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 if (dragging_source) {
@@ -2704,8 +3382,44 @@ int main(int argc, char** argv) {
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui::NewFrame();
 
-        // Main menu bar
-        if (ImGui::BeginMainMenuBar()) {
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        const float status_bar_h = 26.0f;
+        ImVec2 host_pos = main_viewport->Pos;
+        ImVec2 host_size = ImVec2(main_viewport->Size.x, main_viewport->Size.y - status_bar_h);
+        if (host_size.y < 0.0f) host_size.y = 0.0f;
+        ImGui::SetNextWindowPos(host_pos);
+        ImGui::SetNextWindowSize(host_size);
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+        ImGuiWindowFlags host_flags = ImGuiWindowFlags_NoDocking |
+                                      ImGuiWindowFlags_NoTitleBar |
+                                      ImGuiWindowFlags_NoCollapse |
+                                      ImGuiWindowFlags_NoResize |
+                                      ImGuiWindowFlags_NoMove |
+                                      ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                      ImGuiWindowFlags_NoNavFocus |
+                                      ImGuiWindowFlags_NoBackground |
+                                      ImGuiWindowFlags_MenuBar;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::Begin("DockSpaceHost", nullptr, host_flags);
+        ImGui::PopStyleVar(3);
+
+        ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+        last_dockspace_id = dockspace_id;
+
+        if (!layout_initialized && !has_saved_layout) {
+            layout_dirty = true;
+        }
+        if (layout_dirty) {
+            apply_layout_preset(dockspace_id, current_layout);
+            layout_dirty = false;
+            layout_initialized = true;
+        }
+
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+
+        if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("Save Configuration...", "Ctrl+S")) {
                     sync_sim_to_wizard_config(sim, &wizard);
@@ -2726,15 +3440,20 @@ int main(int argc, char** argv) {
                                                  sizeof(errbuf))) {
                         if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                             wizard_init_from_config(wizard, &cfg);
+                            reset_view_transform(&app,
+                                                 render,
+                                                 sim,
+                                                 &scale,
+                                                 kDefaultViewportZoom);
 
-                            // Resize window to match new grid
                             width = sim->nx * scale;
                             height = sim->ny * scale;
-                            if (width < 1920) width = 1920;
-                            if (height < 1080) height = 1080;
+                            if (width < min_window_width) width = min_window_width;
+                            if (height < min_window_height) height = min_window_height;
                             SDL_SetWindowSize(render->window, width, height);
+                            app.window_width = width;
+                            app.window_height = height;
 
-                            // Reset visualization scaling
                             vmax_smooth = sim->step_Ez_absmax;
                             if (vmax_smooth <= 0.0) vmax_smooth = 1.0;
                             scope_vmax = 1.0;
@@ -2758,15 +3477,20 @@ int main(int argc, char** argv) {
                                                  sizeof(errbuf))) {
                         if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                             wizard_init_from_config(wizard, &cfg);
+                            reset_view_transform(&app,
+                                                 render,
+                                                 sim,
+                                                 &scale,
+                                                 kDefaultViewportZoom);
 
-                            // Resize window to match new grid
                             width = sim->nx * scale;
                             height = sim->ny * scale;
-                            if (width < 1920) width = 1920;
-                            if (height < 1080) height = 1080;
+                            if (width < min_window_width) width = min_window_width;
+                            if (height < min_window_height) height = min_window_height;
                             SDL_SetWindowSize(render->window, width, height);
+                            app.window_width = width;
+                            app.window_height = height;
 
-                            // Reset visualization scaling
                             vmax_smooth = sim->step_Ez_absmax;
                             if (vmax_smooth <= 0.0) vmax_smooth = 1.0;
                             scope_vmax = 1.0;
@@ -2785,408 +3509,488 @@ int main(int argc, char** argv) {
 
                 ImGui::Separator();
 
-        if (ImGui::MenuItem("Quit", "ESC")) {
-            running = false;
-        }
-
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Materials")) {
-        if (ImGui::MenuItem("Material Browser...", "M")) {
-            app.material_browser_open = true;
-        }
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Analysis")) {
-        if (ImGui::MenuItem("S-Parameters...")) {
-            app.sparam_window_open = true;
-        }
-        if (ImGui::MenuItem("Smith Chart...")) {
-            app.smith_chart_open = true;
-        }
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("View")) {
-        ImGui::TextUnformatted("Visualization");
-        ImGui::Separator();
-        if (ImGui::RadioButton("Field (Ez)", app.visualization_mode == 0)) {
-            app.visualization_mode = 0;
-        }
-        if (ImGui::RadioButton("Material Distribution", app.visualization_mode == 1)) {
-            app.visualization_mode = 1;
-        }
-        if (ImGui::RadioButton("Field + Material Overlay", app.visualization_mode == 2)) {
-            app.visualization_mode = 2;
-        }
-        if (app.visualization_mode == 2) {
-            ImGui::SliderFloat("Overlay Alpha", &app.material_overlay_alpha, 0.0f, 1.0f);
-        }
-        ImGui::Checkbox("Material Outlines", &app.show_material_outlines);
-        ImGui::Checkbox("Material Legend", &app.show_material_legend);
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Panels");
-        ImGui::Separator();
-        ImGui::MenuItem("Grid Settings", nullptr, &app.show_grid_panel);
-        ImGui::MenuItem("Scene", nullptr, &app.show_scene_panel);
-        ImGui::MenuItem("Sources", nullptr, &app.show_sources_panel);
-        ImGui::MenuItem("Blocks", nullptr, &app.show_blocks_panel);
-        ImGui::MenuItem("Probes", nullptr, &app.show_probes_panel);
-        ImGui::MenuItem("Run Controls", nullptr, &app.show_run_panel);
-        ImGui::MenuItem("Run Settings", nullptr, &app.show_run_settings_panel);
-        ImGui::Checkbox("Highlight blocks for selected material", &app.highlight_blocks_by_material);
-        ImGui::Checkbox("Auto-filter blocks on material select", &app.auto_filter_blocks_on_select);
-        ImGui::EndMenu();
-    }
-
-            if (ImGui::BeginMenu("Help")) {
-                if (ImGui::MenuItem("Keyboard Shortcuts", "F1")) {
-                    show_help_overlay = !show_help_overlay;
+                if (ImGui::MenuItem("Quit", "ESC")) {
+                    running = false;
                 }
-                ImGui::MenuItem("About", nullptr, false, false);
+
                 ImGui::EndMenu();
             }
 
-            ImGui::EndMainMenuBar();
-        }
-
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->Pos);
-        ImGui::SetNextWindowSize(viewport->Size);
-    ImGuiWindowFlags root_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-                                  ImGuiWindowFlags_NoBackground;
-        ImGui::Begin("RootLayout", nullptr, root_flags);
-
-        ImVec2 full = ImGui::GetContentRegionAvail();
-        // Responsive proportions tuned for the 1920x1080 studio layout baseline
-        const float target_left_w = 300.0f;
-        const float target_right_w = 360.0f;
-        const float target_bottom_h = 200.0f;
-        const float min_center_w = 640.0f;
-        const float min_main_h = 420.0f;
-
-        float width_needed = target_left_w + target_right_w + min_center_w;
-        float width_scale = (width_needed > 0.0f && full.x < width_needed)
-                                ? (full.x / width_needed)
-                                : 1.0f;
-        float left_w = target_left_w * width_scale;
-        float right_w = target_right_w * width_scale;
-        if (left_w + right_w > full.x) {
-            float squeeze = (left_w + right_w > 0.0f) ? (full.x / (left_w + right_w)) : 1.0f;
-            left_w *= squeeze;
-            right_w *= squeeze;
-        }
-        float center_w = ImMax(0.0f, full.x - left_w - right_w);
-
-        float height_needed = target_bottom_h + min_main_h;
-        float height_scale = (height_needed > 0.0f && full.y < height_needed)
-                                 ? (full.y / height_needed)
-                                 : 1.0f;
-        float bottom_h = target_bottom_h * height_scale;
-        float main_h = ImMax(0.0f, full.y - bottom_h);
-
-        ImVec2 origin = ImGui::GetCursorPos();
-        const ImVec4 column_bg = ImVec4(0.24f, 0.24f, 0.24f, 0.95f);
-        const ImVec4 bottom_bg = ImVec4(0.15f, 0.15f, 0.15f, 0.95f);
-
-        // Left column
-        ImGui::SetCursorPos(origin);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
-        ImGui::BeginChild("LeftColumn", ImVec2(left_w, main_h), true);
-        bool first_left_panel = true;
-        auto left_spacing = [&]() {
-            if (!first_left_panel) {
-                ImGui::Spacing();
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Grid & Domain", nullptr, &app.show_grid_panel);
+                ImGui::MenuItem("Scenes", nullptr, &app.show_scene_panel);
+                ImGui::MenuItem("Sources", nullptr, &app.show_sources_panel);
+                ImGui::MenuItem("Blocks", nullptr, &app.show_blocks_panel);
+                ImGui::MenuItem("Material Legend", nullptr, &app.show_material_legend);
+                ImGui::MenuItem("Run Controls", nullptr, &app.show_run_panel);
+                ImGui::MenuItem("Run Settings", nullptr, &app.show_run_settings_panel);
+                ImGui::MenuItem("Probes", nullptr, &app.show_probes_panel);
+                ImGui::MenuItem("Scope / FFT", nullptr, &app.show_scope_window);
+                ImGui::MenuItem("Log", nullptr, &app.show_log_panel);
                 ImGui::Separator();
-                ImGui::Spacing();
+                ImGui::MenuItem("Grid Overlay", nullptr, &app.show_grid_overlay);
+                ImGui::MenuItem("Axis Overlay", nullptr, &app.show_axis_overlay);
+                if (ImGui::BeginMenu("Theme")) {
+                    auto set_theme = [&](ThemePreset preset) {
+                        current_theme = preset;
+                        app.theme_preset = (int)preset;
+                        apply_theme(current_theme, app.accent_color);
+                        viewport_clear_color = theme_viewport_clear_color(current_theme);
+                        render_theme = (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+                        ui_render_set_theme(render_theme, current_accent);
+                    };
+                    if (ImGui::MenuItem("Dark Professional", nullptr, current_theme == THEME_PRESET_DARK_PRO)) {
+                        set_theme(THEME_PRESET_DARK_PRO);
+                    }
+                    if (ImGui::MenuItem("Blender Inspired", nullptr, current_theme == THEME_PRESET_BLENDER)) {
+                        set_theme(THEME_PRESET_BLENDER);
+                    }
+                    if (ImGui::MenuItem("Light Mode", nullptr, current_theme == THEME_PRESET_LIGHT)) {
+                        set_theme(THEME_PRESET_LIGHT);
+                    }
+                    if (ImGui::MenuItem("High Contrast", nullptr, current_theme == THEME_PRESET_HIGH_CONTRAST)) {
+                        set_theme(THEME_PRESET_HIGH_CONTRAST);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::BeginMenu("Accent Palette")) {
+                        for (int i = 0; i < 6; ++i) {
+                            if (ImGui::MenuItem(ACCENT_NAMES[i], nullptr, current_accent == i)) {
+                                current_accent = i;
+                                app.accent_color = accent_from_palette(current_accent);
+                                apply_theme(current_theme, app.accent_color);
+                                render_theme =
+                                    (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+                                ui_render_set_theme(render_theme, current_accent);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::ColorEdit3("Accent Color",
+                                          (float*)&app.accent_color,
+                                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_DisplayRGB)) {
+                        apply_theme(current_theme, app.accent_color);
+                        render_theme = (current_theme == THEME_PRESET_LIGHT) ? THEME_LIGHT : THEME_DARK;
+                        ui_render_set_theme(render_theme, current_accent);
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
             }
-            first_left_panel = false;
-        };
-        if (app.show_grid_panel) {
-            left_spacing();
-            draw_grid_panel(&wizard, &app);
-        }
-        if (app.show_scene_panel) {
-            left_spacing();
-            draw_scene_panel(sim, wizard);
-        }
-        if (app.show_sources_panel) {
-            left_spacing();
-            draw_sources_panel(sim, wizard, &app);
-        }
-        if (app.show_blocks_panel) {
-            left_spacing();
-            draw_blocks_panel(wizard, &bootstrap, sim, &app);
-        }
-        if (app.show_probes_panel) {
-            left_spacing();
-            draw_probes_panel(sim);
-        }
-        if (app.show_material_legend) {
-            left_spacing();
-            draw_material_legend(&app, sim, &wizard, &bootstrap);
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
 
-        // Center viewport placeholder - keep border but let SDL field stay visible and interactive
-        ImGui::SetCursorPos(ImVec2(origin.x + left_w, origin.y));
-        ImVec2 center_screen_pos = ImGui::GetCursorScreenPos();
-        ImVec2 center_child_size(ImMax(1.0f, center_w), ImMax(1.0f, main_h));
-        ImGuiWindowFlags center_flags =
-            ImGuiWindowFlags_NoBackground |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoScrollWithMouse |
-            ImGuiWindowFlags_NoNavInputs |
-            ImGuiWindowFlags_NoNavFocus |
-            ImGuiWindowFlags_NoInputs;
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-        ImGui::BeginChild("CenterViewport",
-                          center_child_size,
-                          true,
-                          center_flags);
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-        if (sim) {
-            float field_px_w = (float)(sim->nx * scale);
-            float field_px_h = (float)(sim->ny * scale);
-            float draw_origin_x = center_screen_pos.x;
-            float draw_origin_y = center_screen_pos.y;
-            float draw_w = center_child_size.x;
-            float draw_h = center_child_size.y;
-            if (field_px_w <= center_child_size.x) {
-                draw_origin_x += (center_child_size.x - field_px_w) * 0.5f;
-                draw_w = field_px_w;
-            } else {
-                draw_w = center_child_size.x;
+            if (ImGui::BeginMenu("Layout")) {
+                if (ImGui::MenuItem("Beginner", "F2")) {
+                    current_layout = LAYOUT_BEGINNER;
+                    layout_dirty = true;
+                }
+                if (ImGui::MenuItem("Power User", "F3")) {
+                    current_layout = LAYOUT_POWER_USER;
+                    layout_dirty = true;
+                }
+                if (ImGui::MenuItem("Analysis", "F4")) {
+                    current_layout = LAYOUT_ANALYSIS;
+                    layout_dirty = true;
+                }
+                if (ImGui::MenuItem("Canvas First", "F7")) {
+                    current_layout = LAYOUT_CANVAS_FIRST;
+                    layout_dirty = true;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Reset Layout")) {
+                    layout_dirty = true;
+                }
+                if (ImGui::MenuItem("Save Layout...")) {
+                    ImGui::SaveIniSettingsToDisk("custom_layout.ini");
+                    ui_log_add(&app, "Layout saved: custom_layout.ini");
+                }
+                if (ImGui::MenuItem("Load Layout...")) {
+                    ImGui::LoadIniSettingsFromDisk("custom_layout.ini");
+                    ui_log_add(&app, "Layout loaded: custom_layout.ini");
+                    layout_dirty = true;
+                }
+                ImGui::EndMenu();
             }
-            if (field_px_h <= center_child_size.y) {
-                draw_origin_y += (center_child_size.y - field_px_h) * 0.5f;
-                draw_h = field_px_h;
-            } else {
-                draw_h = center_child_size.y;
+
+            if (ImGui::BeginMenu("Materials")) {
+                if (ImGui::MenuItem("Material Browser...", "M")) {
+                    app.material_browser_open = true;
+                }
+                ImGui::EndMenu();
             }
-            if (draw_w > 4.0f && draw_h > 4.0f) {
-                app.viewport_pos = ImVec2(draw_origin_x, draw_origin_y);
-                app.viewport_size = ImVec2(draw_w, draw_h);
-                app.viewport_valid = true;
-            } else {
-                app.viewport_valid = false;
+
+            if (ImGui::BeginMenu("Analysis")) {
+                if (ImGui::MenuItem("S-Parameters...")) {
+                    app.sparam_window_open = true;
+                }
+                if (ImGui::MenuItem("Smith Chart...")) {
+                    app.smith_chart_open = true;
+                }
+                ImGui::EndMenu();
             }
+
+            ImGui::EndMenuBar();
+        }
+
+        ImGui::End();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGuiWindowFlags viewport_flags = ImGuiWindowFlags_NoScrollbar |
+                                          ImGuiWindowFlags_NoScrollWithMouse |
+                                          ImGuiWindowFlags_NoCollapse |
+                                          ImGuiWindowFlags_NoSavedSettings |
+                                          ImGuiWindowFlags_NoBackground;
+        ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Viewport", nullptr, viewport_flags)) {
+            ImVec2 win_pos = ImGui::GetWindowPos();
+            ImVec2 content_min = ImGui::GetWindowContentRegionMin();
+            ImVec2 content_max = ImGui::GetWindowContentRegionMax();
+            ImVec2 content_pos = ImVec2(win_pos.x + content_min.x, win_pos.y + content_min.y);
+            ImVec2 avail = ImVec2(content_max.x - content_min.x, content_max.y - content_min.y);
+            app.viewport_pos = content_pos;
+            app.viewport_size = avail;
+            app.viewport_valid = (avail.x > 4.0f && avail.y > 4.0f);
         } else {
             app.viewport_valid = false;
         }
+        ImGui::End();
+        ImGui::PopStyleVar();
 
-        // Right column (Simulation Controls + Wizard)
-        ImGui::SetCursorPos(ImVec2(origin.x + left_w + center_w, origin.y));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.11f, 1.00f));
-        ImGui::BeginChild("RightColumn", ImVec2(right_w, main_h), true);
+        // If docking collapses the viewport window to nearly zero, fall back to host area
+        if (!app.viewport_valid) {
+            float menu_h = ImGui::GetFrameHeight();
+            app.viewport_pos = ImVec2(host_pos.x, host_pos.y + menu_h);
+            app.viewport_size = ImVec2(host_size.x, host_size.y - menu_h);
+            app.viewport_valid = (app.viewport_size.x > 4.0f && app.viewport_size.y > 4.0f);
+        }
 
-        // Simulation Controls
+        if (app.show_grid_panel) {
+            if (ImGui::Begin("Grid & Domain", &app.show_grid_panel)) {
+                draw_grid_panel(&wizard, &app);
+            }
+            ImGui::End();
+        }
+        if (app.show_scene_panel) {
+            if (ImGui::Begin("Scenes", &app.show_scene_panel)) {
+                draw_scene_panel(sim, wizard);
+            }
+            ImGui::End();
+        }
+        if (app.show_sources_panel) {
+            if (ImGui::Begin("Sources", &app.show_sources_panel)) {
+                draw_sources_panel(sim, wizard, &app);
+            }
+            ImGui::End();
+        }
+        if (app.show_blocks_panel) {
+            if (ImGui::Begin("Materials / Blocks", &app.show_blocks_panel)) {
+                draw_blocks_panel(wizard, &bootstrap, sim, &app);
+            }
+            ImGui::End();
+        }
+        if (app.show_material_legend) {
+            if (ImGui::Begin("Material Legend", &app.show_material_legend)) {
+                draw_material_legend(&app, sim, &wizard, &bootstrap);
+            }
+            ImGui::End();
+        }
+        if (app.show_probes_panel) {
+            if (ImGui::Begin("Probes", &app.show_probes_panel)) {
+                draw_probes_panel(sim);
+            }
+            ImGui::End();
+        }
         if (app.show_run_panel) {
-            ImGui::SetNextItemOpen(false, ImGuiCond_Once);
-            if (ImGui::CollapsingHeader("Simulation Controls")) {
-            // Control buttons
-            ImVec2 button_size(right_w * 0.45f, 0.0f);
-            if (ImGui::Button(paused ? "Resume" : "Pause", button_size)) {
-                paused = !paused;
-            }
-            ImGui::SameLine();
-            ImGui::Text("Space");
+            if (ImGui::Begin("Run Controls", &app.show_run_panel)) {
+                ImGui::SetNextItemOpen(false, ImGuiCond_Once);
+                if (ImGui::CollapsingHeader("Simulation Controls")) {
+                    float right_w = ImGui::GetContentRegionAvail().x;
+                    ImVec2 button_size(ImMax(0.0f, right_w * 0.45f), 0.0f);
+                    if (ImGui::Button(paused ? "Resume" : "Pause", button_size)) {
+                        paused = !paused;
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("Space");
 
-            ImGui::Separator();
+                    ImGui::Separator();
 
-            // Frequency slider
-            ImGui::TextUnformatted("Frequency");
-            ImGui::Indent();
-            float freq_ghz = (float)(sim->freq * 1e-9);
-            if (ImGui::SliderFloat("GHz", &freq_ghz, 0.001f, 5.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
-                double new_freq = (double)freq_ghz * 1e9;
-                if (new_freq > 0.0) {
-                    fdtd_update_grid_for_freq(sim, new_freq);
-                    sources_set_freq(sim->sources, new_freq);
-                }
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Adjust simulation frequency (1 MHz - 5 GHz)");
-            }
-            ImGui::Unindent();
+                    ImGui::TextUnformatted("Frequency");
+                    ImGui::Indent();
+                    float freq_ghz = (float)(sim->freq * 1e-9);
+                    if (ImGui::SliderFloat("GHz", &freq_ghz, 0.001f, 5.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                        double new_freq = (double)freq_ghz * 1e9;
+                        if (new_freq > 0.0) {
+                            fdtd_update_grid_for_freq(sim, new_freq);
+                            sources_set_freq(sim->sources, new_freq);
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Adjust simulation frequency (1 MHz - 5 GHz)");
+                    }
+                    ImGui::Unindent();
 
-            ImGui::Separator();
+                    ImGui::Separator();
 
-            // Steps/frame slider
-            ImGui::TextUnformatted("Speed");
-            ImGui::Indent();
-            if (ImGui::SliderInt("steps/frame", &steps_per_frame, 1, 50)) {
-                // Speed is controlled per-frame in the main loop
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Number of simulation steps per rendered frame");
-            }
-            ImGui::Unindent();
+                    ImGui::TextUnformatted("Speed");
+                    ImGui::Indent();
+                    if (ImGui::SliderInt("steps/frame", &steps_per_frame, 1, 50)) {
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Number of simulation steps per rendered frame");
+                    }
+                    ImGui::Unindent();
 
-            ImGui::Separator();
-            ImGui::TextUnformatted("Paint Mode");
-            ImGui::Indent();
-            ImGui::Text("Active: %s (M/U)", paint_mode ? "YES" : "NO");
-            if (paint_mode) {
-                if (paint_material_id >= 0) {
-                    const Material* mat = material_library_get_by_id(paint_material_id);
-                    if (mat) {
-                        ImVec4 color = ImVec4(mat->color_r / 255.0f,
-                                              mat->color_g / 255.0f,
-                                              mat->color_b / 255.0f,
-                                              1.0f);
-                        ImGui::PushStyleColor(ImGuiCol_Text, color);
-                        ImGui::Text("Material: %s", mat->name);
-                        ImGui::PopStyleColor();
-                        if (mat->type == MAT_TYPE_PEC) {
-                            ImGui::TextDisabled("(Perfect conductor)");
-                        } else if (mat->type == MAT_TYPE_PMC) {
-                            ImGui::TextDisabled("(Magnetic conductor)");
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Paint Mode");
+                    ImGui::Indent();
+                    ImGui::Text("Active: %s (M/U)", paint_mode ? "YES" : "NO");
+                    if (paint_mode) {
+                        if (paint_material_id >= 0) {
+                            const Material* mat = material_library_get_by_id(paint_material_id);
+                            if (mat) {
+                                ImVec4 color = ImVec4(mat->color_r / 255.0f,
+                                                      mat->color_g / 255.0f,
+                                                      mat->color_b / 255.0f,
+                                                      1.0f);
+                                ImGui::PushStyleColor(ImGuiCol_Text, color);
+                                ImGui::Text("Material: %s", mat->name);
+                                ImGui::PopStyleColor();
+                                if (mat->type == MAT_TYPE_PEC) {
+                                    ImGui::TextDisabled("(Perfect conductor)");
+                                } else if (mat->type == MAT_TYPE_PMC) {
+                                    ImGui::TextDisabled("(Magnetic conductor)");
+                                } else {
+                                    ImGui::Text("eps_r = %.2f", mat->epsilon_r);
+                                    if (mat->tan_delta > 0.0) {
+                                        ImGui::Text("tan(delta) = %.4f", mat->tan_delta);
+                                    }
+                                }
+                            }
                         } else {
-                            ImGui::Text("εᵣ = %.2f", mat->epsilon_r);
-                            if (mat->tan_delta > 0.0) {
-                                ImGui::Text("tan(δ) = %.4f", mat->tan_delta);
+                            const char* type_label = (paint_material_type == 0)
+                                                         ? "PEC"
+                                                         : (paint_material_type == 1) ? "PMC"
+                                                                                       : "Dielectric";
+                            ImGui::Text("Type: %s", type_label);
+                            if (paint_material_type == 2) {
+                                ImGui::Text("eps_r = %.2f", paint_epsilon);
                             }
                         }
-                        if (ImGui::SmallButton("Change Material...")) {
-                            app.material_browser_open = true;
-                        }
+                        ImGui::Text("Brush radius: %d", paint_brush_size);
                     }
-                } else {
-                    const char* types[] = {"PEC", "PMC", "Dielectric"};
-                    const int type_idx = (paint_material_type >= 0 && paint_material_type < 3)
-                                             ? paint_material_type
-                                             : 0;
-                    ImGui::Text("Type: %s (I)", types[type_idx]);
-                    if (type_idx == 2) {
-                        ImGui::Text("Epsilon: %.1f (O/P)", paint_epsilon);
+                    ImGui::Unindent();
+
+                    ImGui::Separator();
+
+                    ImGui::TextUnformatted("Status");
+                    ImGui::Indent();
+                    ImGui::Text("Step: %d", sim->timestep);
+                    ImGui::Text("FPS: %.1f", fps_avg);
+                    ImGui::Unindent();
+
+                    if (ImGui::TreeNode("Grid Info")) {
+                        ImGui::Text("Size: %d x %d", sim->nx, sim->ny);
+                        ImGui::Text("Domain: %.3f x %.3f m", sim->lx, sim->ly);
+                        ImGui::Text("dt: %.3e s", sim->dt);
+                        ImGui::Text("freq: %.3f GHz", sim->freq * 1e-9);
+                        ImGui::TreePop();
                     }
-                    ImGui::TextDisabled("Use Materials menu for library");
+
+                    ImGui::Separator();
+                    ImGui::TextUnformatted("Visualization Scale");
+                    ImGui::Indent();
+                    const char* mode_str = "Manual (L)";
+                    if (auto_rescale && !hold_color && !hold_scope) {
+                        mode_str = "Auto (A)";
+                    } else if (hold_color) {
+                        mode_str = "Hold Color (H)";
+                    } else if (hold_scope) {
+                        mode_str = "Hold Scope (J)";
+                    }
+                    ImGui::Text("Mode: %s", mode_str);
+                    ImGui::Text("Field vmax: %.3e", vmax_smooth);
+                    ImGui::Text("Scope vmax: %.3e", scope_vmax);
+                    ImGui::Unindent();
+
+                    ImGui::Separator();
+                    ImGui::Checkbox("Basic mode", &app.basic_mode);
+
+                    ImGui::Separator();
+                    if (ImGui::Button(app.show_grid_overlay ? "Hide grid" : "Show grid")) {
+                        app.show_grid_overlay = !app.show_grid_overlay;
+                    }
                 }
-                ImGui::Text("Brush radius: %d", paint_brush_size);
             }
-            ImGui::Unindent();
-
-            ImGui::Separator();
-
-            // Status section
-            ImGui::TextUnformatted("Status");
-            ImGui::Indent();
-            ImGui::Text("Step: %d", sim->timestep);
-            ImGui::Text("FPS: %.1f", fps_avg);
-            ImGui::Unindent();
-
-            if (ImGui::TreeNode("Grid Info")) {
-                ImGui::Text("Size: %d x %d", sim->nx, sim->ny);
-                ImGui::Text("Domain: %.3f x %.3f m", sim->lx, sim->ly);
-                ImGui::Text("dt: %.3e s", sim->dt);
-                ImGui::Text("freq: %.3f GHz", sim->freq * 1e-9);
-                ImGui::TreePop();
-            }
-
-            ImGui::Separator();
-            ImGui::TextUnformatted("Visualization Scale");
-            ImGui::Indent();
-            const char* mode_str = "Manual (L)";
-            if (auto_rescale && !hold_color && !hold_scope) {
-                mode_str = "Auto (A)";
-            } else if (hold_color) {
-                mode_str = "Hold Color (H)";
-            } else if (hold_scope) {
-                mode_str = "Hold Scope (J)";
-            }
-            ImGui::Text("Mode: %s", mode_str);
-            ImGui::Text("Field vmax: %.3e", vmax_smooth);
-            ImGui::Text("Scope vmax: %.3e", scope_vmax);
-            ImGui::Unindent();
-
-            ImGui::Separator();
-            ImGui::Checkbox("Basic mode", &app.basic_mode);
-
-            ImGui::Separator();
-            if (ImGui::Button(app.show_grid_overlay ? "Hide grid" : "Show grid")) {
-                app.show_grid_overlay = !app.show_grid_overlay;
-            }
-            }
+            ImGui::End();
         }
         if (app.show_run_settings_panel) {
-            ImGui::Spacing();
-            draw_run_settings_panel(&wizard, &app);
+            if (ImGui::Begin("Run Settings", &app.show_run_settings_panel)) {
+                draw_run_settings_panel(&wizard, &app);
+            }
+            ImGui::End();
         }
 
-        // Interactive Tools section
-        ImGui::SetNextItemOpen(false, ImGuiCond_Once);
-        if (ImGui::CollapsingHeader("Interactive Tools")) {
-            ImGui::TextUnformatted("Source Placement");
-            ImGui::Indent();
-            int max_src = MAX_SRC;
-            if (app.selected_source < 0) app.selected_source = 0;
-            if (app.selected_source >= max_src) app.selected_source = max_src - 1;
-            char current_src_label[64];
-            const Source& ss = sim->sources[app.selected_source];
-            std::snprintf(current_src_label, sizeof(current_src_label),
-                          "#%d (%s)", app.selected_source,
-                          source_type_label(ss.type));
-            if (ImGui::BeginCombo("Source", current_src_label)) {
-                for (int i = 0; i < max_src; ++i) {
-                    const Source& s = sim->sources[i];
-                    char label[64];
-                    std::snprintf(label, sizeof(label), "#%d (%s, %s)", i,
-                                  source_type_label(s.type),
-                                  s.active ? "on" : "off");
-                    bool selected = (i == app.selected_source);
-                    if (ImGui::Selectable(label, selected)) {
-                        app.selected_source = i;
+        if (app.show_scope_window) {
+            if (ImGui::Begin("Scope", &app.show_scope_window)) {
+                if (ImGui::BeginTabBar("ScopeTabs", ImGuiTabBarFlags_None)) {
+                    if (ImGui::BeginTabItem("Scope")) {
+                        if (scope.y && scope.n > 0) {
+                            const int N = scope.n;
+                            static float values[1024];
+                            int max_samples = (N <= (int)(sizeof(values) / sizeof(values[0]))) ? N : (int)(sizeof(values) / sizeof(values[0]));
+                            double vmin = 0.0, vmax_scope = 0.0;
+                            bool first = true;
+                            for (int i = 0; i < max_samples; ++i) {
+                                int idx = (scope.head + i) % N;
+                                double v = scope.y[idx];
+                                values[i] = (float)v;
+                                if (first) {
+                                    vmin = vmax_scope = v;
+                                    first = false;
+                                } else {
+                                    if (v < vmin) vmin = v;
+                                    if (v > vmax_scope) vmax_scope = v;
+                                }
+                            }
+
+                            float ymin = 0.0f;
+                            float ymax = 0.0f;
+                            if (scope_vmax > 0.0) {
+                                ymax = (float)scope_vmax;
+                                ymin = -ymax;
+                            } else {
+                                ymin = (float)vmin;
+                                ymax = (float)vmax_scope;
+                                if (ymin == ymax) {
+                                    ymin -= 1.0f;
+                                    ymax += 1.0f;
+                                }
+                            }
+
+                            ImVec2 plot_size = ImGui::GetContentRegionAvail();
+                            if (plot_size.y < 120.0f) plot_size.y = 120.0f;
+                            ImGui::PlotLines("Probe Ez(center)", values, max_samples, 0, nullptr, ymin, ymax, plot_size);
+                        } else {
+                            ImGui::TextUnformatted("Scope: no data available");
+                        }
+                        ImGui::EndTabItem();
                     }
-                    if (selected) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::Checkbox("Click to move", &app.placing_source);
-            ImGui::Unindent();
+                    if (ImGui::BeginTabItem("FFT")) {
+                        if (scope.n > 0 && sim) {
+                            static bool use_db_scale = true;
+                            ImGui::Checkbox("dB Scale", &use_db_scale);
+                            static double fft_freq[1024];
+                            static double fft_mag[1024];
+                            static double fft_mag_db[1024];
+                            static double fft_phase[1024];
+                            int fft_points =
+                                compute_scope_fft(&scope, sim->dt, fft_freq, fft_mag, fft_phase,
+                                                  IM_ARRAYSIZE(fft_freq));
+                            if (fft_points > 1) {
+                                int plot_count = fft_points - 1;
+                                const double eps = 1e-12;
+                                if (use_db_scale) {
+                                    for (int i = 0; i < fft_points; ++i) {
+                                        fft_mag_db[i] = 20.0 * std::log10(fft_mag[i] + eps);
+                                    }
+                                }
+                                const double* mag_view = use_db_scale ? fft_mag_db : fft_mag;
+                                const char* mag_label = use_db_scale ? "FFT (dB)" : "FFT";
+                                const double* freq_view = fft_freq + 1;
+                                const double* mag_plot = mag_view + 1;
+                                const double* phase_plot = fft_phase + 1;
+                                if (plot_count > 0 &&
+                                    ImPlot::BeginPlot("FFT Magnitude", ImVec2(-1, 240))) {
+                                    ImPlot::SetupAxis(ImAxis_X1, "Frequency (Hz)");
+                                    ImPlot::SetupAxis(ImAxis_Y1,
+                                                      use_db_scale ? "Magnitude (dB)"
+                                                                   : "Magnitude");
+                                    ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+                                    ImPlot::PlotLine(mag_label, freq_view, mag_plot, plot_count);
 
-            ImGui::Separator();
-            ImGui::TextUnformatted("Block Drawing");
-            ImGui::Indent();
-            ImGui::InputInt("Block index", &app.selected_block);
-            if (app.selected_block < 0) app.selected_block = 0;
-            if (app.selected_block >= CONFIG_MAX_MATERIAL_RECTS) {
-                app.selected_block = CONFIG_MAX_MATERIAL_RECTS - 1;
-            }
-            ImGui::Checkbox("Draw with 2 clicks", &app.placing_block);
-            if (app.placing_block) {
-                if (!app.block_first_set) {
-                    ImGui::TextWrapped("Click first corner, then opposite corner.");
-                } else {
-                    ImGui::Text("First: (%d,%d)", app.block_first_i, app.block_first_j);
+                                    int peak_idx = 1;
+                                    double peak_val = mag_view[1];
+                                    for (int i = 2; i < fft_points; ++i) {
+                                        if (mag_view[i] > peak_val) {
+                                            peak_val = mag_view[i];
+                                            peak_idx = i;
+                                        }
+                                    }
+                                    double peak_freq = fft_freq[peak_idx];
+                                    ImPlot::Annotation(peak_freq,
+                                                       peak_val,
+                                                       ImVec4(1, 1, 0, 1),
+                                                       ImVec2(10, -10),
+                                                       true,
+                                                       "Peak: %.2f GHz",
+                                                       peak_freq * 1e-9);
+
+                                    double sim_freq_marker = sim->freq;
+                                    ImPlot::DragLineX(1, &sim_freq_marker, ImVec4(1, 0, 0, 1));
+
+                                    ImPlot::EndPlot();
+                                }
+
+                                if (plot_count > 0 &&
+                                    ImPlot::BeginPlot("FFT Phase", ImVec2(-1, 180))) {
+                                    ImPlot::SetupAxis(ImAxis_X1, "Frequency (Hz)");
+                                    ImPlot::SetupAxis(ImAxis_Y1, "Phase (deg)");
+                                    ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+                                    ImPlot::PlotLine("Phase", freq_view, phase_plot, plot_count);
+                                    ImPlot::EndPlot();
+                                }
+
+                                if (ImGui::Button("Export FFT to CSV")) {
+                                    FILE* fp = fopen("fft_export.csv", "w");
+                                    if (fp) {
+                                        fprintf(fp, "# FFT Export\n");
+                                        fprintf(fp, "# Center frequency: %.12e Hz\n", sim->freq);
+                                        fprintf(fp,
+                                                "Frequency(Hz),Magnitude,Magnitude(dB),Phase(deg)\n");
+                                        for (int i = 0; i < fft_points; ++i) {
+                                            double mag_db = 20.0 * std::log10(fft_mag[i] + eps);
+                                            fprintf(fp,
+                                                    "%.12e,%.12e,%.12e,%.12e\n",
+                                                    fft_freq[i],
+                                                    fft_mag[i],
+                                                    mag_db,
+                                                    fft_phase[i]);
+                                        }
+                                        fclose(fp);
+                                        ui_log_add(&app, "FFT exported: fft_export.csv");
+                                    } else {
+                                        ui_log_add(&app, "Failed to export FFT");
+                                    }
+                                }
+                            } else {
+                                ImGui::TextUnformatted("FFT buffer too small");
+                            }
+                        } else {
+                            ImGui::TextUnformatted("No FFT data available");
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
                 }
             }
-            ImGui::Unindent();
-
-            if (app.last_click_i >= 0 && app.last_click_j >= 0) {
-                ImGui::Separator();
-                ImGui::Text("Last click: (%d,%d)", app.last_click_i, app.last_click_j);
-            }
+            ImGui::End();
         }
 
-        // Handle deferred restarts (from panels)
+        if (app.show_log_panel) {
+            draw_log_panel(&app);
+        }
+
         if (app.request_rebootstrap) {
             const char* restart_msg =
                 (app.rebootstrap_message[0] != '\0') ? app.rebootstrap_message
                                                      : "Rebooted simulation";
             if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
+                reset_view_transform(&app, render, sim, &scale, kDefaultViewportZoom);
                 width = sim->nx * scale;
                 height = sim->ny * scale;
-                if (width < 1920) width = 1920;
-                if (height < 1080) height = 1080;
+                if (width < min_window_width) width = min_window_width;
+                if (height < min_window_height) height = min_window_height;
                 SDL_SetWindowSize(render->window, width, height);
+                app.window_width = width;
+                app.window_height = height;
                 ui_log_add(&app, "%s", restart_msg);
             } else {
                 ui_log_add(&app, "Failed to rebootstrap simulation");
@@ -3195,166 +3999,34 @@ int main(int argc, char** argv) {
             app.rebootstrap_message[0] = '\0';
         }
 
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-
-        // Bottom strip with tabs for Scope and Log
-        ImGui::SetCursorPos(ImVec2(origin.x, origin.y + main_h));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.09f, 1.00f));
-        ImGui::BeginChild("BottomStrip", ImVec2(full.x, bottom_h), true);
-            if (ImGui::BeginTabBar("BottomTabs", ImGuiTabBarFlags_None)) {
-                if (ImGui::BeginTabItem("Scope")) {
-                    if (scope.y && scope.n > 0) {
-                        const int N = scope.n;
-                        static float values[1024];
-                    int max_samples = (N <= (int)(sizeof(values) / sizeof(values[0]))) ? N : (int)(sizeof(values) / sizeof(values[0]));
-                    double vmin = 0.0, vmax_scope = 0.0;
-                    bool first = true;
-                    for (int i = 0; i < max_samples; ++i) {
-                        int idx = (scope.head + i) % N;
-                        double v = scope.y[idx];
-                        values[i] = (float)v;
-                        if (first) {
-                            vmin = vmax_scope = v;
-                            first = false;
-                        } else {
-                            if (v < vmin) vmin = v;
-                            if (v > vmax_scope) vmax_scope = v;
-                        }
-                    }
-
-                    float ymin = 0.0f;
-                    float ymax = 0.0f;
-                    if (scope_vmax > 0.0) {
-                        ymax = (float)scope_vmax;
-                        ymin = -ymax;
-                    } else {
-                        ymin = (float)vmin;
-                        ymax = (float)vmax_scope;
-                        if (ymin == ymax) {
-                            ymin -= 1.0f;
-                            ymax += 1.0f;
-                        }
-                    }
-
-                    ImVec2 plot_size = ImVec2(ImGui::GetContentRegionAvail().x, bottom_h - 60.0f);
-                    ImGui::PlotLines("Probe Ez(center)", values, max_samples, 0, nullptr, ymin, ymax, plot_size);
-                } else {
-                    ImGui::TextUnformatted("Scope: no data available");
-                }
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("FFT")) {
-                    if (scope.n > 0 && sim) {
-                        static bool use_db_scale = true;
-                        ImGui::Checkbox("dB Scale", &use_db_scale);
-                        static double fft_freq[1024];
-                        static double fft_mag[1024];
-                        static double fft_mag_db[1024];
-                        static double fft_phase[1024];
-                        int fft_points =
-                            compute_scope_fft(&scope, sim->dt, fft_freq, fft_mag, fft_phase,
-                                              IM_ARRAYSIZE(fft_freq));
-                        if (fft_points > 1) {
-                            int plot_count = fft_points - 1;
-                            const double eps = 1e-12;
-                            if (use_db_scale) {
-                                for (int i = 0; i < fft_points; ++i) {
-                                    fft_mag_db[i] = 20.0 * std::log10(fft_mag[i] + eps);
-                                }
-                            }
-                            const double* mag_view = use_db_scale ? fft_mag_db : fft_mag;
-                            const char* mag_label = use_db_scale ? "FFT (dB)" : "FFT";
-                            const double* freq_view = fft_freq + 1;
-                            const double* mag_plot = mag_view + 1;
-                            const double* phase_plot = fft_phase + 1;
-                            if (plot_count > 0 &&
-                                ImPlot::BeginPlot("FFT Magnitude", ImVec2(-1, 300))) {
-                                ImPlot::SetupAxis(ImAxis_X1, "Frequency (Hz)");
-                                ImPlot::SetupAxis(ImAxis_Y1,
-                                                  use_db_scale ? "Magnitude (dB)"
-                                                               : "Magnitude");
-                                ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
-                                ImPlot::PlotLine(mag_label, freq_view, mag_plot, plot_count);
-
-                                int peak_idx = 1;
-                                double peak_val = mag_view[1];
-                                for (int i = 2; i < fft_points; ++i) {
-                                    if (mag_view[i] > peak_val) {
-                                        peak_val = mag_view[i];
-                                        peak_idx = i;
-                                    }
-                                }
-                                double peak_freq = fft_freq[peak_idx];
-                                ImPlot::Annotation(peak_freq,
-                                                   peak_val,
-                                                   ImVec4(1, 1, 0, 1),
-                                                   ImVec2(10, -10),
-                                                   true,
-                                                   "Peak: %.2f GHz",
-                                                   peak_freq * 1e-9);
-
-                                double sim_freq_marker = sim->freq;
-                                ImPlot::DragLineX(1, &sim_freq_marker, ImVec4(1, 0, 0, 1));
-
-                                ImPlot::EndPlot();
-                            }
-
-                            if (plot_count > 0 &&
-                                ImPlot::BeginPlot("FFT Phase", ImVec2(-1, 200))) {
-                                ImPlot::SetupAxis(ImAxis_X1, "Frequency (Hz)");
-                                ImPlot::SetupAxis(ImAxis_Y1, "Phase (deg)");
-                                ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
-                                ImPlot::PlotLine("Phase", freq_view, phase_plot, plot_count);
-                                ImPlot::EndPlot();
-                            }
-
-                            if (ImGui::Button("Export FFT to CSV")) {
-                                FILE* fp = fopen("fft_export.csv", "w");
-                                if (fp) {
-                                    fprintf(fp, "# FFT Export\n");
-                                    fprintf(fp, "# Center frequency: %.12e Hz\n", sim->freq);
-                                    fprintf(fp,
-                                            "Frequency(Hz),Magnitude,Magnitude(dB),Phase(deg)\n");
-                                    for (int i = 0; i < fft_points; ++i) {
-                                        double mag_db = 20.0 * std::log10(fft_mag[i] + eps);
-                                        fprintf(fp,
-                                                "%.12e,%.12e,%.12e,%.12e\n",
-                                                fft_freq[i],
-                                                fft_mag[i],
-                                                mag_db,
-                                                fft_phase[i]);
-                                    }
-                                    fclose(fp);
-                                    ui_log_add(&app, "FFT exported: fft_export.csv");
-                                } else {
-                                    ui_log_add(&app, "Failed to export FFT");
-                                }
-                            }
-                        } else {
-                            ImGui::TextUnformatted("FFT buffer too small");
-                        }
-                    } else {
-                        ImGui::TextUnformatted("No FFT data available");
-                    }
-                    ImGui::EndTabItem();
-                }
-            if (ImGui::BeginTabItem("Log")) {
-                ImGui::BeginChild("LogScrollRegion", ImVec2(0, 0), false);
-                for (int i = 0; i < app.log_count; ++i) {
-                    ImGui::TextUnformatted(app.log_lines[i]);
-                }
-                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-                    ImGui::SetScrollHereY(1.0f);
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
+        ImGui::SetNextWindowPos(ImVec2(main_viewport->Pos.x,
+                                      main_viewport->Pos.y + main_viewport->Size.y - status_bar_h));
+        ImGui::SetNextWindowSize(ImVec2(main_viewport->Size.x, status_bar_h));
+        ImGuiWindowFlags status_flags = ImGuiWindowFlags_NoTitleBar |
+                                        ImGuiWindowFlags_NoResize |
+                                        ImGuiWindowFlags_NoMove |
+                                        ImGuiWindowFlags_NoScrollbar |
+                                        ImGuiWindowFlags_NoDocking |
+                                        ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_NoCollapse;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.09f, 1.0f));
+        if (ImGui::Begin("StatusBarOverlay", nullptr, status_flags)) {
+            double sim_time_ns = sim ? (sim->timestep * sim->dt * 1e9) : 0.0;
+            ImGui::Text("Step: %d | Time: %.2f ns | FPS: %.0f",
+                        sim ? sim->timestep : 0,
+                        sim_time_ns,
+                        fps_avg);
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x + ImGui::GetStyle().WindowPadding.x - 260.0f);
+            ImGui::Text("Zoom: %.1fx | Pan: (%.0f, %.0f)",
+                        app.viewport_zoom,
+                        app.viewport_pan_x,
+                        app.viewport_pan_y);
         }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-
         ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
 
         // Help overlay (F1)
         if (show_help_overlay) {
@@ -3407,6 +4079,10 @@ int main(int argc, char** argv) {
                     "Numpad 1-8: Quick-select materials");
                 ImGui::BulletText(
                     "I/O/P keys only in legacy mode (no material selected)");
+                ImGui::BulletText(
+                    "Zoom: Mouse wheel, Ctrl+= / Ctrl+-, Reset: Ctrl+0 or Home");
+                ImGui::BulletText(
+                    "Pan: Middle drag or Shift+Right drag, Arrow keys (Shift = fast)");
 
                         ImGui::Separator();
                         ImGui::TextUnformatted("Press F1 again to close this window.");
@@ -3446,9 +4122,12 @@ int main(int argc, char** argv) {
             ImGui::End();
         }
 
-        app.paint_material_id = paint_material_id;
-        draw_material_browser(&app, &paint_material_id);
-        app.paint_material_id = paint_material_id;
+        SDL_Texture* viewport_texture = NULL;
+        static SDL_Texture* field_texture = NULL;
+        static int field_tex_w = 0;
+        static int field_tex_h = 0;
+
+        ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
 
         // Overlay: show source IDs and wizard blocks on top of the field
         {
@@ -3462,8 +4141,10 @@ int main(int argc, char** argv) {
                 for (int k = 0; k < MAX_SRC; ++k) {
                     const Source& s = sim->sources[k];
                     if (!s.active) continue;
-                    float sx = app.viewport_pos.x + ((float)s.ix + 0.5f) * (float)scale;
-                    float sy = app.viewport_pos.y + ((float)s.iy + 0.5f) * (float)scale;
+                    float sx = app.viewport_pos.x + viewport_offset.x +
+                               ((float)s.ix + 0.5f) * (float)scale;
+                    float sy = app.viewport_pos.y + viewport_offset.y +
+                               ((float)s.iy + 0.5f) * (float)scale;
                     char label[16];
                     std::snprintf(label, sizeof(label), "%d", k);
                     dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
@@ -3489,10 +4170,14 @@ int main(int argc, char** argv) {
                 }
                 for (int i = 0; i < rect_count; ++i) {
                     const MaterialRectSpec& r = wizard.cfg.material_rects[i];
-                    float x0 = app.viewport_pos.x + (float)(r.x0 * (double)sim->nx * (double)scale);
-                    float x1 = app.viewport_pos.x + (float)(r.x1 * (double)sim->nx * (double)scale);
-                    float y0 = app.viewport_pos.y + (float)(r.y0 * (double)sim->ny * (double)scale);
-                    float y1 = app.viewport_pos.y + (float)(r.y1 * (double)sim->ny * (double)scale);
+                    float x0 = app.viewport_pos.x + viewport_offset.x +
+                               (float)(r.x0 * (double)sim->nx * (double)scale);
+                    float x1 = app.viewport_pos.x + viewport_offset.x +
+                               (float)(r.x1 * (double)sim->nx * (double)scale);
+                    float y0 = app.viewport_pos.y + viewport_offset.y +
+                               (float)(r.y0 * (double)sim->ny * (double)scale);
+                    float y1 = app.viewport_pos.y + viewport_offset.y +
+                               (float)(r.y1 * (double)sim->ny * (double)scale);
                     ImVec2 p0(x0, y0);
                     ImVec2 p1(x1, y1);
                     bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
@@ -3516,11 +4201,15 @@ int main(int argc, char** argv) {
                     float local_y = mouse_pos.y - app.viewport_pos.y;
                     if (local_x >= 0.0f && local_y >= 0.0f &&
                         local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
-                        int ix = (int)(local_x / (float)scale);
-                        int iy = (int)(local_y / (float)scale);
+                        float field_x = local_x - viewport_offset.x;
+                        float field_y = local_y - viewport_offset.y;
+                        int ix = (int)(field_x / (float)scale);
+                        int iy = (int)(field_y / (float)scale);
                         if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
-                            float cx = app.viewport_pos.x + ((float)ix + 0.5f) * (float)scale;
-                            float cy = app.viewport_pos.y + ((float)iy + 0.5f) * (float)scale;
+                            float cx = app.viewport_pos.x + viewport_offset.x +
+                                       ((float)ix + 0.5f) * (float)scale;
+                            float cy = app.viewport_pos.y + viewport_offset.y +
+                                       ((float)iy + 0.5f) * (float)scale;
                             float radius = (float)paint_brush_size * (float)scale;
                             ImU32 col = IM_COL32(255, 255, 0, 180);
                             if (paint_material_id >= 0) {
@@ -3560,6 +4249,12 @@ int main(int argc, char** argv) {
         double fps_inst = (dt > 0.0) ? (1.0 / dt) : 0.0;
         if (fps_avg == 0.0) fps_avg = fps_inst;
         else fps_avg = 0.9 * fps_avg + 0.1 * fps_inst;
+        if (app.hud_zoom_timer > 0.0f) {
+            app.hud_zoom_timer = std::max(0.0f, app.hud_zoom_timer - (float)dt);
+        }
+        if (app.hud_pan_timer > 0.0f) {
+            app.hud_pan_timer = std::max(0.0f, app.hud_pan_timer - (float)dt);
+        }
 
         // Update visualization metrics (field and scope scaling)
         {
@@ -3610,6 +4305,78 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Render field into a texture that we display in ImGui
+        if (app.viewport_valid) {
+            int tex_w = (int)app.viewport_size.x;
+            int tex_h = (int)app.viewport_size.y;
+            if (tex_w < 1) tex_w = 1;
+            if (tex_h < 1) tex_h = 1;
+            if (!field_texture || tex_w != field_tex_w || tex_h != field_tex_h) {
+                if (field_texture) {
+                    SDL_DestroyTexture(field_texture);
+                }
+                field_texture =
+                    SDL_CreateTexture(render->renderer,
+                                      SDL_PIXELFORMAT_RGBA8888,
+                                      SDL_TEXTUREACCESS_TARGET,
+                                      tex_w,
+                                      tex_h);
+                field_tex_w = tex_w;
+                field_tex_h = tex_h;
+            }
+            viewport_texture = field_texture;
+            SDL_SetRenderTarget(render->renderer, viewport_texture);
+            SDL_SetRenderDrawColor(render->renderer,
+                                   viewport_clear_color.r,
+                                   viewport_clear_color.g,
+                                   viewport_clear_color.b,
+                                   viewport_clear_color.a);
+            SDL_RenderClear(render->renderer);
+
+            render->offset_x = viewport_offset.x;
+            render->offset_y = viewport_offset.y;
+
+            double vmax = vmax_smooth;
+            if (vmax <= 0.0) vmax = 1.0;
+
+            switch (app.visualization_mode) {
+                case 0:
+                    render_field_heatmap(render, sim, vmax, 1.0);
+                    break;
+                case 1:
+                    render_material_distribution(render, sim, scale);
+                    break;
+                case 2:
+                default:
+                    render_field_heatmap(render, sim, vmax, 1.0);
+                    SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
+                    render_material_overlay(render,
+                                            sim,
+                                            scale,
+                                            app.material_overlay_alpha);
+                    SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
+                    break;
+            }
+
+            if (app.show_material_outlines) {
+                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
+                render_material_outlines(render, sim, scale);
+                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
+            }
+
+            if (app.show_grid_overlay) {
+                SDL_Color grid_col = {40, 40, 50, 255};
+                int grid_step = compute_grid_step_from_scale(scale);
+                render_grid_overlay(render, sim, grid_col, grid_step);
+            }
+            render_sources(render, sim->sources);
+
+            render->offset_x = 0.0f;
+            render->offset_y = 0.0f;
+            SDL_SetRenderTarget(render->renderer, NULL);
+        }
+
+        // Clear backbuffer for ImGui
         SDL_SetRenderDrawColor(render->renderer,
                                viewport_clear_color.r,
                                viewport_clear_color.g,
@@ -3617,58 +4384,448 @@ int main(int argc, char** argv) {
                                viewport_clear_color.a);
         SDL_RenderClear(render->renderer);
 
-        SDL_Rect sdl_viewport = {0, 0, 0, 0};
-        bool viewport_set = false;
-        if (app.viewport_valid) {
-            sdl_viewport.x = (int)app.viewport_pos.x;
-            sdl_viewport.y = (int)app.viewport_pos.y;
-            sdl_viewport.w = (int)app.viewport_size.x;
-            sdl_viewport.h = (int)app.viewport_size.y;
-            if (sdl_viewport.w > 0 && sdl_viewport.h > 0) {
-                SDL_RenderSetViewport(render->renderer, &sdl_viewport);
-                viewport_set = true;
+        // Viewport content (image + overlay toolbar)
+        if (app.viewport_valid && viewport_texture) {
+            ImGui::SetNextWindowPos(app.viewport_pos);
+            ImGui::SetNextWindowSize(app.viewport_size);
+            ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+            ImGuiWindowFlags overlay_flags = ImGuiWindowFlags_NoTitleBar |
+                                             ImGuiWindowFlags_NoResize |
+                                             ImGuiWindowFlags_NoMove |
+                                             ImGuiWindowFlags_NoScrollbar |
+                                             ImGuiWindowFlags_NoSavedSettings |
+                                             ImGuiWindowFlags_NoDocking |
+                                             ImGuiWindowFlags_NoCollapse |
+                                             ImGuiWindowFlags_NoBackground;
+            if (ImGui::Begin("ViewportOverlayWindow", nullptr, overlay_flags)) {
+                ImGui::SetCursorPos(ImVec2(0, 0));
+                ImGui::Image((ImTextureID)viewport_texture, app.viewport_size);
+
+                const float toolbar_w = 260.0f;
+                const float toolbar_h = 90.0f;
+                bool viewport_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                                               ImGuiHoveredFlags_AllowWhenBlockedByPopup |
+                                                               ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+                float toolbar_alpha = viewport_hovered ? 1.0f : 0.35f;
+                ImVec2 toolbar_pos(app.viewport_size.x - toolbar_w - 12.0f,
+                                   12.0f);
+                if (toolbar_pos.x < 0.0f) toolbar_pos.x = 0.0f;
+                if (toolbar_pos.y < 0.0f) toolbar_pos.y = 0.0f;
+                ImGui::SetCursorPos(toolbar_pos);
+                ImVec4 toolbar_bg(0.08f, 0.08f, 0.10f, 0.9f * toolbar_alpha);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, toolbar_bg);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f + 0.25f * toolbar_alpha);
+                if (ImGui::BeginChild("ViewportToolbar",
+                                      ImVec2(toolbar_w, toolbar_h),
+                                      true,
+                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+                    ImVec2 focus = ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
+                    ImGui::TextUnformatted("View");
+                    ImGui::PushButtonRepeat(true);
+                    if (ImGui::Button("-", ImVec2(26.0f, 0.0f))) {
+                        apply_zoom_at_point(&app, render, sim, &scale, focus.x, focus.y, 0.9f, false);
+                        app.hud_zoom_value = app.viewport_zoom;
+                        app.hud_zoom_timer = 1.0f;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Fit", ImVec2(50.0f, 0.0f))) {
+                        if (app.viewport_valid && sim) {
+                            float fit_scale_x = app.viewport_size.x / (float)sim->nx;
+                            float fit_scale_y = app.viewport_size.y / (float)sim->ny;
+                            float fit_zoom = std::max(0.5f, std::min(fit_scale_x, fit_scale_y));
+                            app.viewport_zoom = fit_zoom;
+                            scale = (int)std::lround(fit_zoom);
+                            if (scale < 1) scale = 1;
+                            render->scale = scale;
+                            app.viewport_pan_x = 0.0f;
+                            app.viewport_pan_y = 0.0f;
+                            clamp_pan_offset(&app, sim, scale);
+                            app.hud_zoom_value = app.viewport_zoom;
+                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            app.hud_zoom_timer = 1.0f;
+                            app.hud_pan_timer = 1.0f;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("1:1", ImVec2(40.0f, 0.0f))) {
+                        if (app.viewport_valid && sim) {
+                            app.viewport_zoom = 1.0f;
+                            scale = 1;
+                            render->scale = scale;
+                            app.viewport_pan_x = 0.0f;
+                            app.viewport_pan_y = 0.0f;
+                            clamp_pan_offset(&app, sim, scale);
+                            app.hud_zoom_value = app.viewport_zoom;
+                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            app.hud_zoom_timer = 1.0f;
+                            app.hud_pan_timer = 1.0f;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset", ImVec2(60.0f, 0.0f))) {
+                        reset_view_transform(&app, render, sim, &scale, kDefaultViewportZoom);
+                        clamp_pan_offset(&app, sim, scale);
+                        app.hud_zoom_value = app.viewport_zoom;
+                        app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                        app.hud_zoom_timer = 1.0f;
+                        app.hud_pan_timer = 1.0f;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("+", ImVec2(26.0f, 0.0f))) {
+                        apply_zoom_at_point(&app, render, sim, &scale, focus.x, focus.y, 1.1f, false);
+                        app.hud_zoom_value = app.viewport_zoom;
+                        app.hud_zoom_timer = 1.0f;
+                    }
+                    ImGui::PopButtonRepeat();
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    auto toggle_button = [&](const char* label, bool* value, const ImVec4& on_col) {
+                        ImVec4 off_col(0.16f, 0.16f, 0.18f, 0.7f);
+                        ImVec4 off_hover(0.20f, 0.20f, 0.24f, 0.8f);
+                        ImVec4 off_active(0.24f, 0.24f, 0.28f, 0.9f);
+                        auto clamp_color = [](const ImVec4& c, float delta) {
+                            return ImVec4(std::clamp(c.x + delta, 0.0f, 1.0f),
+                                          std::clamp(c.y + delta, 0.0f, 1.0f),
+                                          std::clamp(c.z + delta, 0.0f, 1.0f),
+                                          c.w);
+                        };
+                        ImVec4 on_hover = clamp_color(on_col, 0.05f);
+                        ImVec4 on_active = clamp_color(on_col, 0.08f);
+                        ImGui::PushStyleColor(ImGuiCol_Button, *value ? on_col : off_col);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, *value ? on_hover : off_hover);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, *value ? on_active : off_active);
+                        bool clicked = ImGui::Button(label, ImVec2(70.0f, 0.0f));
+                        ImGui::PopStyleColor(3);
+                        if (clicked) {
+                            *value = !*value;
+                        }
+                    };
+
+                    toggle_button("Grid", &app.show_grid_overlay, ImVec4(0.16f, 0.35f, 0.22f, 0.9f));
+                    ImGui::SameLine();
+                    toggle_button("Axis", &app.show_axis_overlay, ImVec4(0.20f, 0.32f, 0.50f, 0.9f));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Center", ImVec2(70.0f, 0.0f))) {
+                        if (app.viewport_valid && sim) {
+                            app.viewport_pan_x = 0.0f;
+                            app.viewport_pan_y = 0.0f;
+                            clamp_pan_offset(&app, sim, scale);
+                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            app.hud_pan_timer = 1.0f;
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("|");
+                    ImGui::SameLine();
+
+                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
+                    int mx = 0;
+                    int my = 0;
+                    SDL_GetMouseState(&mx, &my);
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    if (local_x >= 0.0f && local_x < app.viewport_size.x &&
+                        local_y >= 0.0f && local_y < app.viewport_size.y) {
+                        float field_x = local_x - offset.x;
+                        float field_y = local_y - offset.y;
+                        int ix = (int)(field_x / (float)scale);
+                        int iy = (int)(field_y / (float)scale);
+                        if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                            ImGui::Text("Cell: (%d, %d)", ix, iy);
+                        } else {
+                            ImGui::TextUnformatted("Cell: --");
+                        }
+                    } else {
+                        ImGui::TextUnformatted("Cell: --");
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor();
+
+                // HUD badges
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                ImVec2 hud_pos = ImVec2(app.viewport_pos.x + 12.0f, app.viewport_pos.y + 12.0f);
+                if (app.hud_zoom_timer > 0.0f) {
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf), "Zoom %.2fx", app.hud_zoom_value);
+                    ImU32 bg = IM_COL32(20, 20, 30, (int)(200 * app.hud_zoom_timer));
+                    ImU32 fg = IM_COL32(230, 230, 240, (int)(255 * app.hud_zoom_timer));
+                    ImVec2 text_sz = ImGui::CalcTextSize(buf);
+                    ImVec2 pad(8.0f, 4.0f);
+                    ImVec2 box_min = hud_pos;
+                    ImVec2 box_max = ImVec2(hud_pos.x + text_sz.x + pad.x * 2.0f,
+                                            hud_pos.y + text_sz.y + pad.y * 2.0f);
+                    dl->AddRectFilled(box_min, box_max, bg, 4.0f);
+                    dl->AddText(ImVec2(box_min.x + pad.x, box_min.y + pad.y), fg, buf);
+                    hud_pos.y += text_sz.y + pad.y * 2.0f + 6.0f;
+                }
+                if (app.hud_pan_timer > 0.0f) {
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf), "Pan (%.0f, %.0f)", app.hud_pan_value.x, app.hud_pan_value.y);
+                    ImU32 bg = IM_COL32(20, 20, 30, (int)(200 * app.hud_pan_timer));
+                    ImU32 fg = IM_COL32(230, 230, 240, (int)(255 * app.hud_pan_timer));
+                    ImVec2 text_sz = ImGui::CalcTextSize(buf);
+                    ImVec2 pad(8.0f, 4.0f);
+                    ImVec2 box_min = hud_pos;
+                    ImVec2 box_max = ImVec2(hud_pos.x + text_sz.x + pad.x * 2.0f,
+                                            hud_pos.y + text_sz.y + pad.y * 2.0f);
+                    dl->AddRectFilled(box_min, box_max, bg, 4.0f);
+                    dl->AddText(ImVec2(box_min.x + pad.x, box_min.y + pad.y), fg, buf);
+                }
+
+                // Optional axis crosshair at center
+                if (app.show_axis_overlay) {
+                    ImVec2 center = ImVec2(app.viewport_pos.x + app.viewport_size.x * 0.5f,
+                                           app.viewport_pos.y + app.viewport_size.y * 0.5f);
+                    ImU32 axis_col = IM_COL32(120, 180, 255, 100);
+                    dl->AddLine(ImVec2(app.viewport_pos.x, center.y),
+                                ImVec2(app.viewport_pos.x + app.viewport_size.x, center.y),
+                                axis_col, 1.0f);
+                    dl->AddLine(ImVec2(center.x, app.viewport_pos.y),
+                                ImVec2(center.x, app.viewport_pos.y + app.viewport_size.y),
+                                axis_col, 1.0f);
+                }
+
+                // Rulers, labels, and origin marker
+                if (sim && app.show_grid_overlay) {
+                    int grid_step = compute_grid_step_from_scale(scale);
+                    if (grid_step < 1) grid_step = 1;
+                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
+                    float start_x_px = app.viewport_pos.x + offset.x;
+                    float start_y_px = app.viewport_pos.y + offset.y;
+                    float end_x_px = app.viewport_pos.x + app.viewport_size.x;
+                    float end_y_px = app.viewport_pos.y + app.viewport_size.y;
+
+                    // Origin marker
+                    if (start_x_px >= app.viewport_pos.x - 12.0f &&
+                        start_x_px <= end_x_px + 12.0f &&
+                        start_y_px >= app.viewport_pos.y - 12.0f &&
+                        start_y_px <= end_y_px + 12.0f) {
+                        ImU32 origin_col = IM_COL32(255, 80, 80, 220);
+                        dl->AddLine(ImVec2(start_x_px - 10.0f, start_y_px),
+                                    ImVec2(start_x_px + 10.0f, start_y_px),
+                                    origin_col, 2.0f);
+                        dl->AddLine(ImVec2(start_x_px, start_y_px - 10.0f),
+                                    ImVec2(start_x_px, start_y_px + 10.0f),
+                                    origin_col, 2.0f);
+                    }
+
+                    const float tick_short = 6.0f;
+                    const float tick_long = 10.0f;
+                    const float pad = 4.0f;
+                    double cell_w_m = (sim->nx > 0) ? (sim->lx / (double)sim->nx) : 0.0;
+                    double cell_h_m = (sim->ny > 0) ? (sim->ly / (double)sim->ny) : 0.0;
+
+                    auto format_dist = [](double meters, char* out, size_t sz) {
+                        if (meters >= 1.0) {
+                            std::snprintf(out, sz, "%.2f m", meters);
+                        } else if (meters >= 0.01) {
+                            std::snprintf(out, sz, "%.1f cm", meters * 100.0);
+                        } else {
+                            std::snprintf(out, sz, "%.0f mm", meters * 1000.0);
+                        }
+                    };
+
+                    // Visible range in cells
+                    int first_cell_x = (int)std::floor((-offset.x) / (float)scale);
+                    int last_cell_x = (int)std::ceil((app.viewport_size.x - offset.x) / (float)scale);
+                    first_cell_x = std::max(0, first_cell_x);
+                    last_cell_x = std::min(sim->nx, last_cell_x);
+
+                    int first_cell_y = (int)std::floor((-offset.y) / (float)scale);
+                    int last_cell_y = (int)std::ceil((app.viewport_size.y - offset.y) / (float)scale);
+                    first_cell_y = std::max(0, first_cell_y);
+                    last_cell_y = std::min(sim->ny, last_cell_y);
+
+                    for (int cx = first_cell_x - (first_cell_x % grid_step); cx <= last_cell_x; cx += grid_step) {
+                        float x = app.viewport_pos.x + offset.x + (float)cx * (float)scale;
+                        if (x < app.viewport_pos.x || x > end_x_px) continue;
+                        bool major = ((cx / grid_step) % 5) == 0;
+                        float tick = major ? tick_long : tick_short;
+                        dl->AddLine(ImVec2(x, app.viewport_pos.y),
+                                    ImVec2(x, app.viewport_pos.y + tick),
+                                    IM_COL32(180, 180, 190, 190),
+                                    1.0f);
+                        if (major && cell_w_m > 0.0) {
+                            char buf[32];
+                            format_dist(cell_w_m * (double)cx, buf, sizeof(buf));
+                            ImVec2 ts = ImGui::CalcTextSize(buf);
+                            ImVec2 pos = ImVec2(x - ts.x * 0.5f, app.viewport_pos.y + tick + pad);
+                            dl->AddText(pos, IM_COL32(210, 210, 220, 200), buf);
+                        }
+                    }
+
+                    for (int cy = first_cell_y - (first_cell_y % grid_step); cy <= last_cell_y; cy += grid_step) {
+                        float y = app.viewport_pos.y + offset.y + (float)cy * (float)scale;
+                        if (y < app.viewport_pos.y || y > end_y_px) continue;
+                        bool major = ((cy / grid_step) % 5) == 0;
+                        float tick = major ? tick_long : tick_short;
+                        dl->AddLine(ImVec2(app.viewport_pos.x, y),
+                                    ImVec2(app.viewport_pos.x + tick, y),
+                                    IM_COL32(180, 180, 190, 190),
+                                    1.0f);
+                        if (major && cell_h_m > 0.0) {
+                            char buf[32];
+                            format_dist(cell_h_m * (double)cy, buf, sizeof(buf));
+                            ImVec2 ts = ImGui::CalcTextSize(buf);
+                            ImVec2 pos = ImVec2(app.viewport_pos.x + tick + pad,
+                                                y - ts.y * 0.5f);
+                            dl->AddText(pos, IM_COL32(210, 210, 220, 200), buf);
+                        }
+                    }
+                }
+
+                // Ruler overlays & cursor readout
+                if (sim && app.viewport_valid) {
+                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
+                    int mx = 0, my = 0;
+                    SDL_GetMouseState(&mx, &my);
+                    float local_x = (float)mx - app.viewport_pos.x;
+                    float local_y = (float)my - app.viewport_pos.y;
+                    bool mouse_in_view =
+                        (local_x >= 0.0f && local_y >= 0.0f &&
+                         local_x < app.viewport_size.x && local_y < app.viewport_size.y);
+
+                    auto grid_to_screen = [&](const ImVec2& g) {
+                        return ImVec2(app.viewport_pos.x + offset.x + g.x * (float)scale,
+                                      app.viewport_pos.y + offset.y + g.y * (float)scale);
+                    };
+
+                    ImVec2 live_cursor_grid(0.0f, 0.0f);
+                    bool cursor_on_grid = false;
+                    if (mouse_in_view) {
+                        float field_x = local_x - offset.x;
+                        float field_y = local_y - offset.y;
+                        int ix = (int)(field_x / (float)scale);
+                        int iy = (int)(field_y / (float)scale);
+                        if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                            live_cursor_grid = ImVec2((float)ix, (float)iy);
+                            cursor_on_grid = true;
+                        }
+                    }
+
+                    if (app.ruler_mode) {
+                        ImU32 ruler_col = IM_COL32(255, 220, 80, 255);
+                        ImU32 ruler_text = IM_COL32(255, 230, 140, 255);
+                        if (app.ruler_first_point_set) {
+                            ImVec2 a_grid = app.ruler_point_a;
+                            ImVec2 b_grid = cursor_on_grid ? live_cursor_grid : app.ruler_point_b;
+                            ImVec2 a_px = grid_to_screen(a_grid);
+                            ImVec2 b_px = grid_to_screen(b_grid);
+                            dl->AddLine(a_px, b_px, ruler_col, 2.0f);
+
+                            double dx_m = ((double)b_grid.x - (double)a_grid.x) *
+                                          (sim->lx / (double)sim->nx);
+                            double dy_m = ((double)b_grid.y - (double)a_grid.y) *
+                                          (sim->ly / (double)sim->ny);
+                            double distance_m = std::sqrt(dx_m * dx_m + dy_m * dy_m);
+                            double angle_deg = std::atan2(dy_m, dx_m) * 180.0 / IM_PI;
+                            char buf[64];
+                            std::snprintf(buf, sizeof(buf), "%.3f m @ %.1f°", distance_m, angle_deg);
+                            ImVec2 mid = ImVec2((a_px.x + b_px.x) * 0.5f, (a_px.y + b_px.y) * 0.5f);
+                            ImVec2 ts = ImGui::CalcTextSize(buf);
+                            ImVec2 box_min = ImVec2(mid.x - ts.x * 0.5f - 6.0f,
+                                                    mid.y - ts.y * 0.5f - 4.0f);
+                            ImVec2 box_max = ImVec2(mid.x + ts.x * 0.5f + 6.0f,
+                                                    mid.y + ts.y * 0.5f + 4.0f);
+                            dl->AddRectFilled(box_min, box_max, IM_COL32(20, 20, 20, 200), 4.0f);
+                            dl->AddText(ImVec2(box_min.x + 6.0f, box_min.y + 4.0f), ruler_text, buf);
+                        } else {
+                            if (cursor_on_grid) {
+                                ImVec2 hint_pos = grid_to_screen(live_cursor_grid);
+                                dl->AddCircleFilled(hint_pos, 4.0f, ruler_col, 16);
+                                dl->AddText(ImVec2(hint_pos.x + 10.0f, hint_pos.y - 6.0f),
+                                            ruler_text,
+                                            "Ruler: click first point (R to toggle)");
+                            }
+                        }
+                    }
+
+                    if (cursor_on_grid) {
+                        double x_m = (double)live_cursor_grid.x * (sim->lx / (double)sim->nx);
+                        double y_m = (double)live_cursor_grid.y * (sim->ly / (double)sim->ny);
+                        char info[96];
+                        std::snprintf(info,
+                                      sizeof(info),
+                                      "Cell: (%d, %d)  |  %.4f m, %.4f m",
+                                      (int)live_cursor_grid.x,
+                                      (int)live_cursor_grid.y,
+                                      x_m,
+                                      y_m);
+                        ImVec2 info_sz = ImGui::CalcTextSize(info);
+                        ImVec2 info_pad(8.0f, 5.0f);
+                        ImVec2 rect_min = ImVec2(app.viewport_pos.x + 12.0f,
+                                                 app.viewport_pos.y + app.viewport_size.y - info_sz.y - info_pad.y * 2.0f - 12.0f);
+                        ImVec2 rect_max = ImVec2(rect_min.x + info_sz.x + info_pad.x * 2.0f,
+                                                 rect_min.y + info_sz.y + info_pad.y * 2.0f);
+                        dl->AddRectFilled(rect_min, rect_max, IM_COL32(10, 10, 14, 200), 4.0f);
+                        dl->AddText(ImVec2(rect_min.x + info_pad.x, rect_min.y + info_pad.y),
+                                    IM_COL32(230, 230, 240, 255),
+                                    info);
+                    }
+                }
+
+                if (app.show_context_menu) {
+                    ImGui::OpenPopup("ViewportContextMenu");
+                    ImGui::SetNextWindowPos(app.context_menu_pos, ImGuiCond_Always);
+                    app.show_context_menu = false; // consume request
+                }
+                if (ImGui::BeginPopup("ViewportContextMenu")) {
+                    int cx = app.context_menu_cell_i;
+                    int cy = app.context_menu_cell_j;
+                    ImGui::Text("Cell (%d, %d)", cx, cy);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Add Source Here")) {
+                        create_new_source_at(&wizard, sim, &app, cx, cy);
+                        app.show_context_menu = false;
+                    }
+                    if (ImGui::MenuItem("Add Material Block Here")) {
+                        create_block_at(&wizard, &bootstrap, sim, &app, cx, cy);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Measure Distance (R)")) {
+                        app.ruler_mode = true;
+                        app.ruler_first_point_set = false;
+                    }
+                    if (ImGui::MenuItem("Zoom to Fit")) {
+                        if (app.viewport_valid && sim) {
+                            float fit_scale_x = app.viewport_size.x / (float)sim->nx;
+                            float fit_scale_y = app.viewport_size.y / (float)sim->ny;
+                            float fit_zoom = std::max(0.5f, std::min(fit_scale_x, fit_scale_y));
+                            app.viewport_zoom = fit_zoom;
+                            scale = (int)std::lround(fit_zoom);
+                            if (scale < 1) scale = 1;
+                            render->scale = scale;
+                            app.viewport_pan_x = 0.0f;
+                            app.viewport_pan_y = 0.0f;
+                            clamp_pan_offset(&app, sim, scale);
+                            app.hud_zoom_value = app.viewport_zoom;
+                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            app.hud_zoom_timer = 1.0f;
+                            app.hud_pan_timer = 1.0f;
+                        }
+                    }
+                    if (ImGui::MenuItem("Copy Coordinates")) {
+                        char buf[64];
+                        std::snprintf(buf, sizeof(buf), "(%d, %d)", cx, cy);
+                        SDL_SetClipboardText(buf);
+                    }
+                    ImGui::EndPopup();
+                } else {
+                    app.show_context_menu = false;
+                }
             }
-        }
-        if (!viewport_set) {
-            SDL_RenderSetViewport(render->renderer, NULL);
+            ImGui::End();
         }
 
-        double vmax = vmax_smooth;
-        if (vmax <= 0.0) vmax = 1.0;
-
-        switch (app.visualization_mode) {
-            case 0:
-                render_field_heatmap(render, sim, vmax, 1.0);
-                break;
-            case 1:
-                render_material_distribution(render->renderer, sim, scale);
-                break;
-            case 2:
-            default:
-                render_field_heatmap(render, sim, vmax, 1.0);
-                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
-                render_material_overlay(render->renderer,
-                                        sim,
-                                        scale,
-                                        app.material_overlay_alpha);
-                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
-                break;
-        }
-
-        if (app.show_material_outlines) {
-            SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
-            render_material_outlines(render->renderer, sim, scale);
-            SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
-        }
-
-        if (app.show_grid_overlay) {
-            SDL_Color grid_col = {40, 40, 50, 255};
-            render_grid_overlay(render, sim, grid_col);
-        }
-        render_sources(render, sim->sources);
-        if (viewport_set) {
-            SDL_RenderSetViewport(render->renderer, NULL);
-        }
+        app.paint_material_id = paint_material_id;
+        draw_material_browser(&app, &paint_material_id);
+        app.paint_material_id = paint_material_id;
 
         draw_sparameter_window(&app);
         draw_smith_chart(&app);

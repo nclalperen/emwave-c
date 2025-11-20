@@ -1,15 +1,15 @@
 # Prompt #25: Material Blocks Integration (Phase 2 Material Library)
 
 **Phase:** 2.5 (Wizard Integration - Week 2)
-**Effort:** ~4 hours (planned) → **0 hours (ALREADY IMPLEMENTED!)**
+**Effort:** ~4 hours (planned)  **0 hours (ALREADY IMPLEMENTED!)**
 **Priority:** HIGH
-**Status:** ✅ **ALREADY IMPLEMENTED - Validation & Documentation Only**
+**Status:**  **ALREADY IMPLEMENTED - Validation & Documentation Only**
 
 ---
 
 ## Implementation Status
 
-**🎉 DISCOVERY:** During diagnostic review (2025-11-20), found that Material Blocks Integration is **ALREADY COMPLETE** with features **exceeding** the original plan!
+** DISCOVERY:** During diagnostic review (2025-11-20), found that Material Blocks Integration is **ALREADY COMPLETE** with features **exceeding** the original plan!
 
 **Implemented by:** Implementation agent (previous session)
 **Location:** [src/app/main_imgui.cpp](../src/app/main_imgui.cpp) lines 1784-1987 (`draw_blocks_panel()`)
@@ -29,42 +29,42 @@ Integrate structured material rectangles (`MaterialRectSpec`) with the Phase 2 m
 
 ---
 
-## ✅ What's Already Implemented
+##  What's Already Implemented
 
 ### 1. Material Blocks List (Lines 1880-1987)
 
 **Features:**
-- ✅ Shows all material blocks in `wizard.cfg.material_rects[]`
-- ✅ Collapsing tree view per block (default open)
-- ✅ Material color swatch (16×16 color button)
-- ✅ Material name from library (or "PEC"/"PMC"/"Custom")
-- ✅ Filter blocks by selected material (checkbox + auto-filter option)
-- ✅ "No material blocks configured" message when empty
+-  Shows all material blocks in `wizard.cfg.material_rects[]`
+-  Collapsing tree view per block (default open)
+-  Material color swatch (1616 color button)
+-  Material name from library (or "PEC"/"PMC"/"Custom")
+-  Filter blocks by selected material (checkbox + auto-filter option)
+-  "No material blocks configured" message when empty
 
 **UI Layout:**
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Materials / Blocks                       ┃
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+ Materials / Blocks                       
+
 Blocks: 2 / 32  [+ Add Block] [+ Add Block from Material]
-───────────────────────────────────────────
-☑ Filter by selected material  Filter: FR4
-☑ Auto-filter on selection
-───────────────────────────────────────────
-▼ Block 0
-  [██] Material: [Copper ▼]
-  Type: [PEC ▼]
-  x0: ────●─── 0.000   y0: ────●─── 0.000
-  x1: ───────●─ 0.100  y1: ──●────── 0.010
+
+ Filter by selected material  Filter: FR4
+ Auto-filter on selection
+
+ Block 0
+  [] Material: [Copper ]
+  Type: [PEC ]
+  x0:  0.000   y0:  0.000
+  x1:  0.100  y1:  0.010
   Meters: (0.000, 0.000) to (0.010, 0.001)
   PEC/PMC override eps/sigma
   [Delete Block]
 
-▼ Block 1
-  [██] Material: [FR4 ▼]
-  Type: [Dielectric ▼]
-  x0: ────●─── 0.000   y0: ──●────── 0.010
-  x1: ───────●─ 0.100  y1: ──────●── 0.030
+ Block 1
+  [] Material: [FR4 ]
+  Type: [Dielectric ]
+  x0:  0.000   y0:  0.010
+  x1:  0.100  y1:  0.030
   Meters: (0.000, 0.010) to (0.010, 0.003)
   epsr: [4.4]
   sigma: [0.0]
@@ -94,7 +94,7 @@ Blocks: 2 / 32  [+ Add Block] [+ Add Block from Material]
   ```cpp
   r.x0 = 0.3;  r.y0 = 0.3;
   r.x1 = 0.7;  r.y1 = 0.7;
-  apply_material_to_rect(&r, mat);  // Copies εᵣ, σ, tag from library
+  apply_material_to_rect(&r, mat);  // Copies , , tag from library
   ```
 - Auto-applies to simulation
 - Logs to UI: "Added block #N (MaterialName)"
@@ -186,7 +186,7 @@ ImGui::Checkbox("Auto-filter on selection", &app->auto_filter_blocks_on_select);
 static const Material* guess_material_for_rect(const MaterialRectSpec& r)
 ```
 - Identifies material library entry from block properties
-- Matches εᵣ, σ, and tag values
+- Matches , , and tag values
 - Falls back to "Custom" if no library match
 
 **Material Application (Line 263):**
@@ -207,7 +207,7 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 **Functions Implemented:**
 1. **`draw_blocks_panel()`** (lines 1784-1987) - Main panel
 2. **`guess_material_for_rect()`** (line 238) - Material identification
-3. **`apply_material_to_rect()`** (line 263) - Library → Block property copy
+3. **`apply_material_to_rect()`** (line 263) - Library  Block property copy
 4. **`rect_matches_material()`** (line 973) - Filtering helper
 5. **`remove_block()`** (referenced at line 1978, implementation elsewhere)
 
@@ -223,7 +223,7 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 
 ### Basic Functionality:
 - [ ] Open "Materials / Blocks" panel
-- [ ] Click "+ Add Block" - block created with defaults (0.25-0.75 square, εᵣ=4.0)
+- [ ] Click "+ Add Block" - block created with defaults (0.25-0.75 square, =4.0)
 - [ ] Block appears in list with sliders and dropdowns
 - [ ] Click "+ Add Block from Material" - popup opens
 - [ ] Select "Copper" from popup - block created with Copper properties
@@ -232,14 +232,14 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 - [ ] Color swatch matches Copper color (reddish-orange)
 
 ### Coordinate Editing:
-- [ ] Adjust x0 slider from 0.25 → 0.10 - block moves in viewport
+- [ ] Adjust x0 slider from 0.25  0.10 - block moves in viewport
 - [ ] Adjust y0 slider - block repositions
 - [ ] "Meters:" label updates to show physical coordinates
 - [ ] Example: For 0.1m domain, x0=0.5 shows "0.050 m"
 - [ ] Try to set x1 < x0 - automatically clamped to x0 + 0.01
 
 ### Material Selection:
-- [ ] Change block material from "Copper" → "FR4"
+- [ ] Change block material from "Copper"  "FR4"
 - [ ] Type changes to "Dielectric"
 - [ ] epsr and sigma inputs appear
 - [ ] epsr shows 4.4, sigma shows ~0.0
@@ -247,7 +247,7 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 - [ ] Visualization updates (if in Material or Overlay mode)
 
 ### Type & Properties:
-- [ ] Change type from "Dielectric" → "PEC"
+- [ ] Change type from "Dielectric"  "PEC"
 - [ ] epsr/sigma inputs disappear
 - [ ] Message: "PEC/PMC override eps/sigma"
 - [ ] For Dielectric block, edit epsr to 9.0 - changes apply
@@ -259,7 +259,7 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 - [ ] Check log panel - deletion logged
 
 ### Material Filtering:
-- [ ] Create 3 blocks: 2× FR4, 1× Copper
+- [ ] Create 3 blocks: 2 FR4, 1 Copper
 - [ ] In Material Browser, select FR4
 - [ ] Check "Filter by selected material"
 - [ ] Only FR4 blocks visible in list
@@ -285,7 +285,7 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 ### Material Library Integration:
 - [ ] For each library material (Air, Copper, FR4, etc.):
   - [ ] Create block from material
-  - [ ] Verify properties match library (εᵣ, σ, type)
+  - [ ] Verify properties match library (, , type)
   - [ ] Verify color swatch matches library color
   - [ ] Change to different material - properties update
 
@@ -294,20 +294,20 @@ static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat)
 ## Success Criteria (Validation)
 
 **Phase 2.5 Week 2 complete when:**
-1. ✅ Material blocks list shows library material names (IMPLEMENTED)
-2. ✅ Blocks can be created with library material selection (IMPLEMENTED)
-3. ✅ Coordinates editable with numeric precision (IMPLEMENTED - sliders + physical meters)
-4. ✅ "Apply" updates simulation with correct materials (IMPLEMENTED - auto-apply on change)
-5. ✅ Rectangles and paint mode coexist (IMPLEMENTED - separate systems)
-6. ✅ Material dropdown populated from library (IMPLEMENTED - all 11 materials)
-7. ✅ Delete block functionality works (IMPLEMENTED)
+1.  Material blocks list shows library material names (IMPLEMENTED)
+2.  Blocks can be created with library material selection (IMPLEMENTED)
+3.  Coordinates editable with numeric precision (IMPLEMENTED - sliders + physical meters)
+4.  "Apply" updates simulation with correct materials (IMPLEMENTED - auto-apply on change)
+5.  Rectangles and paint mode coexist (IMPLEMENTED - separate systems)
+6.  Material dropdown populated from library (IMPLEMENTED - all 11 materials)
+7.  Delete block functionality works (IMPLEMENTED)
 
 **Additional Features (Beyond Plan):**
-8. ✅ Material color swatches (visual feedback)
-9. ✅ Filter blocks by material (advanced workflow)
-10. ✅ Auto-filter on material selection (power user feature)
-11. ✅ Material guessing (identifies library materials in blocks)
-12. ✅ Two creation modes (default block + from-library)
+8.  Material color swatches (visual feedback)
+9.  Filter blocks by material (advanced workflow)
+10.  Auto-filter on material selection (power user feature)
+11.  Material guessing (identifies library materials in blocks)
+12.  Two creation modes (default block + from-library)
 
 ---
 
@@ -340,8 +340,8 @@ typedef struct {
 
 ### Integration Functions (Already Implemented):
 - `apply_wizard_materials_to_sim()` - Rasterizes blocks onto FDTD grid
-- `guess_material_for_rect()` - Reverse-lookup: block properties → library material
-- `apply_material_to_rect()` - Forward-lookup: library material → block properties
+- `guess_material_for_rect()` - Reverse-lookup: block properties  library material
+- `apply_material_to_rect()` - Forward-lookup: library material  block properties
 - `rect_matches_material()` - Comparison for filtering
 
 ---
@@ -369,7 +369,7 @@ Content:
 
 4. **Material Selection Workflow:**
    - Use dropdown to select from 11 library materials
-   - Properties auto-populate (εᵣ, σ, type)
+   - Properties auto-populate (, , type)
    - Color swatch shows material color
 
 5. **Example: Microstrip Transmission Line:**
@@ -380,9 +380,9 @@ Content:
 
    Block 1: FR4 Substrate
      x0=0.00, y0=0.01, x1=0.10, y1=0.03
-     Material: FR4 (εᵣ=4.4, tan δ=0.02)
+     Material: FR4 (=4.4, tan =0.02)
 
-   Block 2: Copper Trace (50Ω)
+   Block 2: Copper Trace (50)
      x0=0.045, y0=0.03, x1=0.055, y1=0.031
      Material: Copper (PEC)
    ```
@@ -402,32 +402,32 @@ Content:
 
 **Screenshot Goal (ALREADY ACHIEVED):**
 ```
-╔═══════════════════════════════════════════════════════════╗
-║ Materials / Blocks                                        ║
-╠═══════════════════════════════════════════════════════════╣
-║ Blocks: 2 / 32  [+ Add Block] [+ Add Block from Material]║
-║ ─────────────────────────────────────────────────────────║
-║ ☑ Filter by selected material  Filter: FR4               ║
-║ ☑ Auto-filter on selection                                ║
-║ ─────────────────────────────────────────────────────────║
-║                                                           ║
-║ ▼ Block 0: Copper Ground Plane                           ║
-║   [🟧] Material: [Copper ▼]  Type: [PEC ▼]              ║
-║   x0: ────●─── 0.000   y0: ────●─── 0.000                ║
-║   x1: ───────●─ 0.100  y1: ──●────── 0.010               ║
-║   Meters: (0.000, 0.000) to (0.010, 0.001)               ║
-║   PEC/PMC override eps/sigma                             ║
-║   [Delete Block]                                         ║
-║                                                           ║
-║ ▼ Block 1: FR4 Substrate                                 ║
-║   [🟩] Material: [FR4 ▼]  Type: [Dielectric ▼]          ║
-║   x0: ────●─── 0.000   y0: ──●────── 0.010               ║
-║   x1: ───────●─ 0.100  y1: ──────●── 0.030               ║
-║   Meters: (0.000, 0.010) to (0.010, 0.003)               ║
-║   epsr: [4.4]   sigma: [0.0]                             ║
-║   [Delete Block]                                         ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
+
+ Materials / Blocks                                        
+
+ Blocks: 2 / 32  [+ Add Block] [+ Add Block from Material]
+ 
+  Filter by selected material  Filter: FR4               
+  Auto-filter on selection                                
+ 
+                                                           
+  Block 0: Copper Ground Plane                           
+   [] Material: [Copper ]  Type: [PEC ]              
+   x0:  0.000   y0:  0.000                
+   x1:  0.100  y1:  0.010               
+   Meters: (0.000, 0.000) to (0.010, 0.001)               
+   PEC/PMC override eps/sigma                             
+   [Delete Block]                                         
+                                                           
+  Block 1: FR4 Substrate                                 
+   [] Material: [FR4 ]  Type: [Dielectric ]          
+   x0:  0.000   y0:  0.010               
+   x1:  0.100  y1:  0.030               
+   Meters: (0.000, 0.010) to (0.010, 0.003)               
+   epsr: [4.4]   sigma: [0.0]                             
+   [Delete Block]                                         
+                                                           
+
 ```
 
 ---
@@ -436,15 +436,15 @@ Content:
 
 | Feature | Planned (PHASE_2.5_INTEGRATION_PLAN.md) | Implemented (main_imgui.cpp) | Status |
 |---------|------------------------------------------|------------------------------|--------|
-| **Block List** | Basic list with material names | Collapsing tree with color swatches | ✅ EXCEEDED |
-| **Create Block** | Single "Add Block" button | Two modes: Default + From Library | ✅ EXCEEDED |
-| **Material Selection** | Dropdown from library | Dropdown + auto-apply + color preview | ✅ EXCEEDED |
-| **Coordinate Editor** | Numeric inputs (x0, y0, x1, y1) | Sliders + physical meters display | ✅ EXCEEDED |
-| **Property Editor** | Basic εᵣ, σ inputs | Conditional based on type (PEC hides) | ✅ EXCEEDED |
-| **Delete Block** | Delete button | Delete + confirmation + auto-apply | ✅ EXCEEDED |
-| **Material Filtering** | Not planned | Filter by material + auto-filter | ✅ BONUS |
-| **Material Guessing** | Not planned | Reverse-lookup library materials | ✅ BONUS |
-| **Live Updates** | "Apply" button | Auto-apply on all changes | ✅ EXCEEDED |
+| **Block List** | Basic list with material names | Collapsing tree with color swatches |  EXCEEDED |
+| **Create Block** | Single "Add Block" button | Two modes: Default + From Library |  EXCEEDED |
+| **Material Selection** | Dropdown from library | Dropdown + auto-apply + color preview |  EXCEEDED |
+| **Coordinate Editor** | Numeric inputs (x0, y0, x1, y1) | Sliders + physical meters display |  EXCEEDED |
+| **Property Editor** | Basic ,  inputs | Conditional based on type (PEC hides) |  EXCEEDED |
+| **Delete Block** | Delete button | Delete + confirmation + auto-apply |  EXCEEDED |
+| **Material Filtering** | Not planned | Filter by material + auto-filter |  BONUS |
+| **Material Guessing** | Not planned | Reverse-lookup library materials |  BONUS |
+| **Live Updates** | "Apply" button | Auto-apply on all changes |  EXCEEDED |
 
 **Summary:** Implementation is **significantly more advanced** than planned. All planned features + 4 bonus features.
 
@@ -452,7 +452,7 @@ Content:
 
 ## Next Steps
 
-**For Implementation Agent:** ✅ **NO IMPLEMENTATION NEEDED - ALREADY COMPLETE**
+**For Implementation Agent:**  **NO IMPLEMENTATION NEEDED - ALREADY COMPLETE**
 
 **For User/Reviewer:**
 1. Run full testing checklist (34 test cases above)
@@ -463,11 +463,11 @@ Content:
 6. Mark Prompt #25 as **COMPLETE** in PHASE_2.5_INTEGRATION_PLAN.md
 
 **For Phase 2.5 Progress:**
-- ✅ Prompt #24 (Sources): COMPLETE
-- ✅ Prompt #25 (Material Blocks): COMPLETE
-- ✅ Prompt #26 (Grid & Domain): COMPLETE
-- ✅ Prompt #27 (Run Settings): COMPLETE
-- **🎉 Phase 2.5: 100% COMPLETE!**
+-  Prompt #24 (Sources): COMPLETE
+-  Prompt #25 (Material Blocks): COMPLETE
+-  Prompt #26 (Grid & Domain): COMPLETE
+-  Prompt #27 (Run Settings): COMPLETE
+- ** Phase 2.5: 100% COMPLETE!**
 
 ---
 
@@ -477,13 +477,13 @@ Content:
 2. **Dual creation modes** - Flexibility for different workflows
 3. **Material filtering** - Essential for complex multi-material designs
 4. **Color swatches** - Visual feedback matches viewport
-5. **Physical meters display** - Bridges normalized ↔ real-world coordinates
-6. **Conditional property UI** - Clean interface (PEC doesn't show εᵣ)
+5. **Physical meters display** - Bridges normalized  real-world coordinates
+6. **Conditional property UI** - Clean interface (PEC doesn't show )
 7. **Material guessing** - Smart identification of library materials
 
 ---
 
-**Status: ✅ VALIDATION READY**
+**Status:  VALIDATION READY**
 
 Hand this document to reviewer for validation testing. No implementation work required!
 

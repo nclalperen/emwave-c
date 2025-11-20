@@ -1,7 +1,0 @@
-1:emwave_cli_smoke
-2:emwave_cli_sweep_smoke
-3:config_loader_tests
-4:fdtd_core_tests
-5:analysis_tests
-6:config_runtime_tests
-7:material_library_tests

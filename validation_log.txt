@@ -43,3 +43,5 @@
 2025-11-20T03:30:13.4100+03:00 BEGIN: Run ctest suite (Release)
 2025-11-20T03:30:16.5700+03:00 PASS: 7/7 tests (emwave_cli_smoke, sweep_smoke, config_loader, fdtd_core, analysis, config_runtime, material_library)
 2025-11-20T03:30:16.5800+03:00 NOTE: 34-case Material Blocks manual checklist not executed in this session (requires interactive UI); keep on manual test queue.
+2025-11-20T04:06:00.0000+03:00 NOTE: Interactive 34-case Material Blocks checklist still pending; run inside emwave_imgui with viewport focus (Sections 1-10 above). Record outcomes here when executed.
+2025-11-20T04:06:00.0500+03:00 NOTE: Cross-platform builds (macOS/Linux) not run on this Windows host. Recommended: macOS (clang) `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build && ctest --output-on-failure`; Linux (gcc/clang) same steps. Verify SDL2/SDL2_ttf linkage and run `emwave_cli --config configs/waveguide.json --run-steps=200` smoke.
