@@ -113,6 +113,7 @@ if ($env:VCPKG_ROOT) {
     }
 } else {
     Write-Host "INFO: VCPKG_ROOT not set; CMake will search for SDL2/SDL2_ttf via system paths" -ForegroundColor Yellow
+    Write-Host "TIP: Set VCPKG_ROOT to a user-local vcpkg (not under Program Files) to avoid lock contention." -ForegroundColor Yellow
 }
 
 Write-Host ""
