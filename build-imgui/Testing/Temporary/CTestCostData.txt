@@ -1,0 +1,8 @@
+emwave_cli_smoke 1 0.397275
+emwave_cli_sweep_smoke 1 1.87871
+config_loader_tests 1 0.192569
+fdtd_core_tests 1 0.0822494
+analysis_tests 1 0.080136
+config_runtime_tests 1 0.0599437
+material_library_tests 1 0.0779198
+---

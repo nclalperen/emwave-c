@@ -1,9 +1,9 @@
 # emwave-c Strategic Vision & Implementation Plan
 ## Executive Summary
 
-**Project Status:** Production-ready simulation core, UI transformation underway
-**Current Feature Parity:** 72% (43/60 SDL2 features) - Up from 47%
-**Estimated Completion:** Phase 1 (Feature Parity) 85% complete, ~16 hours remaining
+**Project Status:** Production-ready simulation core; Phase 2 (Professional Transformation) and Phase 2.5 (Wizard integration) COMPLETE
+**Current Feature Parity:** 100% of planned Phase 2/2.5 scope (material library, S-params, Smith chart, blocks, setup panel) plus bonus workflow polish
+**Estimated Completion:** Phase 3 (Advanced exports/automation) pending scheduling; focus now on validation, docs, and release prep
 
 ---
 
@@ -30,14 +30,20 @@
 5. **Cross-Platform**: Windows/Linux/macOS support
 
 ### The Gap (What Needs Work)
-**UI is the primary strategic opportunity**
-- Current SDL2 UI is functional but holds back wider adoption
-- ImGui prototype is 72% complete and shows promise
-- Missing: Modern UX, tooltips, material browser, advanced visualization
+**Next frontier: polish + distribution**
+- ImGui front-end now carries Phase 2/2.5 features; remaining work is validation, documentation, and packaging.
+- Phase 3 export/automation (sweeps, reporting, batch capture) is not started.
+- Release assets (installer/bundles, tutorial content) still needed to broaden adoption.
 
 ---
 
 ## 🚀 Implementation Progress
+
+### ✅ Current Phase Status (2025-11-20)
+- Phase 2: COMPLETE (material library, ImPlot scope/FFT, S-parameters, Smith chart).
+- Phase 2.5: COMPLETE (Sources panel CRUD with expressions, Materials/Blocks integration with library-driven creation/filtering, Simulation Setup panel for grid/domain/boundary/CFL).
+- Validation: Release build and unit suite passing; 34-case material-blocks manual checklist queued for interactive run.
+- Next up: Phase 3 planning (exports/automation) plus packaging and documentation polish.
 
 ### ✅ Phase 1 Progress (Week 1 Complete)
 

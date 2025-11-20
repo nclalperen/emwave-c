@@ -117,6 +117,13 @@ After building, launch from the build directory or project root:
 ./build/emwave                 # Linux/macOS/MSYS2
 ```
 
+### Material blocks (ImGui front-end)
+- Launch `build-imgui/Release/emwave_imgui.exe`, open the **Materials / Blocks** panel, and use `+ Add Block` for a default dielectric square or `+ Add Block from Material` to start from a library preset (Copper, FR4, etc.).
+- Select a block to edit its material/type and the normalized coordinates `x0/y0/x1/y1`; the panel shows the corresponding meters using the current domain size, and enforces a minimum span of 0.01 in each direction.
+- Materials drop-down comes from the Phase 2 library (11 presets). Switching materials swaps in the correct `epsr`, `sigma`, and PEC/PMC tags; dielectric fields expose editable `epsr`/`sigma`, while PEC/PMC hide them.
+- Filtering options: pick a material in the browser, enable **Filter by selected material**, and optionally toggle **Auto-filter on selection** to focus the list on matching blocks. Blocks and paint can coexist; paint mode stays independent.
+- Example microstrip stack (normalized coordinates): Copper ground (0.00,0.00)-(0.10,0.01), FR4 substrate (0.00,0.01)-(0.10,0.03), Copper trace (0.045,0.03)-(0.055,0.031). Save with `Ctrl+S` and reload to restore blocks.
+
 ### Configuration-driven runs
 - JSON scenes live under `configs/`. The schema is documented in `configs/SCHEMA.md`.
 - Override runtime parameters from the CLI; flags always win over JSON values.
