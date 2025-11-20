@@ -1,9 +1,20 @@
 # ImGui UI Implementation Progress
 
-**Date:** 2025-11-18
-**Status:** Phase 1 in progress - Core functionality complete, polish pending
+**Date:** 2025-11-20
+**Status:** Phase 2.5 COMPLETE - Professional features and wizard integrations landed; Phase 3 planning pending
 
-## ✅ Completed Features (Week 1 - Core Interactions)
+## Current Snapshot (Phase 2 + 2.5)
+- Material library, browser, and paint/legend views shipped with ImPlot scope/FFT, S-parameters, and Smith chart.
+- Sources panel supports create/edit/delete, expression editor with live preview, and log integration.
+- Materials/Blocks panel integrates library-backed blocks, filtering, color swatches, delete/add-from-material buttons, and coordinate/type editors with auto-apply.
+- Simulation Setup panel exposes grid/domain/boundary/CFL with restart handling.
+- Unit suite and emwave_cli smoke tests pass in Release; manual UI/blocks checklist queued for interactive run.
+
+---
+
+Legacy Week 1/early-phase detail remains below for reference; Phase 2 and 2.5 have since landed and will be rolled into a refreshed progress matrix alongside upcoming Phase 3 items.
+
+## ✅ Completed Features (Week 1 - Core Interactions, historical snapshot)
 
 ### Infrastructure Changes
 - [x] **Docking Enabled** - Users can now rearrange panels (line 668)

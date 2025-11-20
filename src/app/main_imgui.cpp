@@ -50,7 +50,6 @@ struct AppState {
     bool show_run_panel;
     bool show_grid_panel;
     bool show_run_settings_panel;
-    bool show_wizard_panel;
     bool show_probes_panel;
     bool show_log_panel;
     bool show_expression_panel;
@@ -71,6 +70,9 @@ struct AppState {
     bool filter_dielectrics;
     /* Material visualization */
     bool show_material_legend;
+    bool filter_blocks_by_material;
+    bool auto_filter_blocks_on_select;
+    bool highlight_blocks_by_material;
     int visualization_mode;   // 0=Field,1=Material,2=Overlay
     bool show_material_outlines;
     float material_overlay_alpha;
@@ -104,6 +106,10 @@ struct WizardState {
     bool open;
     bool advanced;
 };
+
+static void apply_wizard_materials_to_sim(const WizardState& wizard,
+                                          SimulationBootstrap* bootstrap,
+                                          SimulationState* sim);
 
 static void wizard_init_from_config(WizardState& w, const SimulationConfig* cfg) {
     if (cfg) {
@@ -143,6 +149,167 @@ static const char* source_field_label(SourceFieldType f) {
         case SRC_FIELD_HX: return "Hx";
         case SRC_FIELD_HY: return "Hy";
         default:           return "Ez";
+    }
+}
+
+static double clamp01(double v) {
+    if (v < 0.0) return 0.0;
+    if (v > 1.0) return 1.0;
+    return v;
+}
+
+static int normalized_to_cell_index(double frac, int n) {
+    if (n <= 0) return 0;
+    double clamped = clamp01(frac);
+    int idx = (int)std::lround(clamped * (double)(n - 1));
+    const int pad = 2;
+    if (idx < pad) idx = pad;
+    if (idx >= n - pad && n > pad) idx = n - pad - 1;
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    return idx;
+}
+
+static void free_source_expression(Source* s) {
+    if (!s || !s->expr_program) return;
+    expr_free((ExprProgram*)s->expr_program);
+    s->expr_program = NULL;
+}
+
+static void apply_source_spec_to_runtime(SimulationState* sim,
+                                         int idx,
+                                         const SourceConfigSpec* spec) {
+    if (!sim || !spec) return;
+    if (idx < 0 || idx >= MAX_SRC) return;
+    Source* dst = &sim->sources[idx];
+    dst->active = spec->active;
+    dst->type = spec->type;
+    dst->field = spec->field;
+    dst->amp = spec->amp;
+    dst->freq = spec->freq;
+    dst->sigma2 = (spec->sigma2 > 0.01) ? spec->sigma2 : 0.01;
+    dst->ix = normalized_to_cell_index(spec->x, sim->nx);
+    dst->iy = normalized_to_cell_index(spec->y, sim->ny);
+    std::strncpy(dst->expr_text, spec->expr, SOURCE_EXPR_MAX_LEN);
+    dst->expr_text[SOURCE_EXPR_MAX_LEN - 1] = '\0';
+    free_source_expression(dst);
+    source_reparam(dst);
+    if (dst->type == SRC_EXPR && dst->expr_text[0] != '\0') {
+        ExprProgram* prog = NULL;
+        char errbuf[128];
+        if (expr_compile(dst->expr_text, &prog, errbuf, (int)sizeof(errbuf))) {
+            dst->expr_program = prog;
+        } else {
+            dst->expr_program = NULL;
+        }
+    }
+}
+
+static void clear_runtime_source(SimulationState* sim, int idx) {
+    if (!sim || idx < 0 || idx >= MAX_SRC) return;
+    Source* dst = &sim->sources[idx];
+    dst->active = 0;
+    free_source_expression(dst);
+    dst->expr_text[0] = '\0';
+}
+
+static void create_new_source(WizardState* wizard, SimulationState* sim, AppState* app) {
+    if (!wizard || !sim) return;
+    int count = wizard->cfg.source_count;
+    if (count >= MAX_SRC) return;
+    SourceConfigSpec* spec = &wizard->cfg.source_configs[count];
+    spec->active = 1;
+    spec->type = SRC_CW;
+    spec->field = SRC_FIELD_EZ;
+    spec->x = 0.5;
+    spec->y = 0.5;
+    spec->amp = 1.0;
+    spec->freq = 1.0e9;
+    spec->sigma2 = 4.0;
+    spec->expr[0] = '\0';
+    wizard->cfg.source_count = count + 1;
+    apply_source_spec_to_runtime(sim, count, spec);
+    if (app) {
+        app->selected_source = count;
+        ui_log_add(app, "Added source #%d", count);
+    }
+}
+
+static const Material* guess_material_for_rect(const MaterialRectSpec& r) {
+    const Material* best = nullptr;
+    double best_score = 1e9;
+    int mat_count = material_library_get_count();
+    for (int i = 0; i < mat_count; ++i) {
+        const Material* mat = material_library_get_by_index(i);
+        if (!mat) continue;
+        if (r.tag == 1) {
+            if (mat->type == MAT_TYPE_PEC) return mat;
+            continue;
+        }
+        if (r.tag == 2) {
+            if (mat->type == MAT_TYPE_PMC) return mat;
+            continue;
+        }
+        if (mat->type == MAT_TYPE_PEC || mat->type == MAT_TYPE_PMC) continue;
+        double diff = std::fabs(mat->epsilon_r - r.epsr);
+        if (diff < best_score) {
+            best_score = diff;
+            best = mat;
+        }
+    }
+    return best;
+}
+
+static void apply_material_to_rect(MaterialRectSpec* rect, const Material* mat) {
+    if (!rect || !mat) return;
+    if (mat->type == MAT_TYPE_PEC) {
+        rect->tag = 1;
+        rect->epsr = 1.0;
+        rect->sigma = mat->conductivity;
+    } else if (mat->type == MAT_TYPE_PMC) {
+        rect->tag = 2;
+        rect->epsr = 1.0;
+        rect->sigma = 0.0;
+    } else {
+        rect->tag = 0;
+        rect->epsr = mat->epsilon_r;
+        rect->sigma = mat->conductivity;
+    }
+}
+
+static void remove_block(WizardState* wizard,
+                         SimulationBootstrap* bootstrap,
+                         SimulationState* sim,
+                         AppState* app,
+                         int idx) {
+    if (!wizard || idx < 0 || idx >= wizard->cfg.material_rect_count) return;
+    for (int j = idx; j < wizard->cfg.material_rect_count - 1; ++j) {
+        wizard->cfg.material_rects[j] = wizard->cfg.material_rects[j + 1];
+    }
+    wizard->cfg.material_rect_count--;
+    if (bootstrap && sim) {
+        apply_wizard_materials_to_sim(*wizard, bootstrap, sim);
+    }
+    if (app) {
+        ui_log_add(app, "Deleted block #%d", idx);
+    }
+}
+
+static void delete_source_at(WizardState* wizard, SimulationState* sim, AppState* app, int idx) {
+    if (!wizard || !sim) return;
+    int count = wizard->cfg.source_count;
+    if (idx < 0 || idx >= count) return;
+    for (int i = idx; i < count - 1; ++i) {
+        wizard->cfg.source_configs[i] = wizard->cfg.source_configs[i + 1];
+        apply_source_spec_to_runtime(sim, i, &wizard->cfg.source_configs[i]);
+    }
+    wizard->cfg.source_count = count - 1;
+    clear_runtime_source(sim, wizard->cfg.source_count);
+    if (app) {
+        if (app->selected_source >= wizard->cfg.source_count) {
+            app->selected_source = wizard->cfg.source_count - 1;
+        }
+        ui_log_add(app, "Deleted source #%d", idx);
     }
 }
 
@@ -234,71 +401,191 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
     if (!ImGui::CollapsingHeader("Sources")) return;
 
     ImGui::Indent();
-    int max_src = MAX_SRC;
-    if (wizard.cfg.source_count > max_src) {
-        wizard.cfg.source_count = max_src;
+    int count = wizard.cfg.source_count;
+    if (count < 0) count = 0;
+    if (count > MAX_SRC) count = MAX_SRC;
+    wizard.cfg.source_count = count;
+
+    if (count == 0) {
+        app->selected_source = -1;
+    } else {
+        if (app->selected_source < 0) app->selected_source = 0;
+        if (app->selected_source >= count) app->selected_source = count - 1;
     }
 
-    ImGui::Text("Configured: %d / %d", wizard.cfg.source_count, max_src);
+    ImGui::Text("Configured: %d / %d", count, MAX_SRC);
+    ImGui::SameLine();
+    bool can_add = (count < MAX_SRC);
+    if (!can_add) ImGui::BeginDisabled();
+    if (ImGui::Button("+ New Source")) {
+        create_new_source(&wizard, sim, app);
+        count = wizard.cfg.source_count;
+    }
+    if (!can_add) {
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Max reached");
+    }
     ImGui::Separator();
 
-    ImGui::TextUnformatted("Source list");
-    ImGui::Indent();
-    for (int i = 0; i < max_src; ++i) {
-        Source& s = sim->sources[i];
-        bool active = (s.active != 0);
-        char label[64];
-        std::snprintf(label, sizeof(label), "#%d %s", i, source_type_label(s.type));
-        bool selected = (app->selected_source == i);
-        if (ImGui::Selectable(label, selected)) {
-            app->selected_source = i;
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox("##on", &active)) {
-            s.active = active ? 1 : 0;
-            if (i < wizard.cfg.source_count) {
-                wizard.cfg.source_configs[i].active = s.active;
+    if (count == 0) {
+        ImGui::TextDisabled("No sources configured.");
+    } else {
+        ImGui::TextUnformatted("Source list");
+        ImGui::Indent();
+        for (int i = 0; i < count; ++i) {
+            SourceConfigSpec& spec = wizard.cfg.source_configs[i];
+            ImGui::PushID(i);
+            char label[64];
+            std::snprintf(label,
+                          sizeof(label),
+                          "#%d %s",
+                          i,
+                          source_type_label(spec.type));
+            bool selected = (app->selected_source == i);
+            if (ImGui::Selectable(label, selected)) {
+                app->selected_source = i;
             }
+            ImGui::SameLine();
+            bool active = spec.active != 0;
+            if (ImGui::Checkbox("##active", &active)) {
+                spec.active = active ? 1 : 0;
+                apply_source_spec_to_runtime(sim, i, &spec);
+            }
+            ImGui::SameLine();
+            ImGui::Text("%s", source_field_label(spec.field));
+            ImGui::SameLine();
+            ImGui::TextDisabled("Pos: (%.2f, %.2f)", spec.x, spec.y);
+            ImGui::PopID();
         }
-        ImGui::SameLine();
-        ImGui::Text("%s", source_field_label(s.field));
+        ImGui::Unindent();
     }
-    ImGui::Unindent();
 
     int idx = app->selected_source;
-    if (idx >= 0 && idx < max_src) {
+    if (idx >= 0 && idx < count) {
+        SourceConfigSpec& spec = wizard.cfg.source_configs[idx];
         ImGui::Separator();
-        ImGui::Text("Selected source #%d", idx);
+        ImGui::Text("Source #%d", idx);
         ImGui::Indent();
 
-        Source& s = sim->sources[idx];
-
-        int type_idx = (int)s.type;
-        const char* types[] = { "CW", "Gaussian", "Ricker", "Expr" };
+        const char* types[] = {"CW", "Gaussian", "Ricker", "Expr"};
+        int type_idx = (int)spec.type;
+        if (type_idx < 0 || type_idx >= (int)IM_ARRAYSIZE(types)) type_idx = 0;
         if (ImGui::Combo("Type", &type_idx, types, IM_ARRAYSIZE(types))) {
-            s.type = (SourceType)type_idx;
-            source_reparam(&s);
+            spec.type = (SourceType)type_idx;
+            apply_source_spec_to_runtime(sim, idx, &spec);
         }
 
-        int field_idx = (int)s.field;
-        const char* field_items[] = { "Ez", "Hx", "Hy" };
+        const char* field_items[] = {"Ez", "Hx", "Hy"};
+        int field_idx = (int)spec.field;
+        if (field_idx < 0 || field_idx >= (int)IM_ARRAYSIZE(field_items)) field_idx = 0;
         if (ImGui::Combo("Field", &field_idx, field_items, IM_ARRAYSIZE(field_items))) {
-            s.field = (SourceFieldType)field_idx;
+            spec.field = (SourceFieldType)field_idx;
+            apply_source_spec_to_runtime(sim, idx, &spec);
         }
 
-        double amp = s.amp;
-        if (ImGui::InputDouble("Amplitude", &amp, 0.1, 1.0, "%.3f")) {
-            s.amp = amp;
+        float norm_x = (float)spec.x;
+        if (ImGui::SliderFloat("X (0-1)", &norm_x, 0.0f, 1.0f, "%.3f")) {
+            spec.x = clamp01(norm_x);
+            apply_source_spec_to_runtime(sim, idx, &spec);
         }
-        double freq = s.freq;
+        float norm_y = (float)spec.y;
+        if (ImGui::SliderFloat("Y (0-1)", &norm_y, 0.0f, 1.0f, "%.3f")) {
+            spec.y = clamp01(norm_y);
+            apply_source_spec_to_runtime(sim, idx, &spec);
+        }
+        const Source& runtime_src = sim->sources[idx];
+        ImGui::TextDisabled("Grid cell: (%d, %d)", runtime_src.ix, runtime_src.iy);
+
+        double amp = spec.amp;
+        if (ImGui::InputDouble("Amplitude", &amp, 0.1, 1.0, "%.3f")) {
+            spec.amp = amp;
+            apply_source_spec_to_runtime(sim, idx, &spec);
+        }
+        double freq = spec.freq;
         if (ImGui::InputDouble("Frequency (Hz)", &freq, 1e6, 1e8, "%.3e")) {
             if (freq > 0.0) {
-                s.freq = freq;
-                source_reparam(&s);
+                spec.freq = freq;
+                apply_source_spec_to_runtime(sim, idx, &spec);
             }
         }
 
-        ImGui::Text("Position: (%d,%d)", s.ix, s.iy);
+        if (spec.type == SRC_GAUSS_PULSE || spec.type == SRC_RICKER) {
+            double sigma = spec.sigma2;
+            if (ImGui::InputDouble("Sigma^2 (cells^2)", &sigma, 0.1, 1.0, "%.3f")) {
+                if (sigma < 0.1) sigma = 0.1;
+                spec.sigma2 = sigma;
+                apply_source_spec_to_runtime(sim, idx, &spec);
+            }
+        } else {
+            ImGui::TextDisabled("Sigma^2 applies to Gaussian/Ricker pulses.");
+        }
+
+        if (spec.type == SRC_EXPR) {
+            if (ImGui::InputTextMultiline("Expression",
+                                          spec.expr,
+                                          SOURCE_EXPR_MAX_LEN,
+                                          ImVec2(-1.0f, ImGui::GetTextLineHeight() * 4))) {
+                apply_source_spec_to_runtime(sim, idx, &spec);
+            }
+            ImGui::TextDisabled("Variables: t (s), amp, freq, pi");
+
+            if (spec.expr[0] != '\0') {
+                char errbuf[128];
+                ExprProgram* prog = nullptr;
+                if (expr_compile(spec.expr, &prog, errbuf, sizeof(errbuf))) {
+                    const int N = 128;
+                    float values[N];
+                    double period = (spec.freq > 0.0) ? (1.0 / spec.freq) : 1e-9;
+                    double t_max = (period > 0.0) ? 3.0 * period : 3e-9;
+                    double vmin = 0.0;
+                    double vmax = 0.0;
+                    bool first = true;
+                    for (int k = 0; k < N; ++k) {
+                        double t = t_max * (double)k / (double)(N - 1);
+                        double v = expr_eval(prog, t, spec.amp, spec.freq);
+                        values[k] = (float)v;
+                        if (first) {
+                            vmin = vmax = v;
+                            first = false;
+                        } else {
+                            if (v < vmin) vmin = v;
+                            if (v > vmax) vmax = v;
+                        }
+                    }
+                    float ymin = (float)vmin;
+                    float ymax = (float)vmax;
+                    if (ymin == ymax) {
+                        ymin -= 1.0f;
+                        ymax += 1.0f;
+                    }
+                    ImGui::PlotLines("Preview", values, N, 0, nullptr, ymin, ymax,
+                                     ImVec2(-1.0f, ImGui::GetTextLineHeight() * 5));
+                    expr_free(prog);
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                                       "Expression error: %s",
+                                       errbuf);
+                }
+            }
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Delete Source")) {
+            ImGui::OpenPopup("delete_source_popup");
+        }
+        if (ImGui::BeginPopupModal("delete_source_popup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Delete source #%d?", idx);
+            if (ImGui::Button("Delete", ImVec2(120, 0))) {
+                delete_source_at(&wizard, sim, app, idx);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
         ImGui::Unindent();
     }
     ImGui::Unindent();
@@ -683,9 +970,20 @@ static void draw_material_browser(AppState* app, int* active_material_id) {
     ImGui::End();
 }
 
-static void draw_material_legend(AppState* app, const SimulationState* sim) {
+static bool rect_matches_material(const MaterialRectSpec& r, const Material* mat) {
+    if (!mat) return false;
+    if (r.tag == 1) return mat->type == MAT_TYPE_PEC;
+    if (r.tag == 2) return mat->type == MAT_TYPE_PMC;
+    if (mat->type == MAT_TYPE_PEC || mat->type == MAT_TYPE_PMC) return false;
+    return std::fabs(r.epsr - mat->epsilon_r) < 0.25;
+}
+
+static void draw_material_legend(AppState* app,
+                                 SimulationState* sim,
+                                 WizardState* wizard,
+                                 SimulationBootstrap* bootstrap) {
     (void)sim;
-    if (!app) return;
+    if (!app || !wizard || !bootstrap) return;
     if (!app->show_material_legend) return;
 
     ImGui::SetNextItemOpen(false, ImGuiCond_Once);
@@ -693,7 +991,7 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
 
     ImGui::TextUnformatted("Materials in Scene:");
     ImGui::Separator();
-    ImGui::BeginChild("LegendList", ImVec2(0.0f, 140.0f), true);
+    ImGui::BeginChild("LegendList", ImVec2(0.0f, 160.0f), true);
 
     int mat_count = material_library_get_count();
     for (int i = 0; i < mat_count; ++i) {
@@ -711,7 +1009,21 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
         dl->AddRect(p, q, IM_COL32(90, 90, 90, 255));
         ImGui::Dummy(ImVec2(16.0f, 16.0f));
         ImGui::SameLine();
-        ImGui::TextUnformatted(mat->name);
+
+        bool row_selected = (app->selected_material_id == mat->id);
+        if (ImGui::Selectable(mat->name, row_selected, ImGuiSelectableFlags_SpanAvailWidth)) {
+            app->selected_material_id = mat->id;
+            if (app->auto_filter_blocks_on_select) {
+                app->filter_blocks_by_material = true;
+            }
+            for (int b = 0; b < wizard->cfg.material_rect_count; ++b) {
+                if (rect_matches_material(wizard->cfg.material_rects[b], mat)) {
+                    app->selected_block = b;
+                    break;
+                }
+            }
+        }
+
         ImGui::SameLine(170.0f);
         if (mat->type == MAT_TYPE_PEC) {
             ImGui::TextDisabled("PEC");
@@ -720,6 +1032,26 @@ static void draw_material_legend(AppState* app, const SimulationState* sim) {
         } else {
             ImGui::TextDisabled("εᵣ=%.1f", mat->epsilon_r);
         }
+
+        ImGui::SameLine();
+        bool can_add = (wizard->cfg.material_rect_count < CONFIG_MAX_MATERIAL_RECTS);
+        if (!can_add) ImGui::BeginDisabled();
+        char btn_label[32];
+        std::snprintf(btn_label, sizeof(btn_label), "Add##%d", mat->id);
+        if (ImGui::SmallButton(btn_label)) {
+            int idx = wizard->cfg.material_rect_count;
+            MaterialRectSpec& r = wizard->cfg.material_rects[idx];
+            r.x0 = 0.3;
+            r.y0 = 0.3;
+            r.x1 = 0.7;
+            r.y1 = 0.7;
+            apply_material_to_rect(&r, mat);
+            wizard->cfg.material_rect_count = idx + 1;
+            apply_wizard_materials_to_sim(*wizard, bootstrap, sim);
+            app->selected_block = idx;
+            ui_log_add(app, "Added block #%d from %s", idx, mat->name);
+        }
+        if (!can_add) ImGui::EndDisabled();
     }
 
     ImGui::EndChild();
@@ -1376,235 +1708,6 @@ static SDL_Color theme_viewport_clear_color(int theme_id) {
 static const char* kColormapNames[] = {"Classic", "Viridis", "Plasma"};
 static const int kColormapCount = 3;
 
-static void wizard_grid_tab(WizardState& w) {
-    ImGui::TextUnformatted("Domain & Grid");
-    ImGui::Separator();
-
-    ImGui::InputInt("nx (cells X)", &w.cfg.nx);
-    ImGui::InputInt("ny (cells Y)", &w.cfg.ny);
-    ImGui::InputDouble("lx (meters X)", &w.cfg.lx, 0.01, 0.1, "%.3f");
-    ImGui::InputDouble("ly (meters Y)", &w.cfg.ly, 0.01, 0.1, "%.3f");
-
-    float cfl = (float)w.cfg.cfl_safety;
-    if (ImGui::SliderFloat("CFL safety", &cfl, 0.1f, 0.99f, "%.2f")) {
-        w.cfg.cfl_safety = (double)cfl;
-    }
-
-    const char* boundary_items[] = { "CPML", "Mur" };
-    int bmode = (w.cfg.boundary_mode == SIM_BOUNDARY_MUR) ? 1 : 0;
-    if (ImGui::Combo("Boundary", &bmode, boundary_items, IM_ARRAYSIZE(boundary_items))) {
-        w.cfg.boundary_mode = (bmode == 1) ? SIM_BOUNDARY_MUR : SIM_BOUNDARY_CPML;
-    }
-
-    if (!w.advanced) {
-        ImGui::Spacing();
-        ImGui::TextWrapped("Tip: Advanced mode exposes sweep and logging options in the Run tab.");
-    }
-}
-
-static void wizard_materials_tab(WizardState& w) {
-    ImGui::TextUnformatted("Materials / Blocks");
-    ImGui::Separator();
-
-    int count = w.cfg.material_rect_count;
-    ImGui::InputInt("Block count", &count);
-    if (count < 0) count = 0;
-    if (count > CONFIG_MAX_MATERIAL_RECTS) count = CONFIG_MAX_MATERIAL_RECTS;
-    w.cfg.material_rect_count = count;
-
-    for (int i = 0; i < w.cfg.material_rect_count; ++i) {
-        MaterialRectSpec& r = w.cfg.material_rects[i];
-        char label[32];
-        std::snprintf(label, sizeof(label), "Block %d", i);
-        if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* type_items[] = { "Dielectric", "PEC", "PMC" };
-            int type_idx = 0;
-            if (r.tag == 1) type_idx = 1;
-            else if (r.tag == 2) type_idx = 2;
-            if (ImGui::Combo("Type", &type_idx, type_items, IM_ARRAYSIZE(type_items))) {
-                r.tag = (type_idx == 1) ? 1 : (type_idx == 2) ? 2 : 0;
-            }
-            ImGui::InputDouble("x0", &r.x0, 0.01, 0.1);
-            ImGui::InputDouble("y0", &r.y0, 0.01, 0.1);
-            ImGui::InputDouble("x1", &r.x1, 0.01, 0.1);
-            ImGui::InputDouble("y1", &r.y1, 0.01, 0.1);
-            if (r.tag == 0) {
-                ImGui::InputDouble("epsr", &r.epsr, 0.1, 1.0);
-                ImGui::InputDouble("sigma", &r.sigma, 0.0, 0.1);
-            }
-        }
-    }
-}
-
-static void wizard_sources_tab(WizardState& w) {
-    ImGui::TextUnformatted("Sources");
-    ImGui::Separator();
-
-    int count = w.cfg.source_count;
-    ImGui::InputInt("Source count", &count);
-    if (count < 0) count = 0;
-    if (count > MAX_SRC) count = MAX_SRC;
-    w.cfg.source_count = count;
-
-    static const char* type_items[] = { "CW", "Gaussian", "Ricker", "Expr" };
-    static const char* field_items[] = { "Ez", "Hx", "Hy" };
-
-    for (int i = 0; i < w.cfg.source_count; ++i) {
-        SourceConfigSpec& s = w.cfg.source_configs[i];
-        char label[32];
-        std::snprintf(label, sizeof(label), "Source %d", i);
-        if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool active = (s.active != 0);
-            if (ImGui::Checkbox("Active", &active)) {
-                s.active = active ? 1 : 0;
-            }
-
-            int type_idx = (int)s.type;
-            if (type_idx < 0 || type_idx > (int)SRC_EXPR) type_idx = 0;
-            if (ImGui::Combo("Type", &type_idx, type_items, IM_ARRAYSIZE(type_items))) {
-                s.type = (SourceType)type_idx;
-            }
-
-            int field_idx = (int)s.field;
-            if (field_idx < 0 || field_idx > (int)SRC_FIELD_HY) field_idx = 0;
-            if (ImGui::Combo("Field", &field_idx, field_items, IM_ARRAYSIZE(field_items))) {
-                s.field = (SourceFieldType)field_idx;
-            }
-
-            ImGui::InputDouble("x (0..1)", &s.x, 0.01, 0.1);
-            ImGui::InputDouble("y (0..1)", &s.y, 0.01, 0.1);
-            ImGui::InputDouble("amp", &s.amp, 0.1, 1.0);
-            ImGui::InputDouble("freq (Hz)", &s.freq, 1e6, 1e9, "%.3e");
-            ImGui::InputDouble("sigma2", &s.sigma2, 0.5, 1.0);
-
-            if (s.type == SRC_EXPR) {
-                ImGui::InputTextMultiline("expr", s.expr, SOURCE_EXPR_MAX_LEN,
-                                          ImVec2(0.0f, ImGui::GetTextLineHeight() * 3));
-                ImGui::TextUnformatted("Variables: t (seconds), amp, freq, pi");
-
-                if (s.expr[0] != '\0') {
-                    char errbuf[128];
-                    ExprProgram* prog = nullptr;
-                    if (expr_compile(s.expr, &prog, errbuf, sizeof(errbuf))) {
-                        const int N = 128;
-                        float values[N];
-                        double period = (s.freq > 0.0) ? (1.0 / s.freq) : 1e-9;
-                        double t_max = 3.0 * period;
-                        if (t_max <= 0.0) t_max = 3e-9;
-
-                        double vmin = 0.0;
-                        double vmax = 0.0;
-                        bool first = true;
-                        for (int k = 0; k < N; ++k) {
-                            double t = t_max * (double)k / (double)(N - 1);
-                            double v = expr_eval(prog, t, s.amp, s.freq);
-                            values[k] = (float)v;
-                            if (first) {
-                                vmin = vmax = v;
-                                first = false;
-                            } else {
-                                if (v < vmin) vmin = v;
-                                if (v > vmax) vmax = v;
-                            }
-                        }
-                        float ymin = (float)vmin;
-                        float ymax = (float)vmax;
-                        if (ymin == ymax) {
-                            ymin -= 1.0f;
-                            ymax += 1.0f;
-                        }
-                        ImGui::PlotLines("expr preview", values, N, 0, nullptr, ymin, ymax,
-                                         ImVec2(0.0f, ImGui::GetTextLineHeight() * 4));
-                        expr_free(prog);
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.6f, 1.0f),
-                                           "Expr error: %s", errbuf);
-                    }
-                }
-            }
-        }
-    }
-}
-
-static void wizard_run_tab(WizardState& w) {
-    ImGui::TextUnformatted("Run Settings");
-    ImGui::Separator();
-
-    const char* modes[] = { "Fixed steps", "Sweep" };
-    int run_mode_idx = (w.cfg.run_mode == SIM_RUN_MODE_SWEEP) ? 1 : 0;
-    if (ImGui::Combo("Run mode", &run_mode_idx, modes, IM_ARRAYSIZE(modes))) {
-        w.cfg.run_mode = (run_mode_idx == 1) ? SIM_RUN_MODE_SWEEP : SIM_RUN_MODE_FIXED_STEPS;
-    }
-
-    if (w.cfg.run_mode == SIM_RUN_MODE_FIXED_STEPS) {
-        ImGui::InputInt("Run steps", &w.cfg.run_steps);
-    } else {
-        ImGui::InputInt("Sweep points", &w.cfg.sweep_points);
-        ImGui::InputDouble("Sweep start (Hz)", &w.cfg.sweep_start_hz, 1e6, 1e8, "%.3e");
-        ImGui::InputDouble("Sweep stop (Hz)", &w.cfg.sweep_stop_hz, 1e6, 1e8, "%.3e");
-        ImGui::InputInt("Steps/point", &w.cfg.sweep_steps_per_point);
-    }
-
-    if (w.advanced) {
-        ImGui::Separator();
-        bool profile = (w.cfg.enable_profile != 0);
-        if (ImGui::Checkbox("Enable profiling", &profile)) {
-            w.cfg.enable_profile = profile ? 1 : 0;
-        }
-        bool probe_log = (w.cfg.enable_probe_log != 0);
-        if (ImGui::Checkbox("Enable probe log", &probe_log)) {
-            w.cfg.enable_probe_log = probe_log ? 1 : 0;
-        }
-        ImGui::InputText("Probe log path", w.cfg.probe_log_path, SIM_PROBE_LOG_PATH_MAX);
-    }
-}
-
-static bool wizard_draw(WizardState& w) {
-    bool apply = false;
-
-    if (!w.open) return false;
-    ImGui::SetNextWindowSize(ImVec2(380.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(12.0f, 50.0f), ImGuiCond_Always);
-    if (!ImGui::Begin("Simulation Wizard", &w.open)) {
-        ImGui::End();
-        return false;
-    }
-
-    ImGui::Separator();
-
-    if (ImGui::BeginTabBar("WizardTabs")) {
-        if (ImGui::BeginTabItem("Grid")) {
-            wizard_grid_tab(w);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Materials")) {
-            wizard_materials_tab(w);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Sources")) {
-            wizard_sources_tab(w);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Run")) {
-            wizard_run_tab(w);
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
-
-    ImGui::Separator();
-    if (ImGui::Button("Apply & Restart")) {
-        apply = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Close")) {
-        w.open = false;
-    }
-
-    ImGui::End();
-    return apply;
-}
-
 static bool rebootstrap_simulation(const SimulationConfig* cfg,
                                    SimulationBootstrap* bootstrap,
                                    SimulationState** sim_out,
@@ -1682,49 +1785,202 @@ static void draw_blocks_panel(WizardState& wizard,
                               SimulationBootstrap* bootstrap,
                               SimulationState* sim,
                               AppState* app) {
-    (void)app;
     ImGui::SetNextItemOpen(false, ImGuiCond_Once);
-    if (!ImGui::CollapsingHeader("Blocks")) return;
+    if (!ImGui::CollapsingHeader("Materials / Blocks")) return;
 
     ImGui::Indent();
     int count = wizard.cfg.material_rect_count;
-    if (ImGui::InputInt("Count", &count)) {
-        if (count < 0) count = 0;
-        if (count > CONFIG_MAX_MATERIAL_RECTS) count = CONFIG_MAX_MATERIAL_RECTS;
-        wizard.cfg.material_rect_count = count;
+    if (count < 0) count = 0;
+    if (count > CONFIG_MAX_MATERIAL_RECTS) count = CONFIG_MAX_MATERIAL_RECTS;
+    wizard.cfg.material_rect_count = count;
+
+    ImGui::Text("Blocks: %d / %d", count, CONFIG_MAX_MATERIAL_RECTS);
+    ImGui::SameLine();
+    bool can_add = (count < CONFIG_MAX_MATERIAL_RECTS);
+    if (!can_add) ImGui::BeginDisabled();
+    if (ImGui::Button("+ Add Block")) {
+        MaterialRectSpec& r = wizard.cfg.material_rects[count];
+        r.x0 = 0.25;
+        r.y0 = 0.25;
+        r.x1 = 0.75;
+        r.y1 = 0.75;
+        r.epsr = 4.0;
+        r.sigma = 0.0;
+        r.tag = 0;
+        wizard.cfg.material_rect_count = count + 1;
         if (sim && bootstrap) {
             apply_wizard_materials_to_sim(wizard, bootstrap, sim);
         }
+        if (app) {
+            ui_log_add(app, "Added block #%d (default material)", count);
+        }
+    }
+    ImGui::SameLine();
+    if (!can_add) ImGui::BeginDisabled();
+    if (ImGui::Button("+ Add Block from Material")) {
+        ImGui::OpenPopup("AddBlockMaterialPopup");
+    }
+    if (!can_add) ImGui::EndDisabled();
+    if (ImGui::BeginPopup("AddBlockMaterialPopup")) {
+        ImGui::TextUnformatted("Select material:");
+        ImGui::Separator();
+        int mat_count = material_library_get_count();
+        for (int i = 0; i < mat_count; ++i) {
+            const Material* mat = material_library_get_by_index(i);
+            if (!mat) continue;
+            if (ImGui::Selectable(mat->name)) {
+                if (wizard.cfg.material_rect_count < CONFIG_MAX_MATERIAL_RECTS) {
+                    int idx = wizard.cfg.material_rect_count;
+                    MaterialRectSpec& r = wizard.cfg.material_rects[idx];
+                    r.x0 = 0.3;
+                    r.y0 = 0.3;
+                    r.x1 = 0.7;
+                    r.y1 = 0.7;
+                    apply_material_to_rect(&r, mat);
+                    wizard.cfg.material_rect_count = idx + 1;
+                    if (sim && bootstrap) {
+                        apply_wizard_materials_to_sim(wizard, bootstrap, sim);
+                    }
+                    if (app) {
+                        ui_log_add(app, "Added block #%d (%s)", idx, mat->name);
+                    }
+                }
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::Separator();
+
+    const Material* selected_mat = nullptr;
+    if (app && app->selected_material_id >= 0) {
+        selected_mat = material_library_get_by_id(app->selected_material_id);
     }
 
-    for (int i = 0; i < wizard.cfg.material_rect_count; ++i) {
-        MaterialRectSpec& r = wizard.cfg.material_rects[i];
-        char label[32];
-        std::snprintf(label, sizeof(label), "Block %d", i);
-        if (ImGui::TreeNode(label)) {
-            const char* type_items[] = { "Dielectric", "PEC", "PMC" };
-            int type_idx = 0;
-            if (r.tag == 1) type_idx = 1;
-            else if (r.tag == 2) type_idx = 2;
-            if (ImGui::Combo("Type", &type_idx, type_items, IM_ARRAYSIZE(type_items))) {
-                r.tag = (type_idx == 1) ? 1 : (type_idx == 2) ? 2 : 0;
-                if (sim && bootstrap) {
-                    apply_wizard_materials_to_sim(wizard, bootstrap, sim);
+    if (selected_mat) {
+        ImGui::Checkbox("Filter by selected material", &app->filter_blocks_by_material);
+        ImGui::SameLine();
+        ImGui::TextDisabled("Filter: %s", selected_mat->name);
+        ImGui::Checkbox("Auto-filter on selection", &app->auto_filter_blocks_on_select);
+    } else {
+        ImGui::BeginDisabled();
+        bool dummy = false;
+        ImGui::Checkbox("Filter by selected material", &dummy);
+        ImGui::SameLine();
+        ImGui::TextDisabled("No material selected");
+        ImGui::EndDisabled();
+        app->filter_blocks_by_material = false;
+    }
+
+    ImGui::Separator();
+
+    if (wizard.cfg.material_rect_count == 0) {
+        ImGui::TextDisabled("No material blocks configured.");
+    } else {
+        for (int i = 0; i < wizard.cfg.material_rect_count; ++i) {
+            MaterialRectSpec& r = wizard.cfg.material_rects[i];
+            if (app && app->filter_blocks_by_material && selected_mat) {
+                if (!rect_matches_material(r, selected_mat)) {
+                    ImGui::PopID();
+                    continue;
                 }
             }
-            bool changed = false;
-            changed |= ImGui::InputDouble("x0", &r.x0, 0.01, 0.1);
-            changed |= ImGui::InputDouble("y0", &r.y0, 0.01, 0.1);
-            changed |= ImGui::InputDouble("x1", &r.x1, 0.01, 0.1);
-            changed |= ImGui::InputDouble("y1", &r.y1, 0.01, 0.1);
-            if (r.tag == 0) {
-                changed |= ImGui::InputDouble("epsr", &r.epsr, 0.1, 1.0);
-                changed |= ImGui::InputDouble("sigma", &r.sigma, 0.0, 0.1);
+            ImGui::PushID(i);
+            bool tree_open = ImGui::CollapsingHeader("", ImGuiTreeNodeFlags_DefaultOpen);
+            ImGui::SameLine();
+            ImGui::Text("Block %d", i);
+            if (tree_open) {
+                const Material* current_mat = guess_material_for_rect(r);
+                ImVec4 color = current_mat
+                                   ? ImVec4(current_mat->color_r / 255.0f,
+                                            current_mat->color_g / 255.0f,
+                                            current_mat->color_b / 255.0f,
+                                            1.0f)
+                                   : ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                if (selected_mat && rect_matches_material(r, selected_mat)) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, color);
+                }
+                ImGui::ColorButton("##blkcol",
+                                   color,
+                                   ImGuiColorEditFlags_NoTooltip |
+                                       ImGuiColorEditFlags_NoDragDrop,
+                                   ImVec2(16, 16));
+                ImGui::SameLine();
+                if (selected_mat && rect_matches_material(r, selected_mat)) {
+                    ImGui::PopStyleColor();
+                }
+                const char* combo_label =
+                    current_mat ? current_mat->name
+                                : (r.tag == 1 ? "PEC"
+                                              : (r.tag == 2 ? "PMC" : "Custom"));
+                if (ImGui::BeginCombo("Material", combo_label)) {
+                    int mat_count = material_library_get_count();
+                    for (int m = 0; m < mat_count; ++m) {
+                        const Material* mat = material_library_get_by_index(m);
+                        if (!mat) continue;
+                        bool selected = (current_mat == mat);
+                        if (ImGui::Selectable(mat->name, selected)) {
+                            apply_material_to_rect(&r, mat);
+                            if (sim && bootstrap) {
+                                apply_wizard_materials_to_sim(wizard, bootstrap, sim);
+                            }
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const char* type_items[] = {"Dielectric", "PEC", "PMC"};
+                int type_idx = (r.tag == 1) ? 1 : (r.tag == 2) ? 2 : 0;
+                if (ImGui::Combo("Type", &type_idx, type_items, IM_ARRAYSIZE(type_items))) {
+                    r.tag = (type_idx == 1) ? 1 : (type_idx == 2) ? 2 : 0;
+                    if (sim && bootstrap) apply_wizard_materials_to_sim(wizard, bootstrap, sim);
+                }
+
+                bool changed = false;
+                float x0 = (float)r.x0;
+                float y0 = (float)r.y0;
+                float x1 = (float)r.x1;
+                float y1 = (float)r.y1;
+                changed |= ImGui::SliderFloat("x0", &x0, 0.0f, 0.99f, "%.3f");
+                changed |= ImGui::SliderFloat("y0", &y0, 0.0f, 0.99f, "%.3f");
+                changed |= ImGui::SliderFloat("x1", &x1, 0.0f, 1.0f, "%.3f");
+                changed |= ImGui::SliderFloat("y1", &y1, 0.0f, 1.0f, "%.3f");
+                if (changed) {
+                    r.x0 = clamp01(x0);
+                    r.y0 = clamp01(y0);
+                    r.x1 = clamp01(x1);
+                    r.y1 = clamp01(y1);
+                    if (r.x1 < r.x0) r.x1 = r.x0 + 0.01;
+                    if (r.y1 < r.y0) r.y1 = r.y0 + 0.01;
+                }
+
+                if (sim) {
+                    ImGui::TextDisabled("Meters: (%.3f, %.3f) to (%.3f, %.3f)",
+                                        r.x0 * sim->lx,
+                                        r.y0 * sim->ly,
+                                        r.x1 * sim->lx,
+                                        r.y1 * sim->ly);
+                }
+
+                if (r.tag == 0) {
+                    if (ImGui::InputDouble("epsr", &r.epsr, 0.1, 1.0)) changed = true;
+                    if (ImGui::InputDouble("sigma", &r.sigma, 0.0, 0.1)) changed = true;
+                } else {
+                    ImGui::TextDisabled("PEC/PMC override eps/sigma");
+                }
+
+                if (changed && sim && bootstrap) {
+                    apply_wizard_materials_to_sim(wizard, bootstrap, sim);
+                }
+
+                if (ImGui::Button("Delete Block")) {
+                    remove_block(&wizard, bootstrap, sim, app, i);
+                    ImGui::PopID();
+                    break;
+                }
             }
-            if (changed && sim && bootstrap) {
-                apply_wizard_materials_to_sim(wizard, bootstrap, sim);
-            }
-            ImGui::TreePop();
+            ImGui::PopID();
         }
     }
     ImGui::Unindent();
@@ -1807,7 +2063,6 @@ int main(int argc, char** argv) {
     app.show_run_panel = true;
     app.show_grid_panel = true;
     app.show_run_settings_panel = true;
-    app.show_wizard_panel = false;  // Wizard UI removed - use F5/F6 presets + direct manipulation
     app.show_probes_panel = true;
     app.show_log_panel = true;
     app.show_expression_panel = true;
@@ -1824,6 +2079,10 @@ int main(int argc, char** argv) {
     app.filter_metals = true;
     app.filter_dielectrics = true;
     app.show_material_legend = true;
+    app.filter_blocks_by_material = false;
+    app.auto_filter_blocks_on_select = true;
+    app.highlight_blocks_by_material = true;
+    app.filter_blocks_by_material = false;
     app.visualization_mode = 0;
     app.show_material_outlines = false;
     app.material_overlay_alpha = 0.5f;
@@ -2578,6 +2837,8 @@ int main(int argc, char** argv) {
         ImGui::MenuItem("Probes", nullptr, &app.show_probes_panel);
         ImGui::MenuItem("Run Controls", nullptr, &app.show_run_panel);
         ImGui::MenuItem("Run Settings", nullptr, &app.show_run_settings_panel);
+        ImGui::Checkbox("Highlight blocks for selected material", &app.highlight_blocks_by_material);
+        ImGui::Checkbox("Auto-filter blocks on material select", &app.auto_filter_blocks_on_select);
         ImGui::EndMenu();
     }
 
@@ -2595,10 +2856,10 @@ int main(int argc, char** argv) {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize(viewport->Size);
-        ImGuiWindowFlags root_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-                                      ImGuiWindowFlags_NoBackground;
+    ImGuiWindowFlags root_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+                                  ImGuiWindowFlags_NoBackground;
         ImGui::Begin("RootLayout", nullptr, root_flags);
 
         ImVec2 full = ImGui::GetContentRegionAvail();
@@ -2668,7 +2929,7 @@ int main(int argc, char** argv) {
         }
         if (app.show_material_legend) {
             left_spacing();
-            draw_material_legend(&app, sim);
+            draw_material_legend(&app, sim, &wizard, &bootstrap);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -2915,60 +3176,23 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Embedded Wizard UI
-        if (app.show_wizard_panel && ImGui::CollapsingHeader("Wizard", ImGuiTreeNodeFlags_None)) {
-            bool apply_wizard = false;
-            ImGui::PushID("WizardContent");
-
-            if (ImGui::BeginTabBar("WizardTabs", ImGuiTabBarFlags_None)) {
-                if (ImGui::BeginTabItem("Grid")) {
-                    wizard_grid_tab(wizard);
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Materials")) {
-                    wizard_materials_tab(wizard);
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Sources")) {
-                    wizard_sources_tab(wizard);
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Run")) {
-                    wizard_run_tab(wizard);
-                    ImGui::EndTabItem();
-                }
-                ImGui::EndTabBar();
+        // Handle deferred restarts (from panels)
+        if (app.request_rebootstrap) {
+            const char* restart_msg =
+                (app.rebootstrap_message[0] != '\0') ? app.rebootstrap_message
+                                                     : "Rebooted simulation";
+            if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
+                width = sim->nx * scale;
+                height = sim->ny * scale;
+                if (width < 1920) width = 1920;
+                if (height < 1080) height = 1080;
+                SDL_SetWindowSize(render->window, width, height);
+                ui_log_add(&app, "%s", restart_msg);
+            } else {
+                ui_log_add(&app, "Failed to rebootstrap simulation");
             }
-
-            ImGui::Separator();
-            if (ImGui::Button("Apply & Restart")) {
-                apply_wizard = true;
-            }
-
-            ImGui::PopID();
-
-            // Handle wizard apply (rebootstrap simulation)
-            if (apply_wizard || app.request_rebootstrap) {
-                const char* restart_msg =
-                    apply_wizard ? "Rebooted simulation from wizard config"
-                                 : ((app.rebootstrap_message[0] != '\0')
-                                        ? app.rebootstrap_message
-                                        : "Rebooted simulation");
-                if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
-                    width = sim->nx * scale;
-                    height = sim->ny * scale;
-                    if (width < 1920) width = 1920;
-                    if (height < 1080) height = 1080;
-                    SDL_SetWindowSize(render->window, width, height);
-                    ui_log_add(&app, "%s", restart_msg);
-                } else {
-                    ui_log_add(&app, "Failed to rebootstrap simulation");
-                }
-                if (app.request_rebootstrap) {
-                    app.request_rebootstrap = false;
-                    app.rebootstrap_message[0] = '\0';
-                }
-            }
+            app.request_rebootstrap = false;
+            app.rebootstrap_message[0] = '\0';
         }
 
         ImGui::EndChild();
@@ -3259,6 +3483,10 @@ int main(int argc, char** argv) {
                 int rect_count = wizard.cfg.material_rect_count;
                 if (rect_count < 0) rect_count = 0;
                 if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
+                const Material* overlay_sel_mat = nullptr;
+                if (app.selected_material_id >= 0) {
+                    overlay_sel_mat = material_library_get_by_id(app.selected_material_id);
+                }
                 for (int i = 0; i < rect_count; ++i) {
                     const MaterialRectSpec& r = wizard.cfg.material_rects[i];
                     float x0 = app.viewport_pos.x + (float)(r.x0 * (double)sim->nx * (double)scale);
@@ -3267,8 +3495,14 @@ int main(int argc, char** argv) {
                     float y1 = app.viewport_pos.y + (float)(r.y1 * (double)sim->ny * (double)scale);
                     ImVec2 p0(x0, y0);
                     ImVec2 p1(x1, y1);
-                    ImU32 col = (i == app.selected_block) ? block_sel_col : block_col;
-                    dl->AddRect(p0, p1, col, 0.0f, 0, 1.0f);
+                    bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
+                    ImU32 col = block_col;
+                    if (i == app.selected_block) {
+                        col = block_sel_col;
+                    } else if (mat_match) {
+                        col = IM_COL32(0, 200, 255, 200);
+                    }
+                    dl->AddRect(p0, p1, col, 0.0f, 0, 1.5f);
 
                     char blabel[16];
                     std::snprintf(blabel, sizeof(blabel), "B%d", i);

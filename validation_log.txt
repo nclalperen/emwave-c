@@ -36,3 +36,10 @@
 2025-11-19T18:43:12.0506+03:00 **Actual**: [What actually happens]
 2025-11-19T18:43:12.0516+03:00 **Severity**: [Critical/High/Medium/Low]
 2025-11-19T18:43:12.0526+03:00 ==== Auto validation complete ====
+2025-11-20T03:29:54.0687+03:00 ==== Phase 2.5 Validation (Material Blocks) ====
+2025-11-20T03:29:54.0900+03:00 BEGIN: Build emwave_imgui (Release)
+2025-11-20T03:29:54.1100+03:00 Running: cmake --build "build-imgui" --config Release
+2025-11-20T03:30:13.4000+03:00 PASS: Build emwave_imgui (Release)
+2025-11-20T03:30:13.4100+03:00 BEGIN: Run ctest suite (Release)
+2025-11-20T03:30:16.5700+03:00 PASS: 7/7 tests (emwave_cli_smoke, sweep_smoke, config_loader, fdtd_core, analysis, config_runtime, material_library)
+2025-11-20T03:30:16.5800+03:00 NOTE: 34-case Material Blocks manual checklist not executed in this session (requires interactive UI); keep on manual test queue.

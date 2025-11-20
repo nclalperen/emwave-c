@@ -1,0 +1,10 @@
+C:\projects\emwave-c\src\core\app_bootstrap.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\app_bootstrap.obj
+C:\projects\emwave-c\src\core\fdtd_core.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\fdtd_core.obj
+C:\projects\emwave-c\src\core\boundary.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\boundary.obj
+C:\projects\emwave-c\src\core\expr.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\expr.obj
+C:\projects\emwave-c\src\core\config_runtime.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\config_runtime.obj
+C:\projects\emwave-c\src\core\sources.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\sources.obj
+C:\projects\emwave-c\src\core\materials.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\materials.obj
+C:\projects\emwave-c\src\core\material_library.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\material_library.obj
+C:\projects\emwave-c\src\core\config_loader.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\config_loader.obj
+C:\projects\emwave-c\third_party\jsmn\jsmn.c;C:\projects\emwave-c\build-imgui\emwave_solver.dir\Release\jsmn.obj

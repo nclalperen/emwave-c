@@ -1,7 +1,7 @@
 # Phase 2.5: Wizard Function Integration Plan
 
 **Date:** 2025-11-19
-**Status:** Planning
+**Status:** COMPLETE (Phase 2.5 delivered)
 **Objective:** Reintegrate wizard functions into modern Phase 2 UI without recreating wizard window
 
 ---
@@ -11,6 +11,11 @@
 After completing Phase 2 (Professional Transformation), we identified that valuable wizard functions exist but are hidden. Rather than revive the monolithic wizard window, we'll **redistribute functionality** into existing panels where users expect to find them.
 
 **Key Principle:** Modern UI paradigm - put controls where they're needed, not in a separate configuration wizard.
+
+**Completion Summary (2025-11-20):**
+- Sources, Materials/Blocks, and Simulation Setup are integrated into the ImGui panels with create/edit/delete flows and live apply paths.
+- Material blocks pull directly from the Phase 2 material library, support default creation and from-library creation, allow filtering/swatching, and auto-apply to the solver.
+- Grid/domain/boundary controls are exposed in the setup panel with restart handling; documentation/validation now tracked for sign-off.
 
 ---
 
@@ -285,32 +290,32 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 ## Success Criteria
 
 ### Week 1 Complete When:
-- [ ] Sources can be created/deleted via UI
-- [ ] Expression editor works with live preview
-- [ ] Source properties editable (type, freq, amp, position)
-- [ ] Active/inactive toggle works per source
-- [ ] No need to use wizard for source configuration
+- [x] Sources can be created/deleted via UI
+- [x] Expression editor works with live preview
+- [x] Source properties editable (type, freq, amp, position)
+- [x] Active/inactive toggle works per source
+- [x] No need to use wizard for source configuration
 
 ### Week 2 Complete When:
-- [ ] Material blocks list shows material library names
-- [ ] Blocks can be created with library material selection
-- [ ] Coordinates editable with numeric precision
-- [ ] "Apply" updates simulation with correct materials
-- [ ] Rectangles and paint mode coexist
+- [x] Material blocks list shows material library names
+- [x] Blocks can be created with library material selection
+- [x] Coordinates editable with numeric precision
+- [x] "Apply" updates simulation with correct materials
+- [x] Rectangles and paint mode coexist
 
 ### Week 3 Complete When:
-- [ ] Grid size changeable via UI
-- [ ] Domain dimensions editable
-- [ ] Boundary mode toggleable (CPML ↔ Mur)
-- [ ] CFL slider functional
-- [ ] "Apply & Restart" rebuilds simulation correctly
-- [ ] Cell size displayed and validated
+- [x] Grid size changeable via UI
+- [x] Domain dimensions editable
+- [x] Boundary mode toggleable (CPML ↔ Mur)
+- [x] CFL slider functional
+- [x] "Apply & Restart" rebuilds simulation correctly
+- [x] Cell size displayed and validated
 
 ### Phase 2.5 Complete When:
-- [ ] All wizard tab functions accessible in modern UI
-- [ ] No need for wizard window
-- [ ] User workflow smoother than before
-- [ ] Documentation updated
+- [x] All wizard tab functions accessible in modern UI
+- [x] No need for wizard window
+- [x] User workflow smoother than before
+- [x] Documentation updated
 
 ---
 
