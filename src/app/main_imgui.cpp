@@ -25,6 +25,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cstdarg>
 #include <cctype>
 #include <cmath>
 #include <vector>
@@ -33,6 +34,99 @@
 #include <sstream>
 #include <filesystem>
 #include <string>
+#include <sys/stat.h>
+#include <ctime>
+#include <cstdlib>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#include <shellapi.h>
+#include <direct.h>
+#endif
+
+enum ViewportLayout {
+    VIEWPORT_SINGLE = 0,
+    VIEWPORT_HORIZONTAL = 1,
+    VIEWPORT_VERTICAL = 2,
+    VIEWPORT_QUAD = 3
+};
+
+enum ViewportViz {
+    VIEWPORT_VIZ_FIELD = 0,
+    VIEWPORT_VIZ_MATERIAL = 1,
+    VIEWPORT_VIZ_OVERLAY = 2,
+    VIEWPORT_VIZ_MAG = 3
+};
+
+struct ViewportInstance {
+    ImVec2 pos;
+    ImVec2 size;
+    float zoom;
+    float pan_x;
+    float pan_y;
+    ViewportViz viz_mode;
+    bool active;
+    bool valid;
+    bool show_grid;
+    bool show_sources;
+};
+
+enum RecordingFormat {
+    RECORDING_GIF = 0,
+    RECORDING_MP4 = 1,
+    RECORDING_PNG_SEQUENCE = 2
+};
+
+enum RecordingState {
+    RECORDING_IDLE = 0,
+    RECORDING_ACTIVE = 1,
+    RECORDING_PROCESSING = 2,
+    RECORDING_ERROR = 3
+};
+
+struct AnimationRecorder {
+    RecordingState state;
+    RecordingFormat format;
+    float framerate;
+    int target_frames;
+    int frame_count;
+    float resolution_scale;
+    std::vector<SDL_Surface*> frames;
+    int capture_width;
+    int capture_height;
+    char output_path[260];
+    bool auto_play;
+    float progress;
+    char status_message[128];
+};
+
+struct DistanceMeasurement {
+    ImVec2 a;
+    ImVec2 b;
+    double distance_m;
+    double angle_deg;
+};
+
+struct AreaMeasurement {
+    std::vector<ImVec2> vertices;
+    bool closed;
+    double area_m2;
+    double perimeter_m;
+};
+
+struct Annotation {
+    ImVec2 grid_pos;
+    char text[128];
+    ImVec4 color;
+    float font_size;
+    bool visible;
+};
+
+struct MeasurementHistory {
+    std::vector<DistanceMeasurement> distances;
+    std::vector<AreaMeasurement> areas;
+    std::vector<Annotation> annotations;
+};
 
 struct AppState {
     bool basic_mode;
@@ -126,7 +220,244 @@ struct AppState {
     int smith_freq_index;
     bool request_rebootstrap;
     char rebootstrap_message[128];
+
+    // Multi-viewport state
+    ViewportLayout viewport_layout;
+    ViewportInstance viewports[4];
+    int active_viewport_idx;
+    bool sync_zoom;
+    bool sync_pan;
+
+    // Recording (Prompt #38)
+    AnimationRecorder recorder;
+    bool show_recording_panel;
+
+    // Measurements (Prompt #39)
+    bool area_mode;
+    AreaMeasurement current_area;
+    bool annotation_mode;
+    Annotation temp_annotation;
+    MeasurementHistory measurements;
+    bool show_measurement_history;
+    bool show_distance_measurements;
+    bool show_area_measurements;
+    bool show_annotations;
 };
+
+static void ui_log_add(AppState* app, const char* fmt, ...);
+static void start_recording(AppState* app,
+                            RecordingFormat format,
+                            float fps,
+                            int duration_sec,
+                            float scale_factor,
+                            int output_w,
+                            int output_h);
+static void stop_recording(AppState* app);
+
+static double g_record_last_capture_time = 0.0;
+
+static double calculate_area_m2(const AreaMeasurement& a, const SimulationState* sim) {
+    if (!sim || a.vertices.size() < 3) return 0.0;
+    double sum = 0.0;
+    for (size_t i = 0; i < a.vertices.size(); ++i) {
+        size_t j = (i + 1) % a.vertices.size();
+        sum += (double)a.vertices[i].x * (double)a.vertices[j].y;
+        sum -= (double)a.vertices[j].x * (double)a.vertices[i].y;
+    }
+    double area_cells = std::abs(sum) * 0.5;
+    double dx = sim->lx / (double)sim->nx;
+    double dy = sim->ly / (double)sim->ny;
+    return area_cells * dx * dy;
+}
+
+static double calculate_perimeter_m(const AreaMeasurement& a, const SimulationState* sim) {
+    if (!sim || a.vertices.size() < 2) return 0.0;
+    double per_cells = 0.0;
+    for (size_t i = 0; i < a.vertices.size(); ++i) {
+        size_t j = (i + 1) % a.vertices.size();
+        double dx = (double)a.vertices[j].x - (double)a.vertices[i].x;
+        double dy = (double)a.vertices[j].y - (double)a.vertices[i].y;
+        per_cells += std::sqrt(dx * dx + dy * dy);
+    }
+    double dx_m = sim->lx / (double)sim->nx;
+    double dy_m = sim->ly / (double)sim->ny;
+    double avg_cell = 0.5 * (dx_m + dy_m);
+    return per_cells * avg_cell;
+}
+
+static void close_area_measurement(AppState* app, const SimulationState* sim) {
+    if (!app || !sim) return;
+    if (app->current_area.vertices.size() < 3) return;
+    app->current_area.closed = true;
+    app->current_area.area_m2 = calculate_area_m2(app->current_area, sim);
+    app->current_area.perimeter_m = calculate_perimeter_m(app->current_area, sim);
+    app->measurements.areas.push_back(app->current_area);
+    ui_log_add(app, "Area: %.6f m^2 | Perimeter: %.4f m",
+               app->current_area.area_m2,
+               app->current_area.perimeter_m);
+    app->current_area.vertices.clear();
+    app->current_area.closed = false;
+    app->area_mode = false;
+}
+
+static void export_measurements_csv(const AppState* app, const char* path) {
+    if (!app || !path) return;
+    FILE* f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "Type,ID,Value,Unit,Data\n");
+    for (size_t i = 0; i < app->measurements.distances.size(); ++i) {
+        const auto& d = app->measurements.distances[i];
+        fprintf(f, "Distance,%zu,%.6f,m,\"(%.1f,%.1f)-(%.1f,%.1f) @ %.1f deg\"\n",
+                i + 1,
+                d.distance_m,
+                d.a.x, d.a.y,
+                d.b.x, d.b.y,
+                d.angle_deg);
+    }
+    for (size_t i = 0; i < app->measurements.areas.size(); ++i) {
+        const auto& a = app->measurements.areas[i];
+        fprintf(f, "Area,%zu,%.6f,m2,\"%zu vertices | Perimeter=%.4f m\"\n",
+                i + 1,
+                a.area_m2,
+                a.vertices.size(),
+                a.perimeter_m);
+    }
+    for (size_t i = 0; i < app->measurements.annotations.size(); ++i) {
+        const auto& ann = app->measurements.annotations[i];
+        fprintf(f, "Annotation,%zu,,,\"(%.1f,%.1f): %s\"\n",
+                i + 1,
+                ann.grid_pos.x,
+                ann.grid_pos.y,
+                ann.text);
+    }
+    fclose(f);
+}
+
+static void draw_measurement_history_panel(AppState* app) {
+    if (!app) return;
+    if (!ImGui::Begin("Measurement History", &app->show_measurement_history)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Checkbox("Show Distances", &app->show_distance_measurements);
+    ImGui::Checkbox("Show Areas", &app->show_area_measurements);
+    ImGui::Checkbox("Show Annotations", &app->show_annotations);
+    ImGui::Separator();
+
+    if (ImGui::TreeNode("Distances")) {
+        for (size_t i = 0; i < app->measurements.distances.size(); ++i) {
+            auto& d = app->measurements.distances[i];
+            ImGui::PushID((int)i);
+            ImGui::Text("%zu: %.6f m @ %.1f deg", i + 1, d.distance_m, d.angle_deg);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) {
+                app->measurements.distances.erase(app->measurements.distances.begin() + i);
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Areas")) {
+        for (size_t i = 0; i < app->measurements.areas.size(); ++i) {
+            auto& a = app->measurements.areas[i];
+            ImGui::PushID((int)i);
+            ImGui::Text("%zu: Area=%.6f m^2, Perimeter=%.4f m", i + 1, a.area_m2, a.perimeter_m);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) {
+                app->measurements.areas.erase(app->measurements.areas.begin() + i);
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+
+    if (ImGui::TreeNode("Annotations")) {
+        for (size_t i = 0; i < app->measurements.annotations.size(); ++i) {
+            auto& ann = app->measurements.annotations[i];
+            ImGui::PushID((int)i);
+            ImGui::Checkbox("Visible", &ann.visible);
+            ImGui::SameLine();
+            ImGui::Text("%zu: \"%s\"", i + 1, ann.text);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete")) {
+                app->measurements.annotations.erase(app->measurements.annotations.begin() + i);
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Export CSV", ImVec2(-1, 0))) {
+        export_measurements_csv(app, "measurements.csv");
+        ui_log_add(app, "Measurements exported: measurements.csv");
+    }
+    if (ImGui::Button("Clear All", ImVec2(-1, 0))) {
+        app->measurements.distances.clear();
+        app->measurements.areas.clear();
+        app->measurements.annotations.clear();
+        ui_log_add(app, "Measurements cleared");
+    }
+
+    ImGui::End();
+}
+
+static void draw_recording_panel(AppState* app, SDL_Renderer* renderer, ImVec2 viewport_size) {
+    if (!app) return;
+    if (!app->show_recording_panel) return;
+    if (!ImGui::Begin("Animation Recording", &app->show_recording_panel)) {
+        ImGui::End();
+        return;
+    }
+    AnimationRecorder& rec = app->recorder;
+    static float duration_sec = 10.0f;
+    static float framerate = 30.0f;
+    static float resolution_scale = 1.0f;
+    static int format_idx = 0;
+
+    ImGui::SliderFloat("Duration (s)", &duration_sec, 1.0f, 60.0f, "%.1f");
+    ImGui::SliderFloat("Framerate", &framerate, 10.0f, 60.0f, "%.0f fps");
+    ImGui::SliderFloat("Resolution Scale", &resolution_scale, 0.5f, 2.0f, "%.1fx");
+    const char* formats[] = {"GIF (ffmpeg, fallback PNG)", "MP4 (ffmpeg, fallback PNG)", "PNG Sequence"};
+    ImGui::Combo("Format", &format_idx, formats, IM_ARRAYSIZE(formats));
+    ImGui::Checkbox("Auto-play (n/a in stub)", &rec.auto_play);
+
+    ImGui::Separator();
+    if (rec.state == RECORDING_IDLE || rec.state == RECORDING_ERROR) {
+        if (ImGui::Button("Start Recording", ImVec2(-1, 0))) {
+            int w = 0, h = 0;
+            SDL_GetRendererOutputSize(renderer, &w, &h);
+            if (w < 1) w = (int)viewport_size.x;
+            if (h < 1) h = (int)viewport_size.y;
+            start_recording(app, (RecordingFormat)format_idx, framerate, (int)duration_sec, resolution_scale, w, h);
+        }
+    } else if (rec.state == RECORDING_ACTIVE) {
+        if (ImGui::Button("Stop", ImVec2(-1, 0))) {
+            stop_recording(app);
+        }
+    } else if (rec.state == RECORDING_PROCESSING) {
+        ImGui::TextUnformatted("Processing...");
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Status: %s", rec.status_message);
+    ImGui::ProgressBar(rec.progress, ImVec2(-1, 0));
+    ImGui::End();
+}
+
+// Lightweight debug stubs (no-op in release builds).
+static void debug_logf(const char* fmt, ...) {
+    (void)fmt;
+}
+static void debug_log_close() {}
 
 struct WizardState {
     SimulationConfig cfg;
@@ -197,29 +528,119 @@ static int normalized_to_cell_index(double frac, int n) {
     return idx;
 }
 
-static ImVec2 compute_center_offset(const AppState& app, const SimulationState* sim, int scale) {
+static ImVec2 compute_center_offset(const ViewportInstance& vp,
+                                    const SimulationState* sim,
+                                    int scale) {
     ImVec2 offset(0.0f, 0.0f);
     if (!sim || scale <= 0) return offset;
     float field_px_w = (float)(sim->nx * scale);
     float field_px_h = (float)(sim->ny * scale);
-    if (app.viewport_size.x > field_px_w) {
-        offset.x = (app.viewport_size.x - field_px_w) * 0.5f;
+    if (vp.size.x > field_px_w) {
+        offset.x = (vp.size.x - field_px_w) * 0.5f;
     }
-    if (app.viewport_size.y > field_px_h) {
-        offset.y = (app.viewport_size.y - field_px_h) * 0.5f;
+    if (vp.size.y > field_px_h) {
+        offset.y = (vp.size.y - field_px_h) * 0.5f;
     }
     return offset;
 }
 
-static ImVec2 compute_viewport_offset(const AppState& app, const SimulationState* sim, int scale) {
-    ImVec2 centered = compute_center_offset(app, sim, scale);
-    return ImVec2(app.viewport_pan_x + centered.x, app.viewport_pan_y + centered.y);
+static ImVec2 compute_viewport_offset(const ViewportInstance& vp,
+                                      const SimulationState* sim,
+                                      int scale) {
+    ImVec2 centered = compute_center_offset(vp, sim, scale);
+    return ImVec2(vp.pan_x + centered.x, vp.pan_y + centered.y);
 }
 
 static int compute_grid_step_from_scale(int scale) {
     if (scale < 2) return 10;
     if (scale < 8) return 5;
     return 1;
+}
+
+static void compute_viewport_layout(AppState* app,
+                                    ImVec2 container_size) {
+    if (!app) return;
+    const float gap = 4.0f;
+    const float min_dim = 200.0f;
+    for (int i = 0; i < 4; ++i) {
+        app->viewports[i].valid = false;
+        app->viewports[i].active = false;
+        app->viewports[i].pos = ImVec2(0.0f, 0.0f);
+        app->viewports[i].size = ImVec2(0.0f, 0.0f);
+    }
+
+    switch (app->viewport_layout) {
+        case VIEWPORT_SINGLE: {
+            app->viewports[0].pos = ImVec2(0.0f, 0.0f);
+            app->viewports[0].size = container_size;
+            app->viewports[0].valid = (container_size.x > 4.0f && container_size.y > 4.0f);
+        } break;
+        case VIEWPORT_HORIZONTAL: {
+            float h = (container_size.y - gap) * 0.5f;
+            if (h < min_dim) {
+                app->viewport_layout = VIEWPORT_SINGLE;
+                compute_viewport_layout(app, container_size);
+                return;
+            }
+            app->viewports[0].pos = ImVec2(0.0f, 0.0f);
+            app->viewports[0].size = ImVec2(container_size.x, h);
+            app->viewports[0].valid = true;
+            app->viewports[1].pos = ImVec2(0.0f, h + gap);
+            app->viewports[1].size = ImVec2(container_size.x, h);
+            app->viewports[1].valid = true;
+        } break;
+        case VIEWPORT_VERTICAL: {
+            float w = (container_size.x - gap) * 0.5f;
+            if (w < min_dim) {
+                app->viewport_layout = VIEWPORT_SINGLE;
+                compute_viewport_layout(app, container_size);
+                return;
+            }
+            app->viewports[0].pos = ImVec2(0.0f, 0.0f);
+            app->viewports[0].size = ImVec2(w, container_size.y);
+            app->viewports[0].valid = true;
+            app->viewports[1].pos = ImVec2(w + gap, 0.0f);
+            app->viewports[1].size = ImVec2(w, container_size.y);
+            app->viewports[1].valid = true;
+        } break;
+        case VIEWPORT_QUAD: {
+            float w = (container_size.x - gap) * 0.5f;
+            float h = (container_size.y - gap) * 0.5f;
+            if (w < min_dim || h < min_dim) {
+                app->viewport_layout = VIEWPORT_SINGLE;
+                compute_viewport_layout(app, container_size);
+                return;
+            }
+            app->viewports[0].pos = ImVec2(0.0f, 0.0f);
+            app->viewports[0].size = ImVec2(w, h);
+            app->viewports[0].valid = true;
+            app->viewports[1].pos = ImVec2(w + gap, 0.0f);
+            app->viewports[1].size = ImVec2(w, h);
+            app->viewports[1].valid = true;
+            app->viewports[2].pos = ImVec2(0.0f, h + gap);
+            app->viewports[2].size = ImVec2(w, h);
+            app->viewports[2].valid = true;
+            app->viewports[3].pos = ImVec2(w + gap, h + gap);
+            app->viewports[3].size = ImVec2(w, h);
+            app->viewports[3].valid = true;
+        } break;
+        default:
+            break;
+    }
+}
+
+static int get_viewport_at_mouse(const AppState& app, int mx, int my) {
+    float local_x = (float)mx - app.viewport_pos.x;
+    float local_y = (float)my - app.viewport_pos.y;
+    for (int i = 0; i < 4; ++i) {
+        const ViewportInstance& vp = app.viewports[i];
+        if (!vp.valid) continue;
+        if (local_x >= vp.pos.x && local_x < vp.pos.x + vp.size.x &&
+            local_y >= vp.pos.y && local_y < vp.pos.y + vp.size.y) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 enum LayoutPreset {
@@ -295,32 +716,32 @@ static void apply_layout_preset(ImGuiID dockspace_id, LayoutPreset preset) {
     ImGui::DockBuilderFinish(dockspace_id);
 }
 
-static void clamp_pan_offset(AppState* app,
+static void clamp_pan_offset(ViewportInstance* vp,
                              const SimulationState* sim,
                              int scale) {
-    if (!app || !sim || scale <= 0) return;
-    ImVec2 center_offset = compute_center_offset(*app, sim, scale);
+    if (!vp || !sim || scale <= 0) return;
+    ImVec2 center_offset = compute_center_offset(*vp, sim, scale);
     float field_w = (float)(sim->nx * scale);
     float field_h = (float)(sim->ny * scale);
-    float viewport_w = app->viewport_size.x;
-    float viewport_h = app->viewport_size.y;
+    float viewport_w = vp->size.x;
+    float viewport_h = vp->size.y;
 
     float min_pan_x = -(field_w * 0.9f);
     float max_pan_x = viewport_w * 0.9f;
     float min_pan_y = -(field_h * 0.9f);
     float max_pan_y = viewport_h * 0.9f;
 
-    float effective_pan_x = app->viewport_pan_x + center_offset.x;
-    float effective_pan_y = app->viewport_pan_y + center_offset.y;
+    float effective_pan_x = vp->pan_x + center_offset.x;
+    float effective_pan_y = vp->pan_y + center_offset.y;
 
     effective_pan_x = std::clamp(effective_pan_x, min_pan_x, max_pan_x);
     effective_pan_y = std::clamp(effective_pan_y, min_pan_y, max_pan_y);
 
-    app->viewport_pan_x = std::round(effective_pan_x - center_offset.x);
-    app->viewport_pan_y = std::round(effective_pan_y - center_offset.y);
+    vp->pan_x = std::round(effective_pan_x - center_offset.x);
+    vp->pan_y = std::round(effective_pan_y - center_offset.y);
 }
 
-static void apply_zoom_at_point(AppState* app,
+static void apply_zoom_at_point(ViewportInstance* vp,
                                 RenderContext* render,
                                 const SimulationState* sim,
                                 int* scale,
@@ -328,51 +749,386 @@ static void apply_zoom_at_point(AppState* app,
                                 float focus_y,
                                 float zoom_multiplier,
                                 bool smooth) {
-    if (!app || !render || !sim || !scale) return;
+    if (!vp || !render || !sim || !scale) return;
     if (*scale <= 0) return;
 
-    ImVec2 center_before = compute_center_offset(*app, sim, *scale);
-    float field_x = focus_x - (app->viewport_pan_x + center_before.x);
-    float field_y = focus_y - (app->viewport_pan_y + center_before.y);
+    ImVec2 center_before = compute_center_offset(*vp, sim, *scale);
+    float field_x = focus_x - (vp->pan_x + center_before.x);
+    float field_y = focus_y - (vp->pan_y + center_before.y);
     float grid_x = field_x / (float)(*scale);
     float grid_y = field_y / (float)(*scale);
 
-    const float target_zoom = std::clamp(app->viewport_zoom * zoom_multiplier, 0.5f, 32.0f);
+    const float target_zoom = std::clamp(vp->zoom * zoom_multiplier, 0.5f, 32.0f);
     float new_zoom = target_zoom;
     if (smooth) {
         const float zoom_alpha = 0.25f;  // ease wheel only; buttons stay snappy
-        new_zoom = ImLerp(app->viewport_zoom, target_zoom, zoom_alpha);
+        new_zoom = ImLerp(vp->zoom, target_zoom, zoom_alpha);
     }
-    app->viewport_zoom = new_zoom;
+    vp->zoom = new_zoom;
 
     *scale = (int)std::lround(new_zoom);
     if (*scale < 1) *scale = 1;
     render->scale = *scale;
 
-    ImVec2 center_after = compute_center_offset(*app, sim, *scale);
+    ImVec2 center_after = compute_center_offset(*vp, sim, *scale);
     float effective_pan_x = focus_x - grid_x * (float)(*scale);
     float effective_pan_y = focus_y - grid_y * (float)(*scale);
-    app->viewport_pan_x = effective_pan_x - center_after.x;
-    app->viewport_pan_y = effective_pan_y - center_after.y;
+    vp->pan_x = effective_pan_x - center_after.x;
+    vp->pan_y = effective_pan_y - center_after.y;
 
-    clamp_pan_offset(app, sim, *scale);
+    clamp_pan_offset(vp, sim, *scale);
 }
 
-static void reset_view_transform(AppState* app,
+static void reset_view_transform(ViewportInstance* vp,
                                  RenderContext* render,
                                  const SimulationState* sim,
                                  int* scale,
                                  float default_zoom) {
-    if (!app || !render || !sim || !scale) return;
-    app->viewport_zoom = default_zoom;
+    if (!vp || !render || !sim || !scale) return;
+    vp->zoom = default_zoom;
     *scale = (int)std::lround(default_zoom);
     if (*scale < 1) *scale = 1;
     render->scale = *scale;
-    app->viewport_pan_x = 0.0f;
-    app->viewport_pan_y = 0.0f;
-    app->viewport_panning = false;
-    app->pan_start_mouse = ImVec2(0.0f, 0.0f);
-    app->pan_start_offset = ImVec2(0.0f, 0.0f);
+    vp->pan_x = 0.0f;
+    vp->pan_y = 0.0f;
+}
+
+static SDL_Surface* capture_frame(SDL_Renderer* renderer,
+                                  int width,
+                                  int height,
+                                  float scale_factor) {
+    if (!renderer) return nullptr;
+    int out_w = (int)std::lround(width * scale_factor);
+    int out_h = (int)std::lround(height * scale_factor);
+    if (out_w < 2) out_w = 2;
+    if (out_h < 2) out_h = 2;
+    out_w = (out_w / 2) * 2;
+    out_h = (out_h / 2) * 2;
+
+    SDL_Surface* surface = SDL_CreateRGBSurface(0, out_w, out_h, 24,
+                                                0x00FF0000,
+                                                0x0000FF00,
+                                                0x000000FF,
+                                                0);
+    if (!surface) return nullptr;
+
+    SDL_Rect src = {0, 0, width, height};
+    if (SDL_RenderReadPixels(renderer, &src, SDL_PIXELFORMAT_RGB24, surface->pixels, surface->pitch) != 0) {
+        SDL_FreeSurface(surface);
+        return nullptr;
+    }
+
+    if (out_w != width || out_h != height) {
+        SDL_Surface* scaled = SDL_CreateRGBSurface(0, out_w, out_h, 24,
+                                                   0x00FF0000,
+                                                   0x0000FF00,
+                                                   0x000000FF,
+                                                   0);
+        if (!scaled) {
+            SDL_FreeSurface(surface);
+            return nullptr;
+        }
+        SDL_BlitScaled(surface, nullptr, scaled, nullptr);
+        SDL_FreeSurface(surface);
+        surface = scaled;
+    }
+    return surface;
+}
+
+static bool export_png_sequence(AnimationRecorder* rec) {
+    if (!rec || rec->frames.empty()) return false;
+    std::filesystem::create_directories("recordings");
+    std::string dir = std::string(rec->output_path) + "_frames";
+    std::filesystem::create_directories(dir);
+    for (size_t i = 0; i < rec->frames.size(); ++i) {
+        char frame_path[512];
+        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir.c_str(), i);
+        if (SDL_SaveBMP(rec->frames[i], frame_path) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool has_ffmpeg() {
+#ifdef _WIN32
+    int rc = std::system("ffmpeg -version >NUL 2>&1");
+#else
+    int rc = std::system("ffmpeg -version >/dev/null 2>&1");
+#endif
+    return rc == 0;
+}
+
+static bool write_temp_sequence(const AnimationRecorder* rec, const char* dir) {
+    if (!rec || !dir) return false;
+#ifdef _WIN32
+    _mkdir("recordings");
+    _mkdir(dir);
+#else
+    mkdir("recordings", 0755);
+    mkdir(dir, 0755);
+#endif
+    for (size_t i = 0; i < rec->frames.size(); ++i) {
+        char frame_path[512];
+        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir, i);
+        if (SDL_SaveBMP(rec->frames[i], frame_path) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void cleanup_temp_sequence(const char* dir, size_t count) {
+    if (!dir) return;
+    for (size_t i = 0; i < count; ++i) {
+        char frame_path[512];
+        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir, i);
+        std::remove(frame_path);
+    }
+#ifdef _WIN32
+    _rmdir(dir);
+#else
+    rmdir(dir);
+#endif
+}
+
+static bool export_gif(AnimationRecorder* rec) {
+    if (!rec || rec->frames.empty()) return false;
+    bool ffmpeg_ok = has_ffmpeg();
+    if (!ffmpeg_ok) {
+        std::snprintf(rec->status_message,
+                      sizeof(rec->status_message),
+                      "FFmpeg missing, saved PNG sequence");
+        return export_png_sequence(rec);
+    }
+
+    char temp_dir[256];
+    std::snprintf(temp_dir, sizeof(temp_dir), "recordings/temp_gif");
+    if (!write_temp_sequence(rec, temp_dir)) {
+        cleanup_temp_sequence(temp_dir, rec->frames.size());
+        return false;
+    }
+
+    char cmd[1024];
+#ifdef _WIN32
+    std::snprintf(cmd,
+                  sizeof(cmd),
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -vf \"palettegen=stats_mode=diff\" %s_palette.png && "
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -i %s_palette.png -lavfi \"paletteuse=dither=bayer\" \"%s\" >NUL 2>&1",
+                  rec->framerate,
+                  temp_dir,
+                  temp_dir,
+                  rec->framerate,
+                  temp_dir,
+                  temp_dir,
+                  rec->output_path);
+#else
+    std::snprintf(cmd,
+                  sizeof(cmd),
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -vf palettegen=stats_mode=diff %s_palette.png >/dev/null 2>&1 && "
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -i %s_palette.png -lavfi paletteuse=dither=bayer \"%s\" >/dev/null 2>&1",
+                  rec->framerate,
+                  temp_dir,
+                  temp_dir,
+                  rec->framerate,
+                  temp_dir,
+                  temp_dir,
+                  rec->output_path);
+#endif
+    int rc = std::system(cmd);
+    char palette_path[256];
+    std::snprintf(palette_path, sizeof(palette_path), "%s_palette.png", temp_dir);
+    std::remove(palette_path);
+    cleanup_temp_sequence(temp_dir, rec->frames.size());
+    if (rc != 0) {
+        std::snprintf(rec->status_message,
+                      sizeof(rec->status_message),
+                      "FFmpeg GIF failed, saved PNG sequence");
+        return export_png_sequence(rec);
+    }
+    return true;
+}
+
+static bool export_mp4(AnimationRecorder* rec) {
+    if (!rec || rec->frames.empty()) return false;
+    bool ffmpeg_ok = has_ffmpeg();
+    if (!ffmpeg_ok) {
+        std::snprintf(rec->status_message,
+                      sizeof(rec->status_message),
+                      "FFmpeg missing, saved PNG sequence");
+        return export_png_sequence(rec);
+    }
+
+    char temp_dir[256];
+    std::snprintf(temp_dir, sizeof(temp_dir), "recordings/temp_mp4");
+    if (!write_temp_sequence(rec, temp_dir)) {
+        cleanup_temp_sequence(temp_dir, rec->frames.size());
+        return false;
+    }
+    char cmd[1024];
+#ifdef _WIN32
+    std::snprintf(cmd,
+                  sizeof(cmd),
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -c:v libx264 -pix_fmt yuv420p \"%s\" >NUL 2>&1",
+                  rec->framerate,
+                  temp_dir,
+                  rec->output_path);
+#else
+    std::snprintf(cmd,
+                  sizeof(cmd),
+                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -c:v libx264 -pix_fmt yuv420p \"%s\" >/dev/null 2>&1",
+                  rec->framerate,
+                  temp_dir,
+                  rec->output_path);
+#endif
+    int rc = std::system(cmd);
+    cleanup_temp_sequence(temp_dir, rec->frames.size());
+    if (rc != 0) {
+        std::snprintf(rec->status_message,
+                      sizeof(rec->status_message),
+                      "FFmpeg MP4 failed, saved PNG sequence");
+        return export_png_sequence(rec);
+    }
+    return true;
+}
+
+static void clear_recording_frames(AnimationRecorder* rec) {
+    if (!rec) return;
+    for (SDL_Surface* s : rec->frames) {
+        SDL_FreeSurface(s);
+    }
+    rec->frames.clear();
+}
+
+static void start_recording(AppState* app,
+                            RecordingFormat format,
+                            float fps,
+                            int duration_sec,
+                            float scale_factor,
+                            int output_w,
+                            int output_h) {
+    if (!app) return;
+    AnimationRecorder& rec = app->recorder;
+    rec.state = RECORDING_ACTIVE;
+    rec.format = format;
+    rec.framerate = std::clamp(fps, 10.0f, 60.0f);
+    rec.target_frames = (int)(rec.framerate * duration_sec);
+    if (rec.target_frames < 1) rec.target_frames = 1;
+    rec.frame_count = 0;
+    rec.resolution_scale = std::clamp(scale_factor, 0.5f, 2.0f);
+    rec.capture_width = output_w;
+    rec.capture_height = output_h;
+    rec.progress = 0.0f;
+    clear_recording_frames(&rec);
+    rec.frames.reserve(rec.target_frames);
+
+    time_t now = time(nullptr);
+    struct tm* tm_info = localtime(&now);
+    const char* ext = (format == RECORDING_GIF) ? "gif" :
+                      (format == RECORDING_MP4) ? "mp4" : "png";
+    std::snprintf(rec.output_path,
+                  sizeof(rec.output_path),
+                  "recordings/emwave_%04d%02d%02d_%02d%02d%02d.%s",
+                  tm_info->tm_year + 1900,
+                  tm_info->tm_mon + 1,
+                  tm_info->tm_mday,
+                  tm_info->tm_hour,
+                  tm_info->tm_min,
+                  tm_info->tm_sec,
+                  ext);
+    std::snprintf(rec.status_message,
+                  sizeof(rec.status_message),
+                  "Recording: 0/%d frames", rec.target_frames);
+    ui_log_add(app, "Recording started: %d frames @ %.0f fps", rec.target_frames, rec.framerate);
+    g_record_last_capture_time = 0.0;
+}
+
+static void stop_recording(AppState* app) {
+    if (!app) return;
+    AnimationRecorder& rec = app->recorder;
+    if (rec.state != RECORDING_ACTIVE) return;
+    rec.state = RECORDING_PROCESSING;
+    std::snprintf(rec.status_message,
+                  sizeof(rec.status_message),
+                  "Processing %d frames...", rec.frame_count);
+
+    bool success = false;
+    switch (rec.format) {
+        case RECORDING_GIF:
+            success = export_gif(&rec);
+            break;
+        case RECORDING_MP4:
+            success = export_mp4(&rec);
+            break;
+        case RECORDING_PNG_SEQUENCE:
+        default:
+            success = export_png_sequence(&rec);
+            break;
+    }
+
+    if (success) {
+        rec.state = RECORDING_IDLE;
+        std::snprintf(rec.status_message,
+                      sizeof(rec.status_message),
+                      "Saved: %s", rec.output_path);
+        ui_log_add(app, "Animation saved: %s", rec.output_path);
+        if (rec.auto_play) {
+#ifdef _WIN32
+            ShellExecuteA(NULL, "open", rec.output_path, NULL, NULL, SW_SHOWNORMAL);
+#elif __APPLE__
+            char cmd[512];
+            std::snprintf(cmd, sizeof(cmd), "open \"%s\"", rec.output_path);
+            std::system(cmd);
+#else
+            char cmd[512];
+            std::snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", rec.output_path);
+            std::system(cmd);
+#endif
+        }
+    } else {
+        rec.state = RECORDING_ERROR;
+        std::snprintf(rec.status_message,
+                      sizeof(rec.status_message),
+                      "Error: failed to encode");
+        ui_log_add(app, "Recording failed to encode");
+    }
+    clear_recording_frames(&rec);
+    g_record_last_capture_time = 0.0;
+}
+
+static void capture_frame_if_recording(AppState* app,
+                                       SDL_Renderer* renderer,
+                                       double now_seconds) {
+    if (!app || !renderer) return;
+    AnimationRecorder& rec = app->recorder;
+    if (rec.state != RECORDING_ACTIVE) return;
+    double frame_interval = 1.0 / rec.framerate;
+    if (now_seconds - g_record_last_capture_time + 1e-6 < frame_interval) return;
+    g_record_last_capture_time = now_seconds;
+
+    SDL_Surface* frame = capture_frame(renderer,
+                                       rec.capture_width,
+                                       rec.capture_height,
+                                       rec.resolution_scale);
+    if (!frame) {
+        rec.state = RECORDING_ERROR;
+        std::snprintf(rec.status_message,
+                      sizeof(rec.status_message),
+                      "Error: capture failed");
+        return;
+    }
+    rec.frames.push_back(frame);
+    rec.frame_count++;
+    rec.progress = (float)rec.frame_count / (float)rec.target_frames;
+    std::snprintf(rec.status_message,
+                  sizeof(rec.status_message),
+                  "Recording: %d/%d (%.0f%%)",
+                  rec.frame_count,
+                  rec.target_frames,
+                  rec.progress * 100.0f);
+    if (rec.frame_count >= rec.target_frames) {
+        stop_recording(app);
+    }
 }
 
 static void free_source_expression(Source* s) {
@@ -2462,7 +3218,60 @@ int main(int argc, char** argv) {
     app.smith_freq_index = 0;
     app.request_rebootstrap = false;
     app.rebootstrap_message[0] = '\0';
+    app.viewport_layout = VIEWPORT_SINGLE;
+    for (int i = 0; i < 4; ++i) {
+        app.viewports[i].pos = ImVec2(0.0f, 0.0f);
+        app.viewports[i].size = ImVec2(0.0f, 0.0f);
+        app.viewports[i].zoom = 1.0f;
+        app.viewports[i].pan_x = 0.0f;
+        app.viewports[i].pan_y = 0.0f;
+        app.viewports[i].viz_mode = VIEWPORT_VIZ_FIELD;
+        app.viewports[i].active = (i == 0);
+        app.viewports[i].valid = (i == 0);
+        app.viewports[i].show_grid = true;
+        app.viewports[i].show_sources = true;
+    }
+    app.active_viewport_idx = 0;
+    app.sync_zoom = false;
+    app.sync_pan = false;
+    app.recorder.state = RECORDING_IDLE;
+    app.recorder.format = RECORDING_GIF;
+    app.recorder.framerate = 30.0f;
+    app.recorder.target_frames = 0;
+    app.recorder.frame_count = 0;
+    app.recorder.resolution_scale = 1.0f;
+    app.recorder.capture_width = 0;
+    app.recorder.capture_height = 0;
+    app.recorder.output_path[0] = '\0';
+    app.recorder.auto_play = false;
+    app.recorder.progress = 0.0f;
+    std::snprintf(app.recorder.status_message,
+                  sizeof(app.recorder.status_message),
+                  "Recording idle");
+    app.show_recording_panel = false;
+    app.area_mode = false;
+    app.annotation_mode = false;
+    app.temp_annotation.text[0] = '\0';
+    app.temp_annotation.color = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
+    app.temp_annotation.font_size = 14.0f;
+    app.temp_annotation.visible = false;
+    app.current_area.vertices.clear();
+    app.current_area.closed = false;
+    app.current_area.area_m2 = 0.0;
+    app.current_area.perimeter_m = 0.0;
+    app.measurements.distances.clear();
+    app.measurements.areas.clear();
+    app.measurements.annotations.clear();
+    app.show_measurement_history = false;
+    app.show_distance_measurements = true;
+    app.show_area_measurements = true;
+    app.show_annotations = true;
+    debug_logf("init: sim grid %dx%d", sim->nx, sim->ny);
     ui_log_add(&app, "Simulation started");
+    app.viewports[0].viz_mode = VIEWPORT_VIZ_FIELD;
+    app.viewports[1].viz_mode = VIEWPORT_VIZ_FIELD;
+    app.viewports[2].viz_mode = VIEWPORT_VIZ_FIELD;
+    app.viewports[3].viz_mode = VIEWPORT_VIZ_FIELD;
 
     const int min_window_width = 1280;
     const int min_window_height = 720;
@@ -2482,6 +3291,7 @@ int main(int argc, char** argv) {
         simulation_bootstrap_shutdown(&bootstrap);
         return 1;
     }
+    debug_logf("init: render_init ok window %dx%d scale %d", app.window_width, app.window_height, scale);
     SDL_GetWindowSize(render->window, &app.window_width, &app.window_height);
     render->scale = scale;
 
@@ -2555,6 +3365,7 @@ int main(int argc, char** argv) {
     bool dragging_source = false;
     int dragged_source_idx = -1;
     bool shift_right_panning = false;
+    int panning_viewport_idx = -1;
     LayoutPreset current_layout = LAYOUT_POWER_USER;
     bool layout_dirty = false;
     ImGuiID last_dockspace_id = 0;
@@ -2580,8 +3391,34 @@ int main(int argc, char** argv) {
     Uint64 perf_freq = SDL_GetPerformanceFrequency();
     Uint64 prev = SDL_GetPerformanceCounter();
     double fps_avg = 0.0;
+    int frame_counter = 0;
 
     while (running) {
+        frame_counter++;
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: viewport_valid=%d size=%.1fx%.1f layout=%d",
+                       frame_counter,
+                       app.viewport_valid ? 1 : 0,
+                       app.viewport_size.x,
+                       app.viewport_size.y,
+                       (int)app.viewport_layout);
+        }
+        compute_viewport_layout(&app, app.viewport_size);
+        auto ensure_active_viewport = [&]() -> ViewportInstance* {
+            if (app.active_viewport_idx >= 0 &&
+                app.active_viewport_idx < 4 &&
+                app.viewports[app.active_viewport_idx].valid) {
+                return &app.viewports[app.active_viewport_idx];
+            }
+            for (int i = 0; i < 4; ++i) {
+                if (app.viewports[i].valid) {
+                    app.active_viewport_idx = i;
+                    return &app.viewports[i];
+                }
+            }
+            return nullptr;
+        };
+
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -2605,20 +3442,24 @@ int main(int argc, char** argv) {
                     app.window_height = height;
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
-                if (io.WantCaptureMouse) {
-                    continue;
-                }
+                // Disable mouse wheel navigation when over the viewport; rely on drag panning instead.
+                if (io.WantCaptureMouse) continue;
                 if (app.viewport_valid && sim) {
                     int mx, my;
                     SDL_GetMouseState(&mx, &my);
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
-                    if (local_x >= 0.0f && local_x < app.viewport_size.x &&
-                        local_y >= 0.0f && local_y < app.viewport_size.y) {
-                        float zoom_multiplier = 1.0f + (float)e.wheel.y * 0.1f;
-                        apply_zoom_at_point(&app, render, sim, &scale, local_x, local_y, zoom_multiplier, true);
-                        app.hud_zoom_value = app.viewport_zoom;
-                        app.hud_zoom_timer = 1.0f;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    float local_x = 0.0f;
+                    float local_y = 0.0f;
+                    if (hit >= 0) {
+                        const ViewportInstance& vpq = app.viewports[hit];
+                        local_x = (float)mx - (app.viewport_pos.x + vpq.pos.x);
+                        local_y = (float)my - (app.viewport_pos.y + vpq.pos.y);
+                    }
+                    if (hit >= 0 &&
+                        local_x >= 0.0f && local_x < app.viewports[hit].size.x &&
+                        local_y >= 0.0f && local_y < app.viewports[hit].size.y) {
+                        // Swallow the wheel event when hovering a viewport; no zoom/pan.
+                        continue;
                     }
                 }
             } else if (e.type == SDL_KEYDOWN) {
@@ -2631,6 +3472,17 @@ int main(int argc, char** argv) {
 
                 switch (key) {
                     case SDLK_ESCAPE:
+                        if (app.area_mode) {
+                            app.area_mode = false;
+                            app.current_area.vertices.clear();
+                            app.current_area.closed = false;
+                            ui_log_add(&app, "Area tool: cancelled");
+                            handled_globally = true;
+                        } else {
+                            running = false;
+                            handled_globally = true;
+                        }
+                        break;
                     case SDLK_q:
                         running = false;
                         handled_globally = true;
@@ -2669,6 +3521,39 @@ int main(int argc, char** argv) {
                         handled_globally = true;
                         break;
 
+                    case SDLK_1:
+                    case SDLK_KP_1:
+                        if (SDL_GetModState() & KMOD_ALT) {
+                            app.viewport_layout = VIEWPORT_SINGLE;
+                            ui_log_add(&app, "Layout: Single viewport");
+                            handled_globally = true;
+                        }
+                        break;
+                    case SDLK_2:
+                    case SDLK_KP_2:
+                        if (SDL_GetModState() & KMOD_ALT) {
+                            app.viewport_layout = VIEWPORT_HORIZONTAL;
+                            ui_log_add(&app, "Layout: Horizontal split");
+                            handled_globally = true;
+                        }
+                        break;
+                    case SDLK_3:
+                    case SDLK_KP_3:
+                        if (SDL_GetModState() & KMOD_ALT) {
+                            app.viewport_layout = VIEWPORT_VERTICAL;
+                            ui_log_add(&app, "Layout: Vertical split");
+                            handled_globally = true;
+                        }
+                        break;
+                    case SDLK_4:
+                    case SDLK_KP_4:
+                        if (SDL_GetModState() & KMOD_ALT) {
+                            app.viewport_layout = VIEWPORT_QUAD;
+                            ui_log_add(&app, "Layout: Quad view");
+                            handled_globally = true;
+                        }
+                        break;
+
                     case SDLK_F5: {
                         // Load waveguide preset
                         SimulationConfig cfg = SIM_CONFIG_DEFAULTS;
@@ -2679,11 +3564,14 @@ int main(int argc, char** argv) {
                                                      sizeof(errbuf))) {
                             if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                                 wizard_init_from_config(wizard, &cfg);
-                                reset_view_transform(&app,
-                                                     render,
-                                                     sim,
-                                                     &scale,
-                                                     kDefaultViewportZoom);
+                                for (int i = 0; i < 4; ++i) {
+                                    app.viewports[i].zoom = kDefaultViewportZoom;
+                                    app.viewports[i].pan_x = 0.0f;
+                                    app.viewports[i].pan_y = 0.0f;
+                                }
+                                scale = (int)std::lround(kDefaultViewportZoom);
+                                if (scale < 1) scale = 1;
+                                render->scale = scale;
 
                                 // Resize window to match new grid
                                 width = sim->nx * scale;
@@ -2723,11 +3611,14 @@ int main(int argc, char** argv) {
                                                      sizeof(errbuf))) {
                             if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                                 wizard_init_from_config(wizard, &cfg);
-                                reset_view_transform(&app,
-                                                     render,
-                                                     sim,
-                                                     &scale,
-                                                     kDefaultViewportZoom);
+                                for (int i = 0; i < 4; ++i) {
+                                    app.viewports[i].zoom = kDefaultViewportZoom;
+                                    app.viewports[i].pan_x = 0.0f;
+                                    app.viewports[i].pan_y = 0.0f;
+                                }
+                                scale = (int)std::lround(kDefaultViewportZoom);
+                                if (scale < 1) scale = 1;
+                                render->scale = scale;
 
                                 // Resize window to match new grid
                                 width = sim->nx * scale;
@@ -2782,22 +3673,32 @@ int main(int argc, char** argv) {
                 // ============================================================
                 if (!handled_globally && !io.WantCaptureKeyboard) {
                     SDL_Keymod mod = SDL_GetModState();
+                    ViewportInstance* active_vp = ensure_active_viewport();
+                    int active_scale = active_vp ? (int)std::lround(active_vp->zoom) : scale;
+                    if (active_scale < 1) active_scale = 1;
                         switch (key) {
                             case SDLK_EQUALS:
                             case SDLK_KP_PLUS:
                                 if (mod & KMOD_CTRL) {
-                                    if (app.viewport_valid && sim) {
-                                        float focus_x = app.viewport_size.x * 0.5f;
-                                        float focus_y = app.viewport_size.y * 0.5f;
-                                        apply_zoom_at_point(&app,
+                                    if (app.viewport_valid && sim && active_vp) {
+                                        float focus_x = active_vp->size.x * 0.5f;
+                                        float focus_y = active_vp->size.y * 0.5f;
+                                        apply_zoom_at_point(active_vp,
                                                             render,
                                                             sim,
-                                                            &scale,
+                                                            &active_scale,
                                                             focus_x,
                                                             focus_y,
                                                             1.2f,
                                                             false);
-                                        app.hud_zoom_value = app.viewport_zoom;
+                                        if (app.sync_zoom) {
+                                            for (int i = 0; i < 4; ++i) {
+                                                if (!app.viewports[i].valid) continue;
+                                                app.viewports[i].zoom = active_vp->zoom;
+                                            }
+                                        }
+                                        scale = active_scale;
+                                        app.hud_zoom_value = active_vp->zoom;
                                         app.hud_zoom_timer = 1.0f;
                                     }
                                     break;
@@ -2807,18 +3708,25 @@ int main(int argc, char** argv) {
                         case SDLK_MINUS:
                         case SDLK_KP_MINUS:
                                 if (mod & KMOD_CTRL) {
-                                    if (app.viewport_valid && sim) {
-                                        float focus_x = app.viewport_size.x * 0.5f;
-                                        float focus_y = app.viewport_size.y * 0.5f;
-                                        apply_zoom_at_point(&app,
+                                    if (app.viewport_valid && sim && active_vp) {
+                                        float focus_x = active_vp->size.x * 0.5f;
+                                        float focus_y = active_vp->size.y * 0.5f;
+                                        apply_zoom_at_point(active_vp,
                                                             render,
                                                             sim,
-                                                            &scale,
+                                                            &active_scale,
                                                             focus_x,
                                                             focus_y,
                                                             0.8f,
                                                             false);
-                                        app.hud_zoom_value = app.viewport_zoom;
+                                        if (app.sync_zoom) {
+                                            for (int i = 0; i < 4; ++i) {
+                                                if (!app.viewports[i].valid) continue;
+                                                app.viewports[i].zoom = active_vp->zoom;
+                                            }
+                                        }
+                                        scale = active_scale;
+                                        app.hud_zoom_value = active_vp->zoom;
                                         app.hud_zoom_timer = 1.0f;
                                     }
                                     break;
@@ -2826,38 +3734,66 @@ int main(int argc, char** argv) {
                             break;
 
                         case SDLK_LEFT:
-                            if (app.viewport_valid && sim) {
+                            if (app.viewport_valid && sim && active_vp) {
                                 float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
-                                app.viewport_pan_x += pan_step;
-                                clamp_pan_offset(&app, sim, scale);
-                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                active_vp->pan_x += pan_step;
+                                clamp_pan_offset(active_vp, sim, active_scale);
+                                if (app.sync_pan) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        app.viewports[i].pan_x = active_vp->pan_x;
+                                        app.viewports[i].pan_y = active_vp->pan_y;
+                                    }
+                                }
+                                app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                                 app.hud_pan_timer = 1.0f;
                             }
                             break;
                         case SDLK_RIGHT:
-                            if (app.viewport_valid && sim) {
+                            if (app.viewport_valid && sim && active_vp) {
                                 float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
-                                app.viewport_pan_x -= pan_step;
-                                clamp_pan_offset(&app, sim, scale);
-                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                active_vp->pan_x -= pan_step;
+                                clamp_pan_offset(active_vp, sim, active_scale);
+                                if (app.sync_pan) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        app.viewports[i].pan_x = active_vp->pan_x;
+                                        app.viewports[i].pan_y = active_vp->pan_y;
+                                    }
+                                }
+                                app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                                 app.hud_pan_timer = 1.0f;
                             }
                             break;
                         case SDLK_UP:
-                            if (app.viewport_valid && sim) {
+                            if (app.viewport_valid && sim && active_vp) {
                                 float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
-                                app.viewport_pan_y += pan_step;
-                                clamp_pan_offset(&app, sim, scale);
-                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                active_vp->pan_y += pan_step;
+                                clamp_pan_offset(active_vp, sim, active_scale);
+                                if (app.sync_pan) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        app.viewports[i].pan_x = active_vp->pan_x;
+                                        app.viewports[i].pan_y = active_vp->pan_y;
+                                    }
+                                }
+                                app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                                 app.hud_pan_timer = 1.0f;
                             }
                             break;
                         case SDLK_DOWN:
-                            if (app.viewport_valid && sim) {
+                            if (app.viewport_valid && sim && active_vp) {
                                 float pan_step = (mod & KMOD_SHIFT) ? 50.0f : 10.0f;
-                                app.viewport_pan_y -= pan_step;
-                                clamp_pan_offset(&app, sim, scale);
-                                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                active_vp->pan_y -= pan_step;
+                                clamp_pan_offset(active_vp, sim, active_scale);
+                                if (app.sync_pan) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        app.viewports[i].pan_x = active_vp->pan_x;
+                                        app.viewports[i].pan_y = active_vp->pan_y;
+                                    }
+                                }
+                                app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                                 app.hud_pan_timer = 1.0f;
                             }
                             break;
@@ -2865,15 +3801,22 @@ int main(int argc, char** argv) {
                         case SDLK_0:
                         case SDLK_HOME:
                             if ((mod & KMOD_CTRL) || key == SDLK_HOME) {
-                                if (app.viewport_valid && sim) {
-                                    reset_view_transform(&app,
-                                                         render,
-                                                         sim,
-                                                         &scale,
-                                                         kDefaultViewportZoom);
-                                    clamp_pan_offset(&app, sim, scale);
-                                    app.hud_zoom_value = app.viewport_zoom;
-                                    app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                                if (app.viewport_valid && sim && active_vp) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        int tmp_scale = (int)std::lround(kDefaultViewportZoom);
+                                        if (tmp_scale < 1) tmp_scale = 1;
+                                        reset_view_transform(&app.viewports[i],
+                                                             render,
+                                                             sim,
+                                                             &tmp_scale,
+                                                             kDefaultViewportZoom);
+                                    }
+                                    active_scale = (int)std::lround(kDefaultViewportZoom);
+                                    if (active_scale < 1) active_scale = 1;
+                                    scale = active_scale;
+                                    app.hud_zoom_value = kDefaultViewportZoom;
+                                    app.hud_pan_value = ImVec2(0.0f, 0.0f);
                                     app.hud_zoom_timer = 1.0f;
                                     app.hud_pan_timer = 1.0f;
                                 }
@@ -2899,6 +3842,39 @@ int main(int argc, char** argv) {
 
                         // Source type cycling
                         case SDLK_t:
+                            if (mod & KMOD_SHIFT) {
+                                if (app.viewport_valid) {
+                                    int mx, my;
+                                    SDL_GetMouseState(&mx, &my);
+                                    int hit = get_viewport_at_mouse(app, mx, my);
+                                    if (hit >= 0) app.active_viewport_idx = hit;
+                                    ViewportInstance* vp = ensure_active_viewport();
+                                    if (vp) {
+                                        int scale_local = (int)std::lround(vp->zoom);
+                                        if (scale_local < 1) scale_local = 1;
+                                        float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                                        float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
+                                        ImVec2 offset = compute_viewport_offset(*vp, sim, scale_local);
+                                        float fx = local_x - offset.x;
+                                        float fy = local_y - offset.y;
+                                        int ix = (int)(fx / (float)scale_local);
+                                        int iy = (int)(fy / (float)scale_local);
+                                        if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                                            app.annotation_mode = true;
+                                            app.temp_annotation.text[0] = '\0';
+                                            app.temp_annotation.grid_pos = ImVec2((float)ix, (float)iy);
+                                            app.temp_annotation.visible = true;
+                                            ImGui::OpenPopup("AddAnnotation");
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                            sources_cycle_type(sim->sources);
+                            fdtd_clear_fields(sim);
+                            scope_clear(&scope);
+                            ui_log_add(&app, "Cycled source type");
+                            break;
                         case SDLK_f:
                             sources_cycle_type(sim->sources);
                             fdtd_clear_fields(sim);
@@ -2926,11 +3902,22 @@ int main(int argc, char** argv) {
                             break;
 
                         // Auto-rescale modes
-                        case SDLK_a:
-                            auto_rescale = true;
-                            hold_color = false;
-                            hold_scope = false;
-                            ui_log_add(&app, "Rescale mode: Auto (A)");
+                    case SDLK_a:
+                            if (mod & KMOD_SHIFT) {
+                                app.area_mode = !app.area_mode;
+                                app.current_area.vertices.clear();
+                                app.current_area.closed = false;
+                                if (app.area_mode) {
+                                    ui_log_add(&app, "Area tool: click vertices, right-click to close");
+                                } else {
+                                    ui_log_add(&app, "Area tool: OFF");
+                                }
+                            } else {
+                                auto_rescale = true;
+                                hold_color = false;
+                                hold_scope = false;
+                                ui_log_add(&app, "Rescale mode: Auto (A)");
+                            }
                             break;
                         case SDLK_h:
                             auto_rescale = false;
@@ -3091,13 +4078,19 @@ int main(int argc, char** argv) {
                 }
                 int mx = e.button.x;
                 int my = e.button.y;
-                float local_x = (float)mx - app.viewport_pos.x;
-                float local_y = (float)my - app.viewport_pos.y;
+                int hit = get_viewport_at_mouse(app, mx, my);
+                if (hit < 0) continue;
+                app.active_viewport_idx = hit;
+                ViewportInstance* vp = ensure_active_viewport();
+                if (!vp) continue;
+                float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
                 if (local_x >= 0.0f && local_y >= 0.0f &&
-                    local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                    local_x < vp->size.x && local_y < vp->size.y) {
                     app.viewport_panning = true;
+                    panning_viewport_idx = app.active_viewport_idx;
                     app.pan_start_mouse = ImVec2((float)mx, (float)my);
-                    app.pan_start_offset = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                    app.pan_start_offset = ImVec2(vp->pan_x, vp->pan_y);
                 }
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
                 SDL_Keymod btn_mod = SDL_GetModState();
@@ -3107,27 +4100,61 @@ int main(int argc, char** argv) {
                 if (btn_mod & KMOD_SHIFT) {
                     int mx = e.button.x;
                     int my = e.button.y;
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit >= 0) app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (!vp) continue;
+                    float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
                     if (local_x >= 0.0f && local_y >= 0.0f &&
-                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
+                        local_x < vp->size.x && local_y < vp->size.y) {
                         shift_right_panning = true;
                         app.viewport_panning = true;
+                        panning_viewport_idx = app.active_viewport_idx;
                         app.pan_start_mouse = ImVec2((float)mx, (float)my);
-                        app.pan_start_offset = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                        app.pan_start_offset = ImVec2(vp->pan_x, vp->pan_y);
                     }
                 } else {
                     int mx = e.button.x;
                     int my = e.button.y;
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit >= 0) app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (!vp) continue;
+                    int scale_local = (int)std::lround(vp->zoom);
+                    if (scale_local < 1) scale_local = 1;
+                    float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
                     if (local_x >= 0.0f && local_y >= 0.0f &&
-                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
-                        ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                        local_x < vp->size.x && local_y < vp->size.y) {
+                        if (app.area_mode) {
+                            if (app.current_area.vertices.size() >= 3) {
+                                close_area_measurement(&app, sim);
+                                continue;
+                            }
+                            ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
+                            float field_x = local_x - viewport_offset.x;
+                            float field_y = local_y - viewport_offset.y;
+                            int ix = (int)(field_x / (float)scale_local);
+                            int iy = (int)(field_y / (float)scale_local);
+                            if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                                app.current_area.vertices.push_back(ImVec2((float)ix, (float)iy));
+                                if (app.current_area.vertices.size() >= 3) {
+                                    ImVec2 first = app.current_area.vertices.front();
+                                    float dx = (float)ix - first.x;
+                                    float dy = (float)iy - first.y;
+                                    if (std::sqrt(dx * dx + dy * dy) < 3.0f) {
+                                        close_area_measurement(&app, sim);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
                         float field_x = local_x - viewport_offset.x;
                         float field_y = local_y - viewport_offset.y;
-                        int ix = (int)(field_x / (float)scale);
-                        int iy = (int)(field_y / (float)scale);
+                        int ix = (int)(field_x / (float)scale_local);
+                        int iy = (int)(field_y / (float)scale_local);
                         if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
                             app.show_context_menu = true;
                             app.context_menu_pos = ImVec2((float)mx, (float)my);
@@ -3135,7 +4162,7 @@ int main(int argc, char** argv) {
                             app.context_menu_cell_j = iy;
                         }
                     }
-                }
+            }
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (!app.viewport_valid) {
                     continue;
@@ -3143,16 +4170,23 @@ int main(int argc, char** argv) {
 
                 int mx = e.button.x;
                 int my = e.button.y;
-                float local_x = (float)mx - app.viewport_pos.x;
-                float local_y = (float)my - app.viewport_pos.y;
+                int hit = get_viewport_at_mouse(app, mx, my);
+                if (hit < 0) continue;
+                app.active_viewport_idx = hit;
+                ViewportInstance* vp = ensure_active_viewport();
+                if (!vp) continue;
+                int scale_local = (int)std::lround(vp->zoom);
+                if (scale_local < 1) scale_local = 1;
+                float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
 
                 if (local_x >= 0.0f && local_y >= 0.0f &&
-                    local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
-                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    local_x < vp->size.x && local_y < vp->size.y) {
+                    ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
                     float field_x = local_x - viewport_offset.x;
                     float field_y = local_y - viewport_offset.y;
-                    int ix = (int)(field_x / (float)scale);
-                    int iy = (int)(field_y / (float)scale);
+                    int ix = (int)(field_x / (float)scale_local);
+                    int iy = (int)(field_y / (float)scale_local);
                     if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
                         continue;
                     }
@@ -3177,6 +4211,14 @@ int main(int argc, char** argv) {
                                        "Ruler: %.3f m @ %.1f deg",
                                        distance_m,
                                        angle_deg);
+                            if (app.show_distance_measurements) {
+                                DistanceMeasurement dm;
+                                dm.a = app.ruler_point_a;
+                                dm.b = app.ruler_point_b;
+                                dm.distance_m = distance_m;
+                                dm.angle_deg = angle_deg;
+                                app.measurements.distances.push_back(dm);
+                            }
                             app.ruler_first_point_set = false;
                         }
                         continue;
@@ -3205,18 +4247,18 @@ int main(int argc, char** argv) {
                     }
 
                     // PRIORITY 2: Paint mode (if active)
-                        if (paint_mode) {
-                            if (paint_material_id >= 0) {
-                                apply_paint_with_material(sim, ix, iy, paint_brush_size, paint_material_id);
-                            } else {
-                                apply_selected_paint(sim,
-                                                     ix,
-                                                     iy,
-                                                     paint_brush_size,
-                                                     paint_material_type,
-                                                     paint_epsilon);
-                            }
+                    if (paint_mode) {
+                        if (paint_material_id >= 0) {
+                            apply_paint_with_material(sim, ix, iy, paint_brush_size, paint_material_id);
+                        } else {
+                            apply_selected_paint(sim,
+                                                 ix,
+                                                 iy,
+                                                 paint_brush_size,
+                                                 paint_material_type,
+                                                 paint_epsilon);
                         }
+                    }
 
                     // PRIORITY 3: Other interactions (block placement, etc.)
                     else if (app.placing_block) {
@@ -3264,15 +4306,26 @@ int main(int argc, char** argv) {
                     if (!app.viewport_valid || !sim) {
                         continue;
                     }
+                    ViewportInstance* vp = nullptr;
+                    if (panning_viewport_idx >= 0 &&
+                        panning_viewport_idx < 4 &&
+                        app.viewports[panning_viewport_idx].valid) {
+                        vp = &app.viewports[panning_viewport_idx];
+                    } else {
+                        vp = ensure_active_viewport();
+                    }
+                    if (!vp) continue;
+                    int scale_local = (int)std::lround(vp->zoom);
+                    if (scale_local < 1) scale_local = 1;
                     float delta_x = (float)e.motion.x - app.pan_start_mouse.x;
-                float delta_y = (float)e.motion.y - app.pan_start_mouse.y;
-                app.viewport_pan_x = app.pan_start_offset.x + delta_x;
-                app.viewport_pan_y = app.pan_start_offset.y + delta_y;
-                clamp_pan_offset(&app, sim, scale);
-                app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
-                app.hud_pan_timer = 1.0f;
-                continue;
-            }
+                    float delta_y = (float)e.motion.y - app.pan_start_mouse.y;
+                    vp->pan_x = app.pan_start_offset.x + delta_x;
+                    vp->pan_y = app.pan_start_offset.y + delta_y;
+                    clamp_pan_offset(vp, sim, scale_local);
+                    app.hud_pan_value = ImVec2(vp->pan_x, vp->pan_y);
+                    app.hud_pan_timer = 1.0f;
+                    continue;
+                }
                 // Handle source dragging first
                 if (dragging_source &&
                     dragged_source_idx >= 0 &&
@@ -3283,19 +4336,25 @@ int main(int argc, char** argv) {
 
                     int mx = e.motion.x;
                     int my = e.motion.y;
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit >= 0) app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (!vp) continue;
+                    int scale_local = (int)std::lround(vp->zoom);
+                    if (scale_local < 1) scale_local = 1;
+                    float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
 
                     if (local_x < 0.0f || local_y < 0.0f ||
-                        local_x >= app.viewport_size.x || local_y >= app.viewport_size.y) {
+                        local_x >= vp->size.x || local_y >= vp->size.y) {
                         continue;
                     }
 
-                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
                     float field_x = local_x - viewport_offset.x;
                     float field_y = local_y - viewport_offset.y;
-                    int ix = (int)(field_x / (float)scale);
-                    int iy = (int)(field_y / (float)scale);
+                    int ix = (int)(field_x / (float)scale_local);
+                    int iy = (int)(field_y / (float)scale_local);
 
                     // Clamp to valid grid range (1 cell margin)
                     if (ix < 1) ix = 1;
@@ -3323,19 +4382,25 @@ int main(int argc, char** argv) {
                     }
                     int mx = e.motion.x;
                     int my = e.motion.y;
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit >= 0) app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (!vp) continue;
+                    int scale_local = (int)std::lround(vp->zoom);
+                    if (scale_local < 1) scale_local = 1;
+                    float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
                     if (local_x < 0.0f || local_y < 0.0f) {
                         continue;
                     }
-                    if (local_x >= app.viewport_size.x || local_y >= app.viewport_size.y) {
+                    if (local_x >= vp->size.x || local_y >= vp->size.y) {
                         continue;
                     }
-                    ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
+                    ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
                     float field_x = local_x - viewport_offset.x;
                     float field_y = local_y - viewport_offset.y;
-                    int ix = (int)(field_x / (float)scale);
-                    int iy = (int)(field_y / (float)scale);
+                    int ix = (int)(field_x / (float)scale_local);
+                    int iy = (int)(field_y / (float)scale_local);
                     if (ix < 0 || iy < 0 || ix >= sim->nx || iy >= sim->ny) {
                         continue;
                     }
@@ -3354,11 +4419,13 @@ int main(int argc, char** argv) {
                 if (app.viewport_panning) {
                     app.viewport_panning = false;
                     shift_right_panning = false;
+                    panning_viewport_idx = -1;
                 }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) {
                 if (shift_right_panning || app.viewport_panning) {
                     app.viewport_panning = false;
                     shift_right_panning = false;
+                    panning_viewport_idx = -1;
                 }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 if (dragging_source) {
@@ -3372,6 +4439,9 @@ int main(int argc, char** argv) {
                     dragging_source = false;
                     dragged_source_idx = -1;
                 }
+                if (app.area_mode && app.current_area.vertices.size() >= 3) {
+                    close_area_measurement(&app, sim);
+                }
             }
         }
 
@@ -3381,6 +4451,9 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL2_NewFrame();
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui::NewFrame();
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: after ImGui NewFrame", frame_counter);
+        }
 
         ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         const float status_bar_h = 26.0f;
@@ -3440,11 +4513,17 @@ int main(int argc, char** argv) {
                                                  sizeof(errbuf))) {
                         if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                             wizard_init_from_config(wizard, &cfg);
-                            reset_view_transform(&app,
-                                                 render,
-                                                 sim,
-                                                 &scale,
-                                                 kDefaultViewportZoom);
+                            for (int i = 0; i < 4; ++i) {
+                                int tmp_scale = (int)std::lround(kDefaultViewportZoom);
+                                if (tmp_scale < 1) tmp_scale = 1;
+                                reset_view_transform(&app.viewports[i],
+                                                     render,
+                                                     sim,
+                                                     &tmp_scale,
+                                                     kDefaultViewportZoom);
+                            }
+                            scale = (int)std::lround(kDefaultViewportZoom);
+                            if (scale < 1) scale = 1;
 
                             width = sim->nx * scale;
                             height = sim->ny * scale;
@@ -3477,11 +4556,17 @@ int main(int argc, char** argv) {
                                                  sizeof(errbuf))) {
                         if (rebootstrap_simulation(&cfg, &bootstrap, &sim, &scope, scale)) {
                             wizard_init_from_config(wizard, &cfg);
-                            reset_view_transform(&app,
-                                                 render,
-                                                 sim,
-                                                 &scale,
-                                                 kDefaultViewportZoom);
+                            for (int i = 0; i < 4; ++i) {
+                                int tmp_scale = (int)std::lround(kDefaultViewportZoom);
+                                if (tmp_scale < 1) tmp_scale = 1;
+                                reset_view_transform(&app.viewports[i],
+                                                     render,
+                                                     sim,
+                                                     &tmp_scale,
+                                                     kDefaultViewportZoom);
+                            }
+                            scale = (int)std::lround(kDefaultViewportZoom);
+                            if (scale < 1) scale = 1;
 
                             width = sim->nx * scale;
                             height = sim->ny * scale;
@@ -3624,6 +4709,13 @@ int main(int argc, char** argv) {
                 if (ImGui::MenuItem("Smith Chart...")) {
                     app.smith_chart_open = true;
                 }
+                if (ImGui::MenuItem("Measurement History...", nullptr, &app.show_measurement_history)) {
+                }
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::BeginMenu("Tools")) {
+                ImGui::MenuItem("Animation Recording...", nullptr, &app.show_recording_panel);
                 ImGui::EndMenu();
             }
 
@@ -3660,6 +4752,16 @@ int main(int argc, char** argv) {
             app.viewport_pos = ImVec2(host_pos.x, host_pos.y + menu_h);
             app.viewport_size = ImVec2(host_size.x, host_size.y - menu_h);
             app.viewport_valid = (app.viewport_size.x > 4.0f && app.viewport_size.y > 4.0f);
+        }
+        compute_viewport_layout(&app, app.viewport_size);
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: viewport window pos %.1f,%.1f size %.1f,%.1f valid=%d",
+                       frame_counter,
+                       app.viewport_pos.x,
+                       app.viewport_pos.y,
+                       app.viewport_size.x,
+                       app.viewport_size.y,
+                       app.viewport_valid ? 1 : 0);
         }
 
         if (app.show_grid_panel) {
@@ -3975,7 +5077,35 @@ int main(int argc, char** argv) {
         }
 
         if (app.show_log_panel) {
-            draw_log_panel(&app);
+        draw_log_panel(&app);
+    }
+
+    if (app.show_measurement_history) {
+        draw_measurement_history_panel(&app);
+    }
+
+    {
+        ViewportInstance* panel_vp = ensure_active_viewport();
+        ImVec2 rec_size = panel_vp ? panel_vp->size : app.viewport_size;
+        draw_recording_panel(&app, render->renderer, rec_size);
+    }
+
+        if (ImGui::BeginPopup("AddAnnotation")) {
+            ImGui::InputText("Text", app.temp_annotation.text, IM_ARRAYSIZE(app.temp_annotation.text));
+            ImGui::ColorEdit3("Color", (float*)&app.temp_annotation.color);
+            ImGui::SliderFloat("Size", &app.temp_annotation.font_size, 8.0f, 28.0f, "%.0f px");
+            if (ImGui::Button("Add", ImVec2(120, 0))) {
+                app.measurements.annotations.push_back(app.temp_annotation);
+                ImGui::CloseCurrentPopup();
+                app.annotation_mode = false;
+                ui_log_add(&app, "Annotation added");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+                app.annotation_mode = false;
+            }
+            ImGui::EndPopup();
         }
 
         if (app.request_rebootstrap) {
@@ -3983,7 +5113,13 @@ int main(int argc, char** argv) {
                 (app.rebootstrap_message[0] != '\0') ? app.rebootstrap_message
                                                      : "Rebooted simulation";
             if (rebootstrap_simulation(&wizard.cfg, &bootstrap, &sim, &scope, scale)) {
-                reset_view_transform(&app, render, sim, &scale, kDefaultViewportZoom);
+                for (int i = 0; i < 4; ++i) {
+                    int tmp_scale = (int)std::lround(kDefaultViewportZoom);
+                    if (tmp_scale < 1) tmp_scale = 1;
+                    reset_view_transform(&app.viewports[i], render, sim, &tmp_scale, kDefaultViewportZoom);
+                }
+                scale = (int)std::lround(kDefaultViewportZoom);
+                if (scale < 1) scale = 1;
                 width = sim->nx * scale;
                 height = sim->ny * scale;
                 if (width < min_window_width) width = min_window_width;
@@ -4019,10 +5155,14 @@ int main(int argc, char** argv) {
                         fps_avg);
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x + ImGui::GetStyle().WindowPadding.x - 260.0f);
+            ViewportInstance* active_vp = ensure_active_viewport();
+            float status_zoom = active_vp ? active_vp->zoom : app.viewport_zoom;
+            float status_pan_x = active_vp ? active_vp->pan_x : app.viewport_pan_x;
+            float status_pan_y = active_vp ? active_vp->pan_y : app.viewport_pan_y;
             ImGui::Text("Zoom: %.1fx | Pan: (%.0f, %.0f)",
-                        app.viewport_zoom,
-                        app.viewport_pan_x,
-                        app.viewport_pan_y);
+                        status_zoom,
+                        status_pan_x,
+                        status_pan_y);
         }
         ImGui::End();
         ImGui::PopStyleColor();
@@ -4079,10 +5219,10 @@ int main(int argc, char** argv) {
                     "Numpad 1-8: Quick-select materials");
                 ImGui::BulletText(
                     "I/O/P keys only in legacy mode (no material selected)");
-                ImGui::BulletText(
-                    "Zoom: Mouse wheel, Ctrl+= / Ctrl+-, Reset: Ctrl+0 or Home");
-                ImGui::BulletText(
-                    "Pan: Middle drag or Shift+Right drag, Arrow keys (Shift = fast)");
+                ImGui::BulletText("Viewports: Alt+1/2/3/4 for Single/H/V/Quad; hover sets active");
+                ImGui::BulletText("Viz mode per viewport via toolbar; sync zoom/pan toggles available");
+                ImGui::BulletText("Zoom: Mouse wheel, Ctrl+= / Ctrl+-, Reset: Ctrl+0 or Home");
+                ImGui::BulletText("Pan: Middle drag or Shift+Right drag, Arrow keys (Shift = fast)");
 
                         ImGui::Separator();
                         ImGui::TextUnformatted("Press F1 again to close this window.");
@@ -4105,8 +5245,11 @@ int main(int argc, char** argv) {
                         ImGui::Spacing();
                         ImGui::TextUnformatted("View Modes:");
                         ImGui::BulletText("Field: Standard Ez field visualization");
-                        ImGui::BulletText("Material: Show \xCE\xB5 distribution with material colors");
+                        ImGui::BulletText("Material: Show eps distribution with material colors");
                         ImGui::BulletText("Overlay: Field + semi-transparent material layer");
+                        ImGui::BulletText("Per-viewport viz: toolbar selector (Field/Material/Overlay/Magnitude)");
+                        ImGui::BulletText("Layouts: Alt+1/2/3/4 (Single/Horz/Vert/Quad), hover sets active pane");
+                        ImGui::BulletText("Sync: optional sync zoom/pan toggles in toolbar");
                         ImGui::Spacing();
                         ImGui::TextUnformatted("S-Parameters:");
                         ImGui::BulletText("Analysis menu \xE2\x86\x92 S-Parameters window");
@@ -4127,7 +5270,6 @@ int main(int argc, char** argv) {
         static int field_tex_w = 0;
         static int field_tex_h = 0;
 
-        ImVec2 viewport_offset = compute_viewport_offset(app, sim, scale);
 
         // Overlay: show source IDs and wizard blocks on top of the field
         {
@@ -4136,101 +5278,112 @@ int main(int argc, char** argv) {
             const ImU32 block_col = IM_COL32(255, 255, 0, 160);
             const ImU32 block_sel_col = IM_COL32(0, 255, 128, 200);
 
-            // Source labels
             if (app.viewport_valid) {
-                for (int k = 0; k < MAX_SRC; ++k) {
-                    const Source& s = sim->sources[k];
-                    if (!s.active) continue;
-                    float sx = app.viewport_pos.x + viewport_offset.x +
-                               ((float)s.ix + 0.5f) * (float)scale;
-                    float sy = app.viewport_pos.y + viewport_offset.y +
-                               ((float)s.iy + 0.5f) * (float)scale;
-                    char label[16];
-                    std::snprintf(label, sizeof(label), "%d", k);
-                    dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
+                for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
+                    const ViewportInstance& vp = app.viewports[vp_idx];
+                    if (!vp.valid) continue;
+                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + vp.pos.x,
+                                              app.viewport_pos.y + vp.pos.y);
+                    int vp_scale = (int)std::lround(vp.zoom);
+                    if (vp_scale < 1) vp_scale = 1;
+                    ImVec2 viewport_offset = compute_viewport_offset(vp, sim, vp_scale);
 
-                    // Highlight if being dragged
-                    if (dragging_source && k == dragged_source_idx) {
-                        float radius = 10.0f;
-                        dl->AddCircle(ImVec2(sx, sy),
-                                      radius,
-                                      IM_COL32(255, 200, 0, 200),
-                                      16,
-                                      3.0f);
+                    for (int k = 0; k < MAX_SRC; ++k) {
+                        const Source& s = sim->sources[k];
+                        if (!s.active) continue;
+                        float sx = vp_origin.x + viewport_offset.x +
+                                   ((float)s.ix + 0.5f) * (float)vp_scale;
+                        float sy = vp_origin.y + viewport_offset.y +
+                                   ((float)s.iy + 0.5f) * (float)vp_scale;
+                        char label[16];
+                        std::snprintf(label, sizeof(label), "%d", k);
+                        dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
+
+                        // Highlight if being dragged
+                        if (dragging_source && k == dragged_source_idx) {
+                            float radius = 10.0f;
+                            dl->AddCircle(ImVec2(sx, sy),
+                                          radius,
+                                          IM_COL32(255, 200, 0, 200),
+                                          16,
+                                          3.0f);
+                        }
                     }
-                }
 
-                // Block outlines from wizard config
-                int rect_count = wizard.cfg.material_rect_count;
-                if (rect_count < 0) rect_count = 0;
-                if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
-                const Material* overlay_sel_mat = nullptr;
-                if (app.selected_material_id >= 0) {
-                    overlay_sel_mat = material_library_get_by_id(app.selected_material_id);
-                }
-                for (int i = 0; i < rect_count; ++i) {
-                    const MaterialRectSpec& r = wizard.cfg.material_rects[i];
-                    float x0 = app.viewport_pos.x + viewport_offset.x +
-                               (float)(r.x0 * (double)sim->nx * (double)scale);
-                    float x1 = app.viewport_pos.x + viewport_offset.x +
-                               (float)(r.x1 * (double)sim->nx * (double)scale);
-                    float y0 = app.viewport_pos.y + viewport_offset.y +
-                               (float)(r.y0 * (double)sim->ny * (double)scale);
-                    float y1 = app.viewport_pos.y + viewport_offset.y +
-                               (float)(r.y1 * (double)sim->ny * (double)scale);
-                    ImVec2 p0(x0, y0);
-                    ImVec2 p1(x1, y1);
-                    bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
-                    ImU32 col = block_col;
-                    if (i == app.selected_block) {
-                        col = block_sel_col;
-                    } else if (mat_match) {
-                        col = IM_COL32(0, 200, 255, 200);
+                    int rect_count = wizard.cfg.material_rect_count;
+                    if (rect_count < 0) rect_count = 0;
+                    if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
+                    const Material* overlay_sel_mat = nullptr;
+                    if (app.selected_material_id >= 0) {
+                        overlay_sel_mat = material_library_get_by_id(app.selected_material_id);
                     }
-                    dl->AddRect(p0, p1, col, 0.0f, 0, 1.5f);
+                    for (int i = 0; i < rect_count; ++i) {
+                        const MaterialRectSpec& r = wizard.cfg.material_rects[i];
+                        float x0 = vp_origin.x + viewport_offset.x +
+                                   (float)(r.x0 * (double)sim->nx * (double)vp_scale);
+                        float x1 = vp_origin.x + viewport_offset.x +
+                                   (float)(r.x1 * (double)sim->nx * (double)vp_scale);
+                        float y0 = vp_origin.y + viewport_offset.y +
+                                   (float)(r.y0 * (double)sim->ny * (double)vp_scale);
+                        float y1 = vp_origin.y + viewport_offset.y +
+                                   (float)(r.y1 * (double)sim->ny * (double)vp_scale);
+                        ImVec2 p0(x0, y0);
+                        ImVec2 p1(x1, y1);
+                        bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
+                        ImU32 col = block_col;
+                        if (i == app.selected_block) {
+                            col = block_sel_col;
+                        } else if (mat_match) {
+                            col = IM_COL32(0, 200, 255, 200);
+                        }
+                        dl->AddRect(p0, p1, col, 0.0f, 0, 1.5f);
 
-                    char blabel[16];
-                    std::snprintf(blabel, sizeof(blabel), "B%d", i);
-                    dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), col, blabel);
-                }
+                        char blabel[16];
+                        std::snprintf(blabel, sizeof(blabel), "B%d", i);
+                        dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), col, blabel);
+                    }
 
-                // Paint cursor indicator
-                if (paint_mode) {
-                    ImVec2 mouse_pos = io.MousePos;
-                    float local_x = mouse_pos.x - app.viewport_pos.x;
-                    float local_y = mouse_pos.y - app.viewport_pos.y;
-                    if (local_x >= 0.0f && local_y >= 0.0f &&
-                        local_x < app.viewport_size.x && local_y < app.viewport_size.y) {
-                        float field_x = local_x - viewport_offset.x;
-                        float field_y = local_y - viewport_offset.y;
-                        int ix = (int)(field_x / (float)scale);
-                        int iy = (int)(field_y / (float)scale);
-                        if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
-                            float cx = app.viewport_pos.x + viewport_offset.x +
-                                       ((float)ix + 0.5f) * (float)scale;
-                            float cy = app.viewport_pos.y + viewport_offset.y +
-                                       ((float)iy + 0.5f) * (float)scale;
-                            float radius = (float)paint_brush_size * (float)scale;
-                            ImU32 col = IM_COL32(255, 255, 0, 180);
-                            if (paint_material_id >= 0) {
-                                const Material* mat = material_library_get_by_id(paint_material_id);
-                                if (mat) {
-                                    col = IM_COL32(mat->color_r, mat->color_g, mat->color_b, 200);
-                                }
-                            } else {
-                                if (paint_material_type == 0) {
-                                    col = IM_COL32(255, 80, 80, 200);
-                                } else if (paint_material_type == 1) {
-                                    col = IM_COL32(80, 160, 255, 200);
+                    if (paint_mode && app.active_viewport_idx == vp_idx) {
+                        ImVec2 mouse_pos = io.MousePos;
+                        float local_x = mouse_pos.x - vp_origin.x;
+                        float local_y = mouse_pos.y - vp_origin.y;
+                        if (local_x >= 0.0f && local_y >= 0.0f &&
+                            local_x < vp.size.x && local_y < vp.size.y) {
+                            float field_x = local_x - viewport_offset.x;
+                            float field_y = local_y - viewport_offset.y;
+                            int ix = (int)(field_x / (float)vp_scale);
+                            int iy = (int)(field_y / (float)vp_scale);
+                            if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                                float cx = vp_origin.x + viewport_offset.x +
+                                           ((float)ix + 0.5f) * (float)vp_scale;
+                                float cy = vp_origin.y + viewport_offset.y +
+                                           ((float)iy + 0.5f) * (float)vp_scale;
+                                float radius = (float)paint_brush_size * (float)vp_scale;
+                                ImU32 col = IM_COL32(255, 255, 0, 180);
+                                if (paint_material_id >= 0) {
+                                    const Material* mat = material_library_get_by_id(paint_material_id);
+                                    if (mat) {
+                                        col = IM_COL32(mat->color_r, mat->color_g, mat->color_b, 200);
+                                    }
                                 } else {
-                                    col = IM_COL32(120, 255, 120, 200);
+                                    if (paint_material_type == 0) {
+                                        col = IM_COL32(255, 80, 80, 200);
+                                    } else if (paint_material_type == 1) {
+                                        col = IM_COL32(80, 160, 255, 200);
+                                    } else {
+                                        col = IM_COL32(120, 255, 120, 200);
+                                    }
                                 }
+                                dl->AddCircle(ImVec2(cx, cy), radius, col, 32, 1.5f);
                             }
-                            dl->AddCircle(ImVec2(cx, cy), radius, col, 32, 1.5f);
                         }
                     }
                 }
             }
+        }
+
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: before step paused=%d", frame_counter, paused ? 1 : 0);
         }
 
         if (!paused) {
@@ -4241,6 +5394,10 @@ int main(int argc, char** argv) {
                 double probe_val = fdtd_get_Ez(sim, px, py);
                 scope_push(&scope, probe_val);
             }
+        }
+
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: after step scope_head=%d", frame_counter, scope.head);
         }
 
         Uint64 now = SDL_GetPerformanceCounter();
@@ -4321,6 +5478,13 @@ int main(int argc, char** argv) {
                                       SDL_TEXTUREACCESS_TARGET,
                                       tex_w,
                                       tex_h);
+                if (frame_counter <= 120) {
+                    debug_logf("frame %d: recreate field_texture %dx%d %s",
+                               frame_counter,
+                               tex_w,
+                               tex_h,
+                               field_texture ? "ok" : SDL_GetError());
+                }
                 field_tex_w = tex_w;
                 field_tex_h = tex_h;
             }
@@ -4333,50 +5497,72 @@ int main(int argc, char** argv) {
                                    viewport_clear_color.a);
             SDL_RenderClear(render->renderer);
 
-            render->offset_x = viewport_offset.x;
-            render->offset_y = viewport_offset.y;
+            for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
+                ViewportInstance& vp = app.viewports[vp_idx];
+                if (!vp.valid) continue;
+                SDL_Rect vp_rect = {(int)vp.pos.x, (int)vp.pos.y, (int)vp.size.x, (int)vp.size.y};
+                SDL_RenderSetViewport(render->renderer, &vp_rect);
 
-            double vmax = vmax_smooth;
-            if (vmax <= 0.0) vmax = 1.0;
+                int vp_scale = (int)std::lround(vp.zoom);
+                if (vp_scale < 1) vp_scale = 1;
+                render->scale = vp_scale;
+                ImVec2 vp_offset = compute_viewport_offset(vp, sim, vp_scale);
+                render->offset_x = vp_offset.x;
+                render->offset_y = vp_offset.y;
 
-            switch (app.visualization_mode) {
-                case 0:
-                    render_field_heatmap(render, sim, vmax, 1.0);
-                    break;
-                case 1:
-                    render_material_distribution(render, sim, scale);
-                    break;
-                case 2:
-                default:
-                    render_field_heatmap(render, sim, vmax, 1.0);
+                double vmax = vmax_smooth;
+                if (vmax <= 0.0) vmax = 1.0;
+
+                switch (vp.viz_mode) {
+                    case VIEWPORT_VIZ_FIELD:
+                        render_field_heatmap(render, sim, vmax, 1.0);
+                        break;
+                    case VIEWPORT_VIZ_MATERIAL:
+                        render_material_distribution(render, sim, vp_scale);
+                        break;
+                    case VIEWPORT_VIZ_OVERLAY:
+                        render_field_heatmap(render, sim, vmax, 1.0);
+                        SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
+                        render_material_overlay(render,
+                                                sim,
+                                                vp_scale,
+                                                app.material_overlay_alpha);
+                        SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
+                        break;
+                    case VIEWPORT_VIZ_MAG:
+                        render_field_heatmap(render, sim, vmax, 1.0);
+                        break;
+                    default:
+                        render_field_heatmap(render, sim, vmax, 1.0);
+                        break;
+                }
+
+                if (app.show_material_outlines) {
                     SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
-                    render_material_overlay(render,
-                                            sim,
-                                            scale,
-                                            app.material_overlay_alpha);
+                    render_material_outlines(render, sim, vp_scale);
                     SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
-                    break;
-            }
+                }
 
-            if (app.show_material_outlines) {
-                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
-                render_material_outlines(render, sim, scale);
-                SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
+                if (vp.show_grid) {
+                    SDL_Color grid_col = {40, 40, 50, 255};
+                    int grid_step = compute_grid_step_from_scale(vp_scale);
+                    render_grid_overlay(render, sim, grid_col, grid_step);
+                }
+                if (vp.show_sources) {
+                    render_sources(render, sim->sources);
+                }
             }
-
-            if (app.show_grid_overlay) {
-                SDL_Color grid_col = {40, 40, 50, 255};
-                int grid_step = compute_grid_step_from_scale(scale);
-                render_grid_overlay(render, sim, grid_col, grid_step);
-            }
-            render_sources(render, sim->sources);
 
             render->offset_x = 0.0f;
             render->offset_y = 0.0f;
+            SDL_RenderSetViewport(render->renderer, NULL);
             SDL_SetRenderTarget(render->renderer, NULL);
         }
 
         // Clear backbuffer for ImGui
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: after field render valid=%d", frame_counter, app.viewport_valid ? 1 : 0);
+        }
         SDL_SetRenderDrawColor(render->renderer,
                                viewport_clear_color.r,
                                viewport_clear_color.g,
@@ -4386,6 +5572,9 @@ int main(int argc, char** argv) {
 
         // Viewport content (image + overlay toolbar)
         if (app.viewport_valid && viewport_texture) {
+            if (frame_counter <= 120) {
+                debug_logf("frame %d: entering viewport overlay window", frame_counter);
+            }
             ImGui::SetNextWindowPos(app.viewport_pos);
             ImGui::SetNextWindowSize(app.viewport_size);
             ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
@@ -4400,6 +5589,47 @@ int main(int argc, char** argv) {
             if (ImGui::Begin("ViewportOverlayWindow", nullptr, overlay_flags)) {
                 ImGui::SetCursorPos(ImVec2(0, 0));
                 ImGui::Image((ImTextureID)viewport_texture, app.viewport_size);
+
+                ViewportInstance* active_vp = ensure_active_viewport();
+                int active_scale = active_vp ? (int)std::lround(active_vp->zoom) : 1;
+                if (active_scale < 1) active_scale = 1;
+                if (frame_counter <= 120) {
+                    debug_logf("frame %d: overlay start active_idx=%d active_scale=%d",
+                               frame_counter,
+                               app.active_viewport_idx,
+                               active_scale);
+                }
+
+                ImDrawList* overlay_dl = ImGui::GetWindowDrawList();
+                ImVec2 win_origin = ImGui::GetWindowPos();
+                const char* labels[] = {"A", "B", "C", "D"};
+                const char* viz_labels[] = {"Field", "Material", "Overlay", "Magnitude"};
+                for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
+                    const ViewportInstance& vp = app.viewports[vp_idx];
+                    if (!vp.valid) continue;
+                    ImVec2 p0 = ImVec2(win_origin.x + vp.pos.x, win_origin.y + vp.pos.y);
+                    ImVec2 p1 = ImVec2(p0.x + vp.size.x, p0.y + vp.size.y);
+                    ImU32 col = (vp_idx == app.active_viewport_idx)
+                                    ? IM_COL32(80, 160, 255, 255)
+                                    : IM_COL32(80, 80, 80, 180);
+                    overlay_dl->AddRect(p0, p1, col, 0.0f, 0, 2.0f);
+
+                    char label_buf[64];
+                    const char* viz = viz_labels[(int)vp.viz_mode];
+                    std::snprintf(label_buf, sizeof(label_buf), "%s: %s", labels[vp_idx], viz);
+                    ImVec2 pad(6.0f, 3.0f);
+                    ImVec2 text_sz = ImGui::CalcTextSize(label_buf);
+                    ImVec2 l0 = ImVec2(p0.x + 8.0f, p0.y + 8.0f);
+                    ImVec2 l1 = ImVec2(l0.x + text_sz.x + pad.x * 2.0f, l0.y + text_sz.y + pad.y * 2.0f);
+                    overlay_dl->AddRectFilled(l0, l1, IM_COL32(0, 0, 0, 180), 3.0f);
+                    overlay_dl->AddText(ImVec2(l0.x + pad.x, l0.y + pad.y),
+                                        IM_COL32(230, 230, 230, 255),
+                                        label_buf);
+                }
+
+                if (frame_counter <= 120) {
+                    debug_logf("frame %d: overlay after labels", frame_counter);
+                }
 
                 const float toolbar_w = 260.0f;
                 const float toolbar_h = 90.0f;
@@ -4420,70 +5650,112 @@ int main(int argc, char** argv) {
                                       ImVec2(toolbar_w, toolbar_h),
                                       true,
                                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
-                    ImVec2 focus = ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
+                    if (frame_counter <= 120) {
+                        debug_logf("frame %d: overlay toolbar begin", frame_counter);
+                    }
+                    ImVec2 focus = active_vp ? ImVec2(active_vp->size.x * 0.5f, active_vp->size.y * 0.5f)
+                                             : ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
                     ImGui::TextUnformatted("View");
                     ImGui::PushButtonRepeat(true);
                     if (ImGui::Button("-", ImVec2(26.0f, 0.0f))) {
-                        apply_zoom_at_point(&app, render, sim, &scale, focus.x, focus.y, 0.9f, false);
-                        app.hud_zoom_value = app.viewport_zoom;
-                        app.hud_zoom_timer = 1.0f;
+                        if (active_vp) {
+                            apply_zoom_at_point(active_vp, render, sim, &active_scale, focus.x, focus.y, 0.9f, false);
+                            if (app.sync_zoom) {
+                                for (int i = 0; i < 4; ++i) {
+                                    if (!app.viewports[i].valid) continue;
+                                    app.viewports[i].zoom = active_vp->zoom;
+                                }
+                            }
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_zoom_timer = 1.0f;
+                        }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Fit", ImVec2(50.0f, 0.0f))) {
-                        if (app.viewport_valid && sim) {
-                            float fit_scale_x = app.viewport_size.x / (float)sim->nx;
-                            float fit_scale_y = app.viewport_size.y / (float)sim->ny;
+                        if (app.viewport_valid && sim && active_vp) {
+                            float fit_scale_x = active_vp->size.x / (float)sim->nx;
+                            float fit_scale_y = active_vp->size.y / (float)sim->ny;
                             float fit_zoom = std::max(0.5f, std::min(fit_scale_x, fit_scale_y));
-                            app.viewport_zoom = fit_zoom;
-                            scale = (int)std::lround(fit_zoom);
-                            if (scale < 1) scale = 1;
-                            render->scale = scale;
-                            app.viewport_pan_x = 0.0f;
-                            app.viewport_pan_y = 0.0f;
-                            clamp_pan_offset(&app, sim, scale);
-                            app.hud_zoom_value = app.viewport_zoom;
-                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            active_vp->zoom = fit_zoom;
+                            active_scale = (int)std::lround(fit_zoom);
+                            if (active_scale < 1) active_scale = 1;
+                            render->scale = active_scale;
+                            active_vp->pan_x = 0.0f;
+                            active_vp->pan_y = 0.0f;
+                            clamp_pan_offset(active_vp, sim, active_scale);
+                            if (app.sync_zoom) {
+                                for (int i = 0; i < 4; ++i) {
+                                    if (!app.viewports[i].valid) continue;
+                                    app.viewports[i].zoom = active_vp->zoom;
+                                    app.viewports[i].pan_x = active_vp->pan_x;
+                                    app.viewports[i].pan_y = active_vp->pan_y;
+                                }
+                            }
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                             app.hud_zoom_timer = 1.0f;
                             app.hud_pan_timer = 1.0f;
                         }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("1:1", ImVec2(40.0f, 0.0f))) {
-                        if (app.viewport_valid && sim) {
-                            app.viewport_zoom = 1.0f;
-                            scale = 1;
-                            render->scale = scale;
-                            app.viewport_pan_x = 0.0f;
-                            app.viewport_pan_y = 0.0f;
-                            clamp_pan_offset(&app, sim, scale);
-                            app.hud_zoom_value = app.viewport_zoom;
-                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                        if (app.viewport_valid && sim && active_vp) {
+                            active_vp->zoom = 1.0f;
+                            active_scale = 1;
+                            render->scale = active_scale;
+                            active_vp->pan_x = 0.0f;
+                            active_vp->pan_y = 0.0f;
+                            clamp_pan_offset(active_vp, sim, active_scale);
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                             app.hud_zoom_timer = 1.0f;
                             app.hud_pan_timer = 1.0f;
                         }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Reset", ImVec2(60.0f, 0.0f))) {
-                        reset_view_transform(&app, render, sim, &scale, kDefaultViewportZoom);
-                        clamp_pan_offset(&app, sim, scale);
-                        app.hud_zoom_value = app.viewport_zoom;
-                        app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
-                        app.hud_zoom_timer = 1.0f;
-                        app.hud_pan_timer = 1.0f;
+                        if (active_vp) {
+                            reset_view_transform(active_vp, render, sim, &active_scale, kDefaultViewportZoom);
+                            clamp_pan_offset(active_vp, sim, active_scale);
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
+                            app.hud_zoom_timer = 1.0f;
+                            app.hud_pan_timer = 1.0f;
+                        }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("+", ImVec2(26.0f, 0.0f))) {
-                        apply_zoom_at_point(&app, render, sim, &scale, focus.x, focus.y, 1.1f, false);
-                        app.hud_zoom_value = app.viewport_zoom;
-                        app.hud_zoom_timer = 1.0f;
+                        if (active_vp) {
+                            apply_zoom_at_point(active_vp, render, sim, &active_scale, focus.x, focus.y, 1.1f, false);
+                            if (app.sync_zoom) {
+                                for (int i = 0; i < 4; ++i) {
+                                    if (!app.viewports[i].valid) continue;
+                                    app.viewports[i].zoom = active_vp->zoom;
+                                }
+                            }
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_zoom_timer = 1.0f;
+                        }
                     }
                     ImGui::PopButtonRepeat();
+                    if (frame_counter <= 120) {
+                        debug_logf("frame %d: toolbar after zoom buttons", frame_counter);
+                    }
 
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
 
                     auto toggle_button = [&](const char* label, bool* value, const ImVec4& on_col) {
+                        bool is_on = value ? *value : false;
+                        if (!value) {
+                            ImGui::BeginDisabled();
+                        }
                         ImVec4 off_col(0.16f, 0.16f, 0.18f, 0.7f);
                         ImVec4 off_hover(0.20f, 0.20f, 0.24f, 0.8f);
                         ImVec4 off_active(0.24f, 0.24f, 0.28f, 0.9f);
@@ -4495,26 +5767,39 @@ int main(int argc, char** argv) {
                         };
                         ImVec4 on_hover = clamp_color(on_col, 0.05f);
                         ImVec4 on_active = clamp_color(on_col, 0.08f);
-                        ImGui::PushStyleColor(ImGuiCol_Button, *value ? on_col : off_col);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, *value ? on_hover : off_hover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, *value ? on_active : off_active);
+                        ImGui::PushStyleColor(ImGuiCol_Button, is_on ? on_col : off_col);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_on ? on_hover : off_hover);
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, is_on ? on_active : off_active);
                         bool clicked = ImGui::Button(label, ImVec2(70.0f, 0.0f));
                         ImGui::PopStyleColor(3);
-                        if (clicked) {
+                        if (clicked && value) {
                             *value = !*value;
+                            is_on = *value;
+                        }
+                        if (!value) {
+                            ImGui::EndDisabled();
                         }
                     };
 
-                    toggle_button("Grid", &app.show_grid_overlay, ImVec4(0.16f, 0.35f, 0.22f, 0.9f));
+                    toggle_button("Grid",
+                                  active_vp ? &active_vp->show_grid : nullptr,
+                                  ImVec4(0.16f, 0.35f, 0.22f, 0.9f));
                     ImGui::SameLine();
                     toggle_button("Axis", &app.show_axis_overlay, ImVec4(0.20f, 0.32f, 0.50f, 0.9f));
                     ImGui::SameLine();
                     if (ImGui::Button("Center", ImVec2(70.0f, 0.0f))) {
-                        if (app.viewport_valid && sim) {
-                            app.viewport_pan_x = 0.0f;
-                            app.viewport_pan_y = 0.0f;
-                            clamp_pan_offset(&app, sim, scale);
-                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                        if (app.viewport_valid && sim && active_vp) {
+                            active_vp->pan_x = 0.0f;
+                            active_vp->pan_y = 0.0f;
+                            clamp_pan_offset(active_vp, sim, active_scale);
+                            if (app.sync_pan) {
+                                for (int i = 0; i < 4; ++i) {
+                                    if (!app.viewports[i].valid) continue;
+                                    app.viewports[i].pan_x = active_vp->pan_x;
+                                    app.viewports[i].pan_y = active_vp->pan_y;
+                                }
+                            }
+                            app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                             app.hud_pan_timer = 1.0f;
                         }
                     }
@@ -4522,18 +5807,20 @@ int main(int argc, char** argv) {
                     ImGui::TextDisabled("|");
                     ImGui::SameLine();
 
-                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
+                    ImVec2 offset = active_vp ? compute_viewport_offset(*active_vp, sim, active_scale)
+                                              : ImVec2(0.0f, 0.0f);
                     int mx = 0;
                     int my = 0;
                     SDL_GetMouseState(&mx, &my);
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
-                    if (local_x >= 0.0f && local_x < app.viewport_size.x &&
-                        local_y >= 0.0f && local_y < app.viewport_size.y) {
+                    float local_x = active_vp ? (float)mx - (app.viewport_pos.x + active_vp->pos.x) : -1.0f;
+                    float local_y = active_vp ? (float)my - (app.viewport_pos.y + active_vp->pos.y) : -1.0f;
+                    if (active_vp &&
+                        local_x >= 0.0f && local_x < active_vp->size.x &&
+                        local_y >= 0.0f && local_y < active_vp->size.y) {
                         float field_x = local_x - offset.x;
                         float field_y = local_y - offset.y;
-                        int ix = (int)(field_x / (float)scale);
-                        int iy = (int)(field_y / (float)scale);
+                        int ix = (int)(field_x / (float)active_scale);
+                        int iy = (int)(field_y / (float)active_scale);
                         if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
                             ImGui::Text("Cell: (%d, %d)", ix, iy);
                         } else {
@@ -4542,6 +5829,24 @@ int main(int argc, char** argv) {
                     } else {
                         ImGui::TextUnformatted("Cell: --");
                     }
+
+                    ImGui::Separator();
+                    if (frame_counter <= 120) {
+                        debug_logf("frame %d: toolbar after cell block", frame_counter);
+                    }
+                    if (active_vp) {
+                        const char* viz_options[] = {"Field", "Material", "Overlay", "Magnitude"};
+                        int v = (int)active_vp->viz_mode;
+                        if (ImGui::Combo("Visualization", &v, viz_options, IM_ARRAYSIZE(viz_options))) {
+                            active_vp->viz_mode = (ViewportViz)v;
+                        }
+                        ImGui::Checkbox("Sync Zoom", &app.sync_zoom);
+                        ImGui::SameLine();
+                        ImGui::Checkbox("Sync Pan", &app.sync_pan);
+                    }
+                    if (frame_counter <= 120) {
+                        debug_logf("frame %d: toolbar end block", frame_counter);
+                    }
                 }
                 ImGui::EndChild();
                 ImGui::PopStyleVar(2);
@@ -4549,7 +5854,9 @@ int main(int argc, char** argv) {
 
                 // HUD badges
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImVec2 hud_pos = ImVec2(app.viewport_pos.x + 12.0f, app.viewport_pos.y + 12.0f);
+                ImVec2 hud_pos = active_vp ? ImVec2(app.viewport_pos.x + active_vp->pos.x + 12.0f,
+                                                 app.viewport_pos.y + active_vp->pos.y + 12.0f)
+                                           : ImVec2(app.viewport_pos.x + 12.0f, app.viewport_pos.y + 12.0f);
                 if (app.hud_zoom_timer > 0.0f) {
                     char buf[64];
                     std::snprintf(buf, sizeof(buf), "Zoom %.2fx", app.hud_zoom_value);
@@ -4579,32 +5886,35 @@ int main(int argc, char** argv) {
                 }
 
                 // Optional axis crosshair at center
-                if (app.show_axis_overlay) {
-                    ImVec2 center = ImVec2(app.viewport_pos.x + app.viewport_size.x * 0.5f,
-                                           app.viewport_pos.y + app.viewport_size.y * 0.5f);
+                if (app.show_axis_overlay && active_vp) {
+                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + active_vp->pos.x,
+                                              app.viewport_pos.y + active_vp->pos.y);
+                    ImVec2 center = ImVec2(vp_origin.x + active_vp->size.x * 0.5f,
+                                           vp_origin.y + active_vp->size.y * 0.5f);
                     ImU32 axis_col = IM_COL32(120, 180, 255, 100);
-                    dl->AddLine(ImVec2(app.viewport_pos.x, center.y),
-                                ImVec2(app.viewport_pos.x + app.viewport_size.x, center.y),
+                    dl->AddLine(ImVec2(vp_origin.x, center.y),
+                                ImVec2(vp_origin.x + active_vp->size.x, center.y),
                                 axis_col, 1.0f);
-                    dl->AddLine(ImVec2(center.x, app.viewport_pos.y),
-                                ImVec2(center.x, app.viewport_pos.y + app.viewport_size.y),
+                    dl->AddLine(ImVec2(center.x, vp_origin.y),
+                                ImVec2(center.x, vp_origin.y + active_vp->size.y),
                                 axis_col, 1.0f);
                 }
 
                 // Rulers, labels, and origin marker
-                if (sim && app.show_grid_overlay) {
-                    int grid_step = compute_grid_step_from_scale(scale);
+                if (sim && active_vp && active_vp->show_grid) {
+                    int grid_step = compute_grid_step_from_scale(active_scale);
                     if (grid_step < 1) grid_step = 1;
-                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
-                    float start_x_px = app.viewport_pos.x + offset.x;
-                    float start_y_px = app.viewport_pos.y + offset.y;
-                    float end_x_px = app.viewport_pos.x + app.viewport_size.x;
-                    float end_y_px = app.viewport_pos.y + app.viewport_size.y;
+                    ImVec2 offset = compute_viewport_offset(*active_vp, sim, active_scale);
+                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + active_vp->pos.x,
+                                              app.viewport_pos.y + active_vp->pos.y);
+                    float start_x_px = vp_origin.x + offset.x;
+                    float start_y_px = vp_origin.y + offset.y;
+                    float end_x_px = vp_origin.x + active_vp->size.x;
+                    float end_y_px = vp_origin.y + active_vp->size.y;
 
-                    // Origin marker
-                    if (start_x_px >= app.viewport_pos.x - 12.0f &&
+                    if (start_x_px >= vp_origin.x - 12.0f &&
                         start_x_px <= end_x_px + 12.0f &&
-                        start_y_px >= app.viewport_pos.y - 12.0f &&
+                        start_y_px >= vp_origin.y - 12.0f &&
                         start_y_px <= end_y_px + 12.0f) {
                         ImU32 origin_col = IM_COL32(255, 80, 80, 220);
                         dl->AddLine(ImVec2(start_x_px - 10.0f, start_y_px),
@@ -4631,69 +5941,175 @@ int main(int argc, char** argv) {
                         }
                     };
 
-                    // Visible range in cells
-                    int first_cell_x = (int)std::floor((-offset.x) / (float)scale);
-                    int last_cell_x = (int)std::ceil((app.viewport_size.x - offset.x) / (float)scale);
+                    int first_cell_x = (int)std::floor((-offset.x) / (float)active_scale);
+                    int last_cell_x = (int)std::ceil((active_vp->size.x - offset.x) / (float)active_scale);
                     first_cell_x = std::max(0, first_cell_x);
                     last_cell_x = std::min(sim->nx, last_cell_x);
 
-                    int first_cell_y = (int)std::floor((-offset.y) / (float)scale);
-                    int last_cell_y = (int)std::ceil((app.viewport_size.y - offset.y) / (float)scale);
+                    int first_cell_y = (int)std::floor((-offset.y) / (float)active_scale);
+                    int last_cell_y = (int)std::ceil((active_vp->size.y - offset.y) / (float)active_scale);
                     first_cell_y = std::max(0, first_cell_y);
                     last_cell_y = std::min(sim->ny, last_cell_y);
 
                     for (int cx = first_cell_x - (first_cell_x % grid_step); cx <= last_cell_x; cx += grid_step) {
-                        float x = app.viewport_pos.x + offset.x + (float)cx * (float)scale;
-                        if (x < app.viewport_pos.x || x > end_x_px) continue;
+                        float x = vp_origin.x + offset.x + (float)cx * (float)active_scale;
+                        if (x < vp_origin.x || x > end_x_px) continue;
                         bool major = ((cx / grid_step) % 5) == 0;
                         float tick = major ? tick_long : tick_short;
-                        dl->AddLine(ImVec2(x, app.viewport_pos.y),
-                                    ImVec2(x, app.viewport_pos.y + tick),
+                        dl->AddLine(ImVec2(x, vp_origin.y),
+                                    ImVec2(x, vp_origin.y + tick),
                                     IM_COL32(180, 180, 190, 190),
                                     1.0f);
                         if (major && cell_w_m > 0.0) {
                             char buf[32];
                             format_dist(cell_w_m * (double)cx, buf, sizeof(buf));
                             ImVec2 ts = ImGui::CalcTextSize(buf);
-                            ImVec2 pos = ImVec2(x - ts.x * 0.5f, app.viewport_pos.y + tick + pad);
+                            ImVec2 pos = ImVec2(x - ts.x * 0.5f, vp_origin.y + tick + pad);
                             dl->AddText(pos, IM_COL32(210, 210, 220, 200), buf);
                         }
                     }
 
                     for (int cy = first_cell_y - (first_cell_y % grid_step); cy <= last_cell_y; cy += grid_step) {
-                        float y = app.viewport_pos.y + offset.y + (float)cy * (float)scale;
-                        if (y < app.viewport_pos.y || y > end_y_px) continue;
+                        float y = vp_origin.y + offset.y + (float)cy * (float)active_scale;
+                        if (y < vp_origin.y || y > end_y_px) continue;
                         bool major = ((cy / grid_step) % 5) == 0;
                         float tick = major ? tick_long : tick_short;
-                        dl->AddLine(ImVec2(app.viewport_pos.x, y),
-                                    ImVec2(app.viewport_pos.x + tick, y),
+                        dl->AddLine(ImVec2(vp_origin.x, y),
+                                    ImVec2(vp_origin.x + tick, y),
                                     IM_COL32(180, 180, 190, 190),
                                     1.0f);
                         if (major && cell_h_m > 0.0) {
                             char buf[32];
                             format_dist(cell_h_m * (double)cy, buf, sizeof(buf));
                             ImVec2 ts = ImGui::CalcTextSize(buf);
-                            ImVec2 pos = ImVec2(app.viewport_pos.x + tick + pad,
+                            ImVec2 pos = ImVec2(vp_origin.x + tick + pad,
                                                 y - ts.y * 0.5f);
                             dl->AddText(pos, IM_COL32(210, 210, 220, 200), buf);
                         }
                     }
                 }
 
-                // Ruler overlays & cursor readout
-                if (sim && app.viewport_valid) {
-                    ImVec2 offset = compute_viewport_offset(app, sim, scale);
+                // Area/annotation overlays
+                if (sim && app.viewport_valid && active_vp) {
+                    ImVec2 offset = compute_viewport_offset(*active_vp, sim, active_scale);
                     int mx = 0, my = 0;
                     SDL_GetMouseState(&mx, &my);
-                    float local_x = (float)mx - app.viewport_pos.x;
-                    float local_y = (float)my - app.viewport_pos.y;
+                    float local_x = (float)mx - (app.viewport_pos.x + active_vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + active_vp->pos.y);
                     bool mouse_in_view =
                         (local_x >= 0.0f && local_y >= 0.0f &&
-                         local_x < app.viewport_size.x && local_y < app.viewport_size.y);
+                         local_x < active_vp->size.x && local_y < active_vp->size.y);
 
+                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + active_vp->pos.x,
+                                              app.viewport_pos.y + active_vp->pos.y);
                     auto grid_to_screen = [&](const ImVec2& g) {
-                        return ImVec2(app.viewport_pos.x + offset.x + g.x * (float)scale,
-                                      app.viewport_pos.y + offset.y + g.y * (float)scale);
+                        return ImVec2(vp_origin.x + offset.x + g.x * (float)active_scale,
+                                      vp_origin.y + offset.y + g.y * (float)active_scale);
+                    };
+
+                    if (app.show_area_measurements) {
+                        ImU32 area_fill = IM_COL32(80, 180, 80, 80);
+                        ImU32 area_line = IM_COL32(100, 255, 100, 200);
+                        ImU32 vert_col = IM_COL32(255, 255, 120, 255);
+                        for (const auto& a : app.measurements.areas) {
+                            if (a.vertices.size() < 3) continue;
+                            std::vector<ImVec2> pts;
+                            pts.reserve(a.vertices.size());
+                            for (const auto& v : a.vertices) pts.push_back(grid_to_screen(v));
+                            dl->AddConvexPolyFilled(pts.data(), (int)pts.size(), area_fill);
+                            for (size_t i = 0; i < pts.size(); ++i) {
+                                size_t j = (i + 1) % pts.size();
+                                dl->AddLine(pts[i], pts[j], area_line, 2.0f);
+                            }
+                            for (const auto& p : pts) dl->AddCircleFilled(p, 4.0f, vert_col);
+                            ImVec2 centroid(0, 0);
+                            for (const auto& p : pts) { centroid.x += p.x; centroid.y += p.y; }
+                            centroid.x /= (float)pts.size();
+                            centroid.y /= (float)pts.size();
+                            char buf[96];
+                            std::snprintf(buf, sizeof(buf), "%.6f m^2\n%.4f m", a.area_m2, a.perimeter_m);
+                            ImVec2 ts = ImGui::CalcTextSize(buf);
+                            ImVec2 pad(4.0f, 3.0f);
+                            ImVec2 b0 = ImVec2(centroid.x - ts.x * 0.5f - pad.x,
+                                               centroid.y - ts.y * 0.5f - pad.y);
+                            ImVec2 b1 = ImVec2(centroid.x + ts.x * 0.5f + pad.x,
+                                               centroid.y + ts.y * 0.5f + pad.y);
+                            dl->AddRectFilled(b0, b1, IM_COL32(0, 0, 0, 200), 3.0f);
+                            dl->AddText(ImVec2(b0.x + pad.x, b0.y + pad.y), IM_COL32(120, 255, 120, 255), buf);
+                        }
+
+                        if (app.area_mode) {
+                            ImVec2 mouse_pos = io.MousePos;
+                            float lx = mouse_pos.x - (app.viewport_pos.x + active_vp->pos.x);
+                            float ly = mouse_pos.y - (app.viewport_pos.y + active_vp->pos.y);
+                            ImVec2 preview = ImVec2(0, 0);
+                            bool preview_valid = false;
+                            if (lx >= 0 && ly >= 0 && lx < active_vp->size.x && ly < active_vp->size.y) {
+                                float fx = lx - offset.x;
+                                float fy = ly - offset.y;
+                                int ix = (int)(fx / (float)active_scale);
+                                int iy = (int)(fy / (float)active_scale);
+                                if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                                    preview = ImVec2((float)ix, (float)iy);
+                                    preview_valid = true;
+                                }
+                            }
+                            std::vector<ImVec2> pts;
+                            pts.reserve(app.current_area.vertices.size() + (preview_valid ? 1 : 0));
+                            for (const auto& v : app.current_area.vertices) pts.push_back(grid_to_screen(v));
+                            if (preview_valid) pts.push_back(grid_to_screen(preview));
+                            for (size_t i = 0; i + 1 < pts.size(); ++i) {
+                                dl->AddLine(pts[i], pts[i + 1], area_line, 2.0f);
+                            }
+                            for (const auto& p : pts) dl->AddCircleFilled(p, 5.0f, vert_col);
+
+                            // Instruction badge
+                            const char* msg = "Area: click vertices, right-click to finish, Esc to cancel";
+                            ImVec2 ts = ImGui::CalcTextSize(msg);
+                            ImVec2 pad(8.0f, 4.0f);
+                            ImVec2 pos = ImVec2(vp_origin.x + 12.0f, vp_origin.y + 12.0f);
+                            dl->AddRectFilled(pos,
+                                              ImVec2(pos.x + ts.x + pad.x * 2.0f,
+                                                     pos.y + ts.y + pad.y * 2.0f),
+                                              IM_COL32(10, 10, 14, 200),
+                                              4.0f);
+                            dl->AddText(ImVec2(pos.x + pad.x, pos.y + pad.y),
+                                        IM_COL32(230, 230, 240, 255),
+                                        msg);
+                        }
+                    }
+
+                    if (app.show_annotations) {
+                        for (const auto& ann : app.measurements.annotations) {
+                            if (!ann.visible) continue;
+                            ImVec2 sp = grid_to_screen(ann.grid_pos);
+                            ImVec2 ts = ImGui::CalcTextSize(ann.text);
+                            ImVec2 pad(6.0f, 4.0f);
+                            ImVec2 b0 = ImVec2(sp.x - pad.x, sp.y - pad.y);
+                            ImVec2 b1 = ImVec2(sp.x + ts.x + pad.x, sp.y + ts.y + pad.y);
+                            dl->AddRectFilled(b0, b1, IM_COL32(0, 0, 0, 200), 4.0f);
+                            dl->AddRect(b0, b1, ImColor(ann.color), 4.0f, 0, 2.0f);
+                            dl->AddText(sp, ImColor(ann.color), ann.text);
+                        }
+                    }
+                }
+
+                // Ruler overlays & cursor readout
+                if (sim && app.viewport_valid && active_vp) {
+                    ImVec2 offset = compute_viewport_offset(*active_vp, sim, active_scale);
+                    int mx = 0, my = 0;
+                    SDL_GetMouseState(&mx, &my);
+                    float local_x = (float)mx - (app.viewport_pos.x + active_vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + active_vp->pos.y);
+                    bool mouse_in_view =
+                        (local_x >= 0.0f && local_y >= 0.0f &&
+                         local_x < active_vp->size.x && local_y < active_vp->size.y);
+
+                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + active_vp->pos.x,
+                                              app.viewport_pos.y + active_vp->pos.y);
+                    auto grid_to_screen = [&](const ImVec2& g) {
+                        return ImVec2(vp_origin.x + offset.x + g.x * (float)active_scale,
+                                      vp_origin.y + offset.y + g.y * (float)active_scale);
                     };
 
                     ImVec2 live_cursor_grid(0.0f, 0.0f);
@@ -4701,8 +6117,8 @@ int main(int argc, char** argv) {
                     if (mouse_in_view) {
                         float field_x = local_x - offset.x;
                         float field_y = local_y - offset.y;
-                        int ix = (int)(field_x / (float)scale);
-                        int iy = (int)(field_y / (float)scale);
+                        int ix = (int)(field_x / (float)active_scale);
+                        int iy = (int)(field_y / (float)active_scale);
                         if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
                             live_cursor_grid = ImVec2((float)ix, (float)iy);
                             cursor_on_grid = true;
@@ -4726,7 +6142,7 @@ int main(int argc, char** argv) {
                             double distance_m = std::sqrt(dx_m * dx_m + dy_m * dy_m);
                             double angle_deg = std::atan2(dy_m, dx_m) * 180.0 / IM_PI;
                             char buf[64];
-                            std::snprintf(buf, sizeof(buf), "%.3f m @ %.1f°", distance_m, angle_deg);
+                            std::snprintf(buf, sizeof(buf), "%.3f m @ %.1f deg", distance_m, angle_deg);
                             ImVec2 mid = ImVec2((a_px.x + b_px.x) * 0.5f, (a_px.y + b_px.y) * 0.5f);
                             ImVec2 ts = ImGui::CalcTextSize(buf);
                             ImVec2 box_min = ImVec2(mid.x - ts.x * 0.5f - 6.0f,
@@ -4759,8 +6175,8 @@ int main(int argc, char** argv) {
                                       y_m);
                         ImVec2 info_sz = ImGui::CalcTextSize(info);
                         ImVec2 info_pad(8.0f, 5.0f);
-                        ImVec2 rect_min = ImVec2(app.viewport_pos.x + 12.0f,
-                                                 app.viewport_pos.y + app.viewport_size.y - info_sz.y - info_pad.y * 2.0f - 12.0f);
+                        ImVec2 rect_min = ImVec2(vp_origin.x + 12.0f,
+                                                 vp_origin.y + active_vp->size.y - info_sz.y - info_pad.y * 2.0f - 12.0f);
                         ImVec2 rect_max = ImVec2(rect_min.x + info_sz.x + info_pad.x * 2.0f,
                                                  rect_min.y + info_sz.y + info_pad.y * 2.0f);
                         dl->AddRectFilled(rect_min, rect_max, IM_COL32(10, 10, 14, 200), 4.0f);
@@ -4793,21 +6209,37 @@ int main(int argc, char** argv) {
                         app.ruler_first_point_set = false;
                     }
                     if (ImGui::MenuItem("Zoom to Fit")) {
-                        if (app.viewport_valid && sim) {
-                            float fit_scale_x = app.viewport_size.x / (float)sim->nx;
-                            float fit_scale_y = app.viewport_size.y / (float)sim->ny;
+                        if (app.viewport_valid && sim && active_vp) {
+                            float fit_scale_x = active_vp->size.x / (float)sim->nx;
+                            float fit_scale_y = active_vp->size.y / (float)sim->ny;
                             float fit_zoom = std::max(0.5f, std::min(fit_scale_x, fit_scale_y));
-                            app.viewport_zoom = fit_zoom;
-                            scale = (int)std::lround(fit_zoom);
-                            if (scale < 1) scale = 1;
-                            render->scale = scale;
-                            app.viewport_pan_x = 0.0f;
-                            app.viewport_pan_y = 0.0f;
-                            clamp_pan_offset(&app, sim, scale);
-                            app.hud_zoom_value = app.viewport_zoom;
-                            app.hud_pan_value = ImVec2(app.viewport_pan_x, app.viewport_pan_y);
+                            active_vp->zoom = fit_zoom;
+                            active_scale = (int)std::lround(fit_zoom);
+                            if (active_scale < 1) active_scale = 1;
+                            render->scale = active_scale;
+                            active_vp->pan_x = 0.0f;
+                            active_vp->pan_y = 0.0f;
+                            clamp_pan_offset(active_vp, sim, active_scale);
+                            scale = active_scale;
+                            app.hud_zoom_value = active_vp->zoom;
+                            app.hud_pan_value = ImVec2(active_vp->pan_x, active_vp->pan_y);
                             app.hud_zoom_timer = 1.0f;
                             app.hud_pan_timer = 1.0f;
+                        }
+                    }
+                    if (app.area_mode) {
+                        if (ImGui::MenuItem("Finish Area")) {
+                            if (app.current_area.vertices.size() >= 3) {
+                                close_area_measurement(&app, sim);
+                            } else {
+                                ui_log_add(&app, "Area tool: need at least 3 vertices");
+                            }
+                        }
+                        if (ImGui::MenuItem("Cancel Area")) {
+                            app.area_mode = false;
+                            app.current_area.vertices.clear();
+                            app.current_area.closed = false;
+                            ui_log_add(&app, "Area tool: cancelled");
                         }
                     }
                     if (ImGui::MenuItem("Copy Coordinates")) {
@@ -4821,6 +6253,9 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::End();
+            if (frame_counter <= 120) {
+                debug_logf("frame %d: overlay window end", frame_counter);
+            }
         }
 
         app.paint_material_id = paint_material_id;
@@ -4830,10 +6265,17 @@ int main(int argc, char** argv) {
         draw_sparameter_window(&app);
         draw_smith_chart(&app);
 
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: before imgui render", frame_counter);
+        }
         ImGui::Render();
+        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), render->renderer);
         SDL_RenderPresent(render->renderer);
 
+        if (frame_counter <= 120) {
+            debug_logf("frame %d: after present", frame_counter);
+        }
         SDL_Delay(UI_DELAY_MS);
     }
 
@@ -4845,6 +6287,8 @@ int main(int argc, char** argv) {
     render_free(render);
     material_library_shutdown();
     simulation_bootstrap_shutdown(&bootstrap);
+    debug_log_close();
 
     return 0;
 }
+
