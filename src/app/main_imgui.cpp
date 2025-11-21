@@ -34,6 +34,7 @@
 #include <sstream>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <sys/stat.h>
 #include <ctime>
 #include <cstdlib>
@@ -164,6 +165,9 @@ struct AppState {
     float viewport_pan_x;
     float viewport_pan_y;
     bool viewport_panning;
+    ImVec2 toolbar_screen_min;
+    ImVec2 toolbar_screen_size;
+    bool toolbar_valid;
     ImVec2 pan_start_mouse;
     ImVec2 pan_start_offset;
     float hud_zoom_value;
@@ -450,6 +454,16 @@ static void draw_recording_panel(AppState* app, SDL_Renderer* renderer, ImVec2 v
     ImGui::Separator();
     ImGui::Text("Status: %s", rec.status_message);
     ImGui::ProgressBar(rec.progress, ImVec2(-1, 0));
+    const char* out_hint = rec.output_path[0]
+                               ? rec.output_path
+                               : "recordings/<timestamp>.(gif|mp4|png)";
+    ImGui::TextWrapped("Output: %s", out_hint);
+    if (rec.output_path[0]) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy path")) {
+            SDL_SetClipboardText(rec.output_path);
+        }
+    }
     ImGui::End();
 }
 
@@ -1019,6 +1033,8 @@ static void start_recording(AppState* app,
     rec.capture_width = output_w;
     rec.capture_height = output_h;
     rec.progress = 0.0f;
+    std::error_code mkdir_ec;
+    std::filesystem::create_directories("recordings", mkdir_ec);
     clear_recording_frames(&rec);
     rec.frames.reserve(rec.target_frames);
 
@@ -1039,7 +1055,11 @@ static void start_recording(AppState* app,
     std::snprintf(rec.status_message,
                   sizeof(rec.status_message),
                   "Recording: 0/%d frames", rec.target_frames);
-    ui_log_add(app, "Recording started: %d frames @ %.0f fps", rec.target_frames, rec.framerate);
+    ui_log_add(app,
+               "Recording started: %d frames @ %.0f fps -> %s",
+               rec.target_frames,
+               rec.framerate,
+               rec.output_path);
     g_record_last_capture_time = 0.0;
 }
 
@@ -3170,6 +3190,9 @@ int main(int argc, char** argv) {
     app.viewport_pan_x = 0.0f;
     app.viewport_pan_y = 0.0f;
     app.viewport_panning = false;
+    app.toolbar_screen_min = ImVec2(0.0f, 0.0f);
+    app.toolbar_screen_size = ImVec2(0.0f, 0.0f);
+    app.toolbar_valid = false;
     app.pan_start_mouse = ImVec2(0.0f, 0.0f);
     app.pan_start_offset = ImVec2(0.0f, 0.0f);
     app.hud_zoom_value = kDefaultViewportZoom;
@@ -3861,9 +3884,18 @@ int main(int argc, char** argv) {
                                         int iy = (int)(fy / (float)scale_local);
                                         if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
                                             app.annotation_mode = true;
-                                            app.temp_annotation.text[0] = '\0';
+                                            std::snprintf(app.temp_annotation.text,
+                                                          sizeof(app.temp_annotation.text),
+                                                          "Note (%d,%d)",
+                                                          ix,
+                                                          iy);
                                             app.temp_annotation.grid_pos = ImVec2((float)ix, (float)iy);
                                             app.temp_annotation.visible = true;
+                                            app.temp_annotation.font_size = 14.0f;
+                                            ui_log_add(&app,
+                                                       "Annotation: set at (%d, %d)",
+                                                       ix,
+                                                       iy);
                                         }
                                     }
                                 }
@@ -4077,6 +4109,16 @@ int main(int argc, char** argv) {
                 }
                 int mx = e.button.x;
                 int my = e.button.y;
+                if (app.toolbar_valid) {
+                    float tx0 = app.toolbar_screen_min.x;
+                    float ty0 = app.toolbar_screen_min.y;
+                    float tx1 = tx0 + app.toolbar_screen_size.x;
+                    float ty1 = ty0 + app.toolbar_screen_size.y;
+                    if ((float)mx >= tx0 && (float)mx <= tx1 &&
+                        (float)my >= ty0 && (float)my <= ty1) {
+                        continue;
+                    }
+                }
                 int hit = get_viewport_at_mouse(app, mx, my);
                 if (hit < 0) continue;
                 app.active_viewport_idx = hit;
@@ -4095,6 +4137,18 @@ int main(int argc, char** argv) {
                 SDL_Keymod btn_mod = SDL_GetModState();
                 if (!app.viewport_valid || !sim) {
                     continue;
+                }
+                if (app.toolbar_valid) {
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    float tx0 = app.toolbar_screen_min.x;
+                    float ty0 = app.toolbar_screen_min.y;
+                    float tx1 = tx0 + app.toolbar_screen_size.x;
+                    float ty1 = ty0 + app.toolbar_screen_size.y;
+                    if ((float)mx >= tx0 && (float)mx <= tx1 &&
+                        (float)my >= ty0 && (float)my <= ty1) {
+                        continue;  // Let ImGui handle toolbar interactions
+                    }
                 }
                 if (btn_mod & KMOD_SHIFT) {
                     int mx = e.button.x;
@@ -4152,10 +4206,20 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-                int mx = e.button.x;
-                int my = e.button.y;
-                int hit = get_viewport_at_mouse(app, mx, my);
-                if (hit < 0) continue;
+            int mx = e.button.x;
+            int my = e.button.y;
+            if (app.toolbar_valid) {
+                float tx0 = app.toolbar_screen_min.x;
+                float ty0 = app.toolbar_screen_min.y;
+                float tx1 = tx0 + app.toolbar_screen_size.x;
+                float ty1 = ty0 + app.toolbar_screen_size.y;
+                if ((float)mx >= tx0 && (float)mx <= tx1 &&
+                    (float)my >= ty0 && (float)my <= ty1) {
+                    continue;  // Ignore clicks on the viewport toolbar
+                }
+            }
+            int hit = get_viewport_at_mouse(app, mx, my);
+            if (hit < 0) continue;
                 app.active_viewport_idx = hit;
                 ViewportInstance* vp = ensure_active_viewport();
                 if (!vp) continue;
@@ -4426,9 +4490,6 @@ int main(int argc, char** argv) {
                     }
                     dragging_source = false;
                     dragged_source_idx = -1;
-                }
-                if (app.area_mode && app.current_area.vertices.size() >= 3) {
-                    close_area_measurement(&app, sim);
                 }
             }
         }
@@ -5078,6 +5139,10 @@ int main(int argc, char** argv) {
         draw_recording_panel(&app, render->renderer, rec_size);
     }
 
+        if (app.annotation_mode) {
+            ImGui::OpenPopup("AddAnnotation");
+            app.annotation_mode = false;
+        }
         if (ImGui::BeginPopup("AddAnnotation")) {
             ImGui::InputText("Text", app.temp_annotation.text, IM_ARRAYSIZE(app.temp_annotation.text));
             ImGui::ColorEdit3("Color", (float*)&app.temp_annotation.color);
@@ -5559,6 +5624,7 @@ int main(int argc, char** argv) {
         SDL_RenderClear(render->renderer);
 
         // Viewport content (image + overlay toolbar)
+        app.toolbar_valid = false;
         if (app.viewport_valid && viewport_texture) {
             if (frame_counter <= 120) {
                 debug_logf("frame %d: entering viewport overlay window", frame_counter);
@@ -5594,6 +5660,14 @@ int main(int argc, char** argv) {
                 const char* viz_labels[] = {"Field", "Material", "Overlay", "Magnitude"};
                 int hovered_idx = -1;
                 ImVec2 mp = ImGui::GetIO().MousePos;
+                bool over_toolbar = false;
+                if (app.toolbar_valid) {
+                    float tx0 = app.toolbar_screen_min.x;
+                    float ty0 = app.toolbar_screen_min.y;
+                    float tx1 = tx0 + app.toolbar_screen_size.x;
+                    float ty1 = ty0 + app.toolbar_screen_size.y;
+                    over_toolbar = (mp.x >= tx0 && mp.x <= tx1 && mp.y >= ty0 && mp.y <= ty1);
+                }
                 for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
                     const ViewportInstance& vp = app.viewports[vp_idx];
                     if (!vp.valid) continue;
@@ -5620,7 +5694,9 @@ int main(int argc, char** argv) {
                                         label_buf);
                 }
 
-                if (hovered_idx >= 0 && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+                if (!over_toolbar &&
+                    hovered_idx >= 0 &&
+                    ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
                     app.active_viewport_idx = hovered_idx;
                     active_vp = ensure_active_viewport();
                     active_scale = active_vp ? (int)std::lround(active_vp->zoom) : active_scale;
@@ -5641,6 +5717,10 @@ int main(int argc, char** argv) {
                                    12.0f);
                 if (toolbar_pos.x < 0.0f) toolbar_pos.x = 0.0f;
                 if (toolbar_pos.y < 0.0f) toolbar_pos.y = 0.0f;
+                app.toolbar_screen_min = ImVec2(app.viewport_pos.x + toolbar_pos.x,
+                                                app.viewport_pos.y + toolbar_pos.y);
+                app.toolbar_screen_size = ImVec2(toolbar_w, toolbar_h);
+                app.toolbar_valid = true;
                 ImGui::SetCursorPos(toolbar_pos);
                 ImVec4 toolbar_bg(0.08f, 0.08f, 0.10f, 0.9f * toolbar_alpha);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, toolbar_bg);

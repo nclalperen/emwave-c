@@ -1,6 +1,19 @@
 {
     "configurations": [
         {
+            "name": "Windows",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [
+                "_CRT_SECURE_NO_WARNINGS"
+            ],
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        },
+        {
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**"
