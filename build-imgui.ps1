@@ -8,6 +8,21 @@ param(
     [string]$Config = 'Release'
 )
 
+$ErrorActionPreference = 'Stop'
+$userVcpkg = Join-Path $HOME "vcpkg"
+$userVcpkgGit = Join-Path $userVcpkg ".git"
+# Prefer user-local vcpkg clone; set env up front so we don't fall back to VS-bundled vcpkg
+if (Test-Path $userVcpkgGit) {
+    $env:VCPKG_ROOT = $userVcpkg
+}
+$preferredVcpkgRoot = $env:VCPKG_ROOT
+if (-not $preferredVcpkgRoot) {
+    $homeVcpkg = Join-Path $HOME "vcpkg"
+    if (Test-Path (Join-Path $homeVcpkg ".git")) {
+        $preferredVcpkgRoot = $homeVcpkg
+    }
+}
+
 Write-Host "=====================================" -ForegroundColor Magenta
 Write-Host "emwave-c ImGui Build Script (PowerShell)" -ForegroundColor Magenta
 Write-Host "=====================================" -ForegroundColor Magenta
@@ -103,16 +118,24 @@ Set-Location $buildDir
 
 # Locate vcpkg toolchain if present for SDL2 dependencies
 $toolchainFile = $null
-if ($env:VCPKG_ROOT) {
-    $toolchainFile = Join-Path $env:VCPKG_ROOT "scripts\buildsystems\vcpkg.cmake"
+$resolvedVcpkgRoot = $env:VCPKG_ROOT
+
+if ($resolvedVcpkgRoot -and ($resolvedVcpkgRoot -like "*Program Files*") -and (Test-Path $userVcpkgGit)) {
+    $resolvedVcpkgRoot = $userVcpkg
+    $env:VCPKG_ROOT = $resolvedVcpkgRoot
+    Write-Host "Switching to user-local vcpkg at $resolvedVcpkgRoot" -ForegroundColor Gray
+}
+
+if ($resolvedVcpkgRoot) {
+    $toolchainFile = Join-Path $resolvedVcpkgRoot "scripts\buildsystems\vcpkg.cmake"
     if (Test-Path $toolchainFile) {
         Write-Host "Using vcpkg toolchain: $toolchainFile" -ForegroundColor Gray
     } else {
-        Write-Host "WARNING: VCPKG_ROOT is set but toolchain file not found" -ForegroundColor Yellow
+        Write-Host "WARNING: VCPKG toolchain not found under $resolvedVcpkgRoot" -ForegroundColor Yellow
         $toolchainFile = $null
     }
 } else {
-    Write-Host "INFO: VCPKG_ROOT not set; CMake will search for SDL2/SDL2_ttf via system paths" -ForegroundColor Yellow
+    Write-Host "INFO: VCPKG_ROOT not set and no user-local vcpkg found; CMake will search for SDL2/SDL2_ttf via system paths" -ForegroundColor Yellow
     Write-Host "TIP: Set VCPKG_ROOT to a user-local vcpkg (not under Program Files) to avoid lock contention." -ForegroundColor Yellow
 }
 
@@ -132,6 +155,16 @@ if ($cl) {
     Write-Host "Detected MSVC compiler, allowing CMake to select the default Visual Studio generator" -ForegroundColor Gray
 } else {
     Write-Host "MSVC not detected in PATH; ensure vcvarsall.bat has been executed" -ForegroundColor Yellow
+}
+
+# Force user-local vcpkg after VS env setup (VsDevShell may overwrite VCPKG_ROOT)
+if (Test-Path $userVcpkgGit) {
+    $env:VCPKG_ROOT = $userVcpkg
+}
+
+# Restore preferred vcpkg after VS env setup (VsDevShell/vcvarsall may overwrite it)
+if ($preferredVcpkgRoot) {
+    $env:VCPKG_ROOT = $preferredVcpkgRoot
 }
 
 & cmake $cmakeArgs
