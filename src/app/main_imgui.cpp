@@ -345,11 +345,11 @@ static void draw_measurement_history_panel(AppState* app) {
     }
 
     ImGui::Checkbox("Show Distances", &app->show_distance_measurements);
-    ImGui::Checkbox("Show Areas", &app->show_area_measurements);
-    ImGui::Checkbox("Show Annotations", &app->show_annotations);
-    ImGui::Separator();
+        ImGui::Checkbox("Show Areas", &app->show_area_measurements);
+        ImGui::Checkbox("Show Annotations", &app->show_annotations);
+        ImGui::Separator();
 
-    if (ImGui::TreeNode("Distances")) {
+        if (ImGui::TreeNode("Distances")) {
         for (size_t i = 0; i < app->measurements.distances.size(); ++i) {
             auto& d = app->measurements.distances[i];
             ImGui::PushID((int)i);
@@ -365,11 +365,11 @@ static void draw_measurement_history_panel(AppState* app) {
         ImGui::TreePop();
     }
 
-    if (ImGui::TreeNode("Areas")) {
-        for (size_t i = 0; i < app->measurements.areas.size(); ++i) {
-            auto& a = app->measurements.areas[i];
-            ImGui::PushID((int)i);
-            ImGui::Text("%zu: Area=%.6f m^2, Perimeter=%.4f m", i + 1, a.area_m2, a.perimeter_m);
+        if (ImGui::TreeNode("Areas")) {
+            for (size_t i = 0; i < app->measurements.areas.size(); ++i) {
+                auto& a = app->measurements.areas[i];
+                ImGui::PushID((int)i);
+                ImGui::Text("%zu: Area=%.6f m^2, Perimeter=%.4f m", i + 1, a.area_m2, a.perimeter_m);
             ImGui::SameLine();
             if (ImGui::SmallButton("Delete")) {
                 app->measurements.areas.erase(app->measurements.areas.begin() + i);
@@ -377,14 +377,20 @@ static void draw_measurement_history_panel(AppState* app) {
                 break;
             }
             ImGui::PopID();
+            }
+            ImGui::TreePop();
         }
-        ImGui::TreePop();
-    }
+        if (app->measurements.areas.size() > 0) {
+            if (ImGui::Button("Clear Areas")) {
+                app->measurements.areas.clear();
+                ui_log_add(app, "Areas cleared");
+            }
+        }
 
-    if (ImGui::TreeNode("Annotations")) {
-        for (size_t i = 0; i < app->measurements.annotations.size(); ++i) {
-            auto& ann = app->measurements.annotations[i];
-            ImGui::PushID((int)i);
+        if (ImGui::TreeNode("Annotations")) {
+            for (size_t i = 0; i < app->measurements.annotations.size(); ++i) {
+                auto& ann = app->measurements.annotations[i];
+                ImGui::PushID((int)i);
             ImGui::Checkbox("Visible", &ann.visible);
             ImGui::SameLine();
             ImGui::Text("%zu: \"%s\"", i + 1, ann.text);
@@ -1034,7 +1040,8 @@ static void start_recording(AppState* app,
     rec.capture_height = output_h;
     rec.progress = 0.0f;
     std::error_code mkdir_ec;
-    std::filesystem::create_directories("recordings", mkdir_ec);
+    std::filesystem::path out_dir = std::filesystem::absolute("recordings");
+    std::filesystem::create_directories(out_dir, mkdir_ec);
     clear_recording_frames(&rec);
     rec.frames.reserve(rec.target_frames);
 
@@ -1042,9 +1049,10 @@ static void start_recording(AppState* app,
     struct tm* tm_info = localtime(&now);
     const char* ext = (format == RECORDING_GIF) ? "gif" :
                       (format == RECORDING_MP4) ? "mp4" : "png";
-    std::snprintf(rec.output_path,
-                  sizeof(rec.output_path),
-                  "recordings/emwave_%04d%02d%02d_%02d%02d%02d.%s",
+    char fname[128];
+    std::snprintf(fname,
+                  sizeof(fname),
+                  "emwave_%04d%02d%02d_%02d%02d%02d.%s",
                   tm_info->tm_year + 1900,
                   tm_info->tm_mon + 1,
                   tm_info->tm_mday,
@@ -1052,6 +1060,9 @@ static void start_recording(AppState* app,
                   tm_info->tm_min,
                   tm_info->tm_sec,
                   ext);
+    std::filesystem::path out_path = out_dir / fname;
+    std::string out_str = out_path.string();
+    std::snprintf(rec.output_path, sizeof(rec.output_path), "%s", out_str.c_str());
     std::snprintf(rec.status_message,
                   sizeof(rec.status_message),
                   "Recording: 0/%d frames", rec.target_frames);
@@ -3402,6 +3413,7 @@ int main(int argc, char** argv) {
     double vmax_smooth = sim->step_Ez_absmax;
     if (vmax_smooth <= 0.0) vmax_smooth = 1.0;
     double scope_vmax = 1.0;
+    ViewportLayout last_layout = app.viewport_layout;
 
     // Apply initial theme, accent, and colormap to both ImGui and SDL renderer
     app.accent_color = accent_from_palette(current_accent);
@@ -3427,6 +3439,22 @@ int main(int argc, char** argv) {
                        (int)app.viewport_layout);
         }
         compute_viewport_layout(&app, app.viewport_size);
+        bool layout_switched = (app.viewport_layout != last_layout);
+        if (layout_switched && app.viewport_layout == VIEWPORT_QUAD) {
+            const ViewportViz quad_defaults[4] = {
+                VIEWPORT_VIZ_FIELD,     // A
+                VIEWPORT_VIZ_MATERIAL,  // B
+                VIEWPORT_VIZ_OVERLAY,   // C
+                VIEWPORT_VIZ_MAG        // D
+            };
+            for (int i = 0; i < 4; ++i) {
+                if (app.viewports[i].valid) {
+                    app.viewports[i].viz_mode = quad_defaults[i];
+                }
+            }
+            app.active_viewport_idx = 0;
+        }
+        last_layout = app.viewport_layout;
         auto ensure_active_viewport = [&]() -> ViewportInstance* {
             if (app.active_viewport_idx >= 0 &&
                 app.active_viewport_idx < 4 &&
@@ -3465,26 +3493,59 @@ int main(int argc, char** argv) {
                     app.window_height = height;
                 }
             } else if (e.type == SDL_MOUSEWHEEL) {
-                // Disable mouse wheel navigation when over the viewport; rely on drag panning instead.
-                if (io.WantCaptureMouse) continue;
-                if (app.viewport_valid && sim) {
-                    int mx, my;
-                    SDL_GetMouseState(&mx, &my);
-                    int hit = get_viewport_at_mouse(app, mx, my);
-                    float local_x = 0.0f;
-                    float local_y = 0.0f;
-                    if (hit >= 0) {
-                        const ViewportInstance& vpq = app.viewports[hit];
-                        local_x = (float)mx - (app.viewport_pos.x + vpq.pos.x);
-                        local_y = (float)my - (app.viewport_pos.y + vpq.pos.y);
-                    }
-                    if (hit >= 0 &&
-                        local_x >= 0.0f && local_x < app.viewports[hit].size.x &&
-                        local_y >= 0.0f && local_y < app.viewports[hit].size.y) {
-                        // Swallow the wheel event when hovering a viewport; no zoom/pan.
-                        continue;
-                    }
+                // Zoom with wheel on the hovered viewport (per-viewport).
+                int mx, my;
+                SDL_GetMouseState(&mx, &my);
+                bool over_toolbar = false;
+                if (app.toolbar_valid) {
+                    float tx0 = app.toolbar_screen_min.x;
+                    float ty0 = app.toolbar_screen_min.y;
+                    float tx1 = tx0 + app.toolbar_screen_size.x;
+                    float ty1 = ty0 + app.toolbar_screen_size.y;
+                    over_toolbar = ((float)mx >= tx0 && (float)mx <= tx1 &&
+                                    (float)my >= ty0 && (float)my <= ty1);
                 }
+                int hit = (app.viewport_valid && sim) ? get_viewport_at_mouse(app, mx, my) : -1;
+                if (hit >= 0 && !over_toolbar) {
+                    app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (vp && vp->valid) {
+                        float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                        float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
+                        if (local_x >= 0.0f && local_y >= 0.0f &&
+                            local_x < vp->size.x && local_y < vp->size.y) {
+                            int active_scale = (int)std::lround(vp->zoom);
+                            if (active_scale < 1) active_scale = 1;
+                            float steps = (float)e.wheel.y;
+                            if (steps == 0.0f && e.wheel.preciseY != 0.0f) {
+                                steps = (float)e.wheel.preciseY;
+                            }
+                            if (steps != 0.0f) {
+                                float base = (steps > 0.0f) ? 1.1f : 0.9f;
+                                float mult = std::pow(base, std::fabs(steps));
+                                apply_zoom_at_point(vp,
+                                                    render,
+                                                    sim,
+                                                    &active_scale,
+                                                    local_x,
+                                                    local_y,
+                                                    mult,
+                                                    true);
+                                if (app.sync_zoom) {
+                                    for (int i = 0; i < 4; ++i) {
+                                        if (!app.viewports[i].valid) continue;
+                                        app.viewports[i].zoom = vp->zoom;
+                                    }
+                                }
+                                scale = active_scale;
+                                app.hud_zoom_value = vp->zoom;
+                                app.hud_zoom_timer = 1.0f;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (io.WantCaptureMouse) continue;
             } else if (e.type == SDL_KEYDOWN) {
                 SDL_Keycode key = e.key.keysym.sym;
 
@@ -3889,6 +3950,7 @@ int main(int argc, char** argv) {
                                                           "Note (%d,%d)",
                                                           ix,
                                                           iy);
+                                            app.temp_annotation.text[sizeof(app.temp_annotation.text) - 1] = '\0';
                                             app.temp_annotation.grid_pos = ImVec2((float)ix, (float)iy);
                                             app.temp_annotation.visible = true;
                                             app.temp_annotation.font_size = 14.0f;
@@ -5713,8 +5775,14 @@ int main(int argc, char** argv) {
                                                                ImGuiHoveredFlags_AllowWhenBlockedByPopup |
                                                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
                 float toolbar_alpha = viewport_hovered ? 1.0f : 0.35f;
-                ImVec2 toolbar_pos(app.viewport_size.x - toolbar_w - 12.0f,
-                                   12.0f);
+                ImVec2 toolbar_pos;
+                if (active_vp) {
+                    toolbar_pos = ImVec2(active_vp->pos.x + active_vp->size.x - toolbar_w - 12.0f,
+                                         active_vp->pos.y + 12.0f);
+                } else {
+                    toolbar_pos = ImVec2(app.viewport_size.x - toolbar_w - 12.0f,
+                                         12.0f);
+                }
                 if (toolbar_pos.x < 0.0f) toolbar_pos.x = 0.0f;
                 if (toolbar_pos.y < 0.0f) toolbar_pos.y = 0.0f;
                 app.toolbar_screen_min = ImVec2(app.viewport_pos.x + toolbar_pos.x,
