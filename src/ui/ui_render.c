@@ -9,6 +9,7 @@
 #include "analysis.h"
 #include "sources.h"
 #include "boundary.h"
+#include <stdbool.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -586,6 +587,89 @@ double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
        controlled via ui_render_set_colormap(). Other callers can ignore
        this and rely on the default (Viridis). */
     return draw_grid(ctx, state, mode, vmax);
+}
+
+double render_field_channel_heatmap(RenderContext* ctx,
+                                    const SimulationState* state,
+                                    FieldChannel channel,
+                                    double vmax,
+                                    double color_scale,
+                                    bool* out_not_available) {
+    (void)color_scale;
+    if (!ctx || !state) return 0.0;
+    if (out_not_available) *out_not_available = false;
+    ColorMapMode mode = g_direct_colormap_mode;
+    if (vmax <= 0.0) {
+        vmax = 0.0;
+        for (int i = 0; i < state->nx; ++i) {
+            for (int j = 0; j < state->ny; ++j) {
+                double val = 0.0;
+                switch (channel) {
+                    case FIELD_CH_HX: val = state->Hx[i][j]; break;
+                    case FIELD_CH_HY: val = state->Hy[i][j]; break;
+                    case FIELD_CH_H_MAG: val = hypot(state->Hx[i][j], state->Hy[i][j]); break;
+                    case FIELD_CH_SX: val = state->Ez[i][j] * state->Hy[i][j]; break;
+                    case FIELD_CH_SY: val = -state->Ez[i][j] * state->Hx[i][j]; break;
+                    case FIELD_CH_S_MAG: val = hypot(state->Ez[i][j] * state->Hy[i][j],
+                                                     -state->Ez[i][j] * state->Hx[i][j]); break;
+                    case FIELD_CH_EX:
+                    case FIELD_CH_EY:
+                    case FIELD_CH_HZ:
+                        val = 0.0;
+                        if (out_not_available) *out_not_available = true;
+                        break;
+                    case FIELD_CH_EZ_ABS: val = fabs(state->Ez[i][j]); break;
+                    case FIELD_CH_EZ:
+                    default: val = state->Ez[i][j]; break;
+                }
+                double a = fabs(val);
+                if (a > vmax) vmax = a;
+            }
+        }
+        if (vmax <= 0.0) vmax = 1.0;
+    }
+
+    SDL_Rect pixel = {0, 0, ctx->scale, ctx->scale};
+    double field_max = 0.0;
+    double offset_x = ctx->offset_x;
+    double offset_y = ctx->offset_y;
+    for (int i = 0; i < state->nx; ++i) {
+        for (int j = 0; j < state->ny; ++j) {
+            double val = 0.0;
+            switch (channel) {
+                case FIELD_CH_HX: val = state->Hx[i][j]; break;
+                case FIELD_CH_HY: val = state->Hy[i][j]; break;
+                case FIELD_CH_H_MAG: val = hypot(state->Hx[i][j], state->Hy[i][j]); break;
+                case FIELD_CH_SX: val = state->Ez[i][j] * state->Hy[i][j]; break;
+                case FIELD_CH_SY: val = -state->Ez[i][j] * state->Hx[i][j]; break;
+                case FIELD_CH_S_MAG: val = hypot(state->Ez[i][j] * state->Hy[i][j],
+                                                 -state->Ez[i][j] * state->Hx[i][j]); break;
+                case FIELD_CH_EX:
+                case FIELD_CH_EY:
+                case FIELD_CH_HZ:
+                    val = 0.0;
+                    if (out_not_available) *out_not_available = true;
+                    break;
+                case FIELD_CH_EZ_ABS: val = fabs(state->Ez[i][j]); break;
+                case FIELD_CH_EZ:
+                default: val = state->Ez[i][j]; break;
+            }
+            double a = fabs(val);
+            if (a > field_max) field_max = a;
+            double t = (vmax > 0.0) ? clampd(val / vmax, -1.0, 1.0) * 0.5 + 0.5 : 0.5;
+            SDL_Color c = colormap_for_mode(mode, t);
+            if (state->tag_grid[i][j] == 1) {
+                c = (SDL_Color){200, 200, 200, 255};
+            } else if (state->tag_grid[i][j] == 2) {
+                c = (SDL_Color){120, 180, 200, 255};
+            }
+            SDL_SetRenderDrawColor(ctx->renderer, c.r, c.g, c.b, c.a);
+            pixel.x = i * ctx->scale + offset_x;
+            pixel.y = j * ctx->scale + offset_y;
+            SDL_RenderFillRect(ctx->renderer, &pixel);
+        }
+    }
+    return field_max;
 }
 
 void render_sources(RenderContext* ctx, const Source* sources) {

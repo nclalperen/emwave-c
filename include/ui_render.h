@@ -12,6 +12,7 @@
 #include "ui_layout.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,9 +42,29 @@ void render_free(RenderContext* ctx);
 void render_frame(RenderContext* ctx, const SimulationState* state, UIState* ui,
                   const Scope* scope, double fps_avg);
 
+typedef enum {
+    FIELD_CH_EZ = 0,
+    FIELD_CH_EZ_ABS = 1,
+    FIELD_CH_HX = 2,
+    FIELD_CH_HY = 3,
+    FIELD_CH_H_MAG = 4,
+    FIELD_CH_SX = 5,
+    FIELD_CH_SY = 6,
+    FIELD_CH_S_MAG = 7,
+    FIELD_CH_EX = 8,
+    FIELD_CH_EY = 9,
+    FIELD_CH_HZ = 10
+} FieldChannel;
+
 /* Individual rendering components */
 double render_field_heatmap(RenderContext* ctx, const SimulationState* state,
                             double vmax, double color_scale);
+double render_field_channel_heatmap(RenderContext* ctx,
+                                   const SimulationState* state,
+                                   FieldChannel channel,
+                                   double vmax,
+                                   double color_scale,
+                                    bool* out_not_available);
 void render_sources(RenderContext* ctx, const Source* sources);
 void render_block_outline(RenderContext* ctx, const RenderLayout* layout);
 void render_colorbar(RenderContext* ctx, const RenderLayout* layout,

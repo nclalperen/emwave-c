@@ -53,10 +53,19 @@ enum ViewportLayout {
 };
 
 enum ViewportViz {
-    VIEWPORT_VIZ_FIELD = 0,
-    VIEWPORT_VIZ_MATERIAL = 1,
-    VIEWPORT_VIZ_OVERLAY = 2,
-    VIEWPORT_VIZ_MAG = 3
+    VIEWPORT_VIZ_EZ = 0,
+    VIEWPORT_VIZ_EZ_ABS = 1,
+    VIEWPORT_VIZ_HX = 2,
+    VIEWPORT_VIZ_HY = 3,
+    VIEWPORT_VIZ_HMAG = 4,
+    VIEWPORT_VIZ_SX = 5,
+    VIEWPORT_VIZ_SY = 6,
+    VIEWPORT_VIZ_S_MAG = 7,
+    VIEWPORT_VIZ_EX = 8,
+    VIEWPORT_VIZ_EY = 9,
+    VIEWPORT_VIZ_HZ = 10,
+    VIEWPORT_VIZ_MATERIAL = 11,
+    VIEWPORT_VIZ_OVERLAY = 12
 };
 
 struct ViewportInstance {
@@ -70,6 +79,7 @@ struct ViewportInstance {
     bool valid;
     bool show_grid;
     bool show_sources;
+    bool show_vectors;
 };
 
 enum RecordingFormat {
@@ -3259,11 +3269,12 @@ int main(int argc, char** argv) {
         app.viewports[i].zoom = 1.0f;
         app.viewports[i].pan_x = 0.0f;
         app.viewports[i].pan_y = 0.0f;
-        app.viewports[i].viz_mode = VIEWPORT_VIZ_FIELD;
+        app.viewports[i].viz_mode = VIEWPORT_VIZ_EZ;
         app.viewports[i].active = (i == 0);
         app.viewports[i].valid = (i == 0);
         app.viewports[i].show_grid = true;
         app.viewports[i].show_sources = true;
+        app.viewports[i].show_vectors = false;
     }
     app.active_viewport_idx = 0;
     app.sync_zoom = false;
@@ -3302,10 +3313,10 @@ int main(int argc, char** argv) {
     app.show_annotations = true;
     debug_logf("init: sim grid %dx%d", sim->nx, sim->ny);
     ui_log_add(&app, "Simulation started");
-    app.viewports[0].viz_mode = VIEWPORT_VIZ_FIELD;
-    app.viewports[1].viz_mode = VIEWPORT_VIZ_FIELD;
-    app.viewports[2].viz_mode = VIEWPORT_VIZ_FIELD;
-    app.viewports[3].viz_mode = VIEWPORT_VIZ_FIELD;
+    app.viewports[0].viz_mode = VIEWPORT_VIZ_EZ;
+    app.viewports[1].viz_mode = VIEWPORT_VIZ_EZ;
+    app.viewports[2].viz_mode = VIEWPORT_VIZ_EZ;
+    app.viewports[3].viz_mode = VIEWPORT_VIZ_EZ;
 
     const int min_window_width = 1280;
     const int min_window_height = 720;
@@ -3442,10 +3453,10 @@ int main(int argc, char** argv) {
         bool layout_switched = (app.viewport_layout != last_layout);
         if (layout_switched && app.viewport_layout == VIEWPORT_QUAD) {
             const ViewportViz quad_defaults[4] = {
-                VIEWPORT_VIZ_FIELD,     // A
-                VIEWPORT_VIZ_MATERIAL,  // B
-                VIEWPORT_VIZ_OVERLAY,   // C
-                VIEWPORT_VIZ_MAG        // D
+                VIEWPORT_VIZ_EZ,     // A
+                VIEWPORT_VIZ_HX,     // B
+                VIEWPORT_VIZ_HY,     // C
+                VIEWPORT_VIZ_S_MAG    // D
             };
             for (int i = 0; i < 4; ++i) {
                 if (app.viewports[i].valid) {
@@ -4263,13 +4274,32 @@ int main(int argc, char** argv) {
                         }
                     }
         }
-        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-            if (!app.viewport_valid) {
-                continue;
-            }
+            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                if (!app.viewport_valid) {
+                    continue;
+                }
+                if (SDL_GetModState() & KMOD_ALT) {
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit < 0) continue;
+                    app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (!vp) continue;
+                    float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                    float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
+                    if (local_x >= 0.0f && local_y >= 0.0f &&
+                        local_x < vp->size.x && local_y < vp->size.y) {
+                        app.viewport_panning = true;
+                        panning_viewport_idx = app.active_viewport_idx;
+                        app.pan_start_mouse = ImVec2((float)mx, (float)my);
+                        app.pan_start_offset = ImVec2(vp->pan_x, vp->pan_y);
+                        continue;
+                    }
+                }
 
-            int mx = e.button.x;
-            int my = e.button.y;
+                int mx = e.button.x;
+                int my = e.button.y;
             if (app.toolbar_valid) {
                 float tx0 = app.toolbar_screen_min.x;
                 float ty0 = app.toolbar_screen_min.y;
@@ -4436,6 +4466,14 @@ int main(int argc, char** argv) {
                     vp->pan_x = app.pan_start_offset.x + delta_x;
                     vp->pan_y = app.pan_start_offset.y + delta_y;
                     clamp_pan_offset(vp, sim, scale_local);
+                    if (app.sync_pan) {
+                        for (int i = 0; i < 4; ++i) {
+                            if (!app.viewports[i].valid) continue;
+                            if (i == panning_viewport_idx) continue;
+                            app.viewports[i].pan_x = vp->pan_x;
+                            app.viewports[i].pan_y = vp->pan_y;
+                        }
+                    }
                     app.hud_pan_value = ImVec2(vp->pan_x, vp->pan_y);
                     app.hud_pan_timer = 1.0f;
                     continue;
@@ -4542,6 +4580,12 @@ int main(int argc, char** argv) {
                     panning_viewport_idx = -1;
                 }
             } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                if (app.viewport_panning) {
+                    app.viewport_panning = false;
+                    shift_right_panning = false;
+                    panning_viewport_idx = -1;
+                }
+
                 if (dragging_source) {
                     if (dragged_source_idx >= 0 && dragged_source_idx < MAX_SRC) {
                         ui_log_add(&app,
@@ -5612,6 +5656,7 @@ int main(int argc, char** argv) {
                                    viewport_clear_color.a);
             SDL_RenderClear(render->renderer);
 
+            bool channel_na_flags[4] = {false, false, false, false};
             for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
                 ViewportInstance& vp = app.viewports[vp_idx];
                 if (!vp.valid) continue;
@@ -5628,15 +5673,46 @@ int main(int argc, char** argv) {
                 double vmax = vmax_smooth;
                 if (vmax <= 0.0) vmax = 1.0;
 
+                bool channel_na = false;
                 switch (vp.viz_mode) {
-                    case VIEWPORT_VIZ_FIELD:
-                        render_field_heatmap(render, sim, vmax, 1.0);
+                    case VIEWPORT_VIZ_EZ:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_EZ_ABS:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EZ_ABS, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_HX:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_HX, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_HY:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_HY, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_HMAG:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_H_MAG, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_SX:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_SX, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_SY:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_SY, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_S_MAG:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_S_MAG, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_EX:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EX, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_EY:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EY, vmax, 1.0, &channel_na);
+                        break;
+                    case VIEWPORT_VIZ_HZ:
+                        render_field_channel_heatmap(render, sim, FIELD_CH_HZ, vmax, 1.0, &channel_na);
                         break;
                     case VIEWPORT_VIZ_MATERIAL:
                         render_material_distribution(render, sim, vp_scale);
                         break;
                     case VIEWPORT_VIZ_OVERLAY:
-                        render_field_heatmap(render, sim, vmax, 1.0);
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
                         SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
                         render_material_overlay(render,
                                                 sim,
@@ -5644,13 +5720,11 @@ int main(int argc, char** argv) {
                                                 app.material_overlay_alpha);
                         SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_NONE);
                         break;
-                    case VIEWPORT_VIZ_MAG:
-                        render_field_heatmap(render, sim, vmax, 1.0);
-                        break;
                     default:
-                        render_field_heatmap(render, sim, vmax, 1.0);
+                        render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
                         break;
                 }
+                channel_na_flags[vp_idx] = channel_na;
 
                 if (app.show_material_outlines) {
                     SDL_SetRenderDrawBlendMode(render->renderer, SDL_BLENDMODE_BLEND);
@@ -5665,6 +5739,43 @@ int main(int argc, char** argv) {
                 }
                 if (vp.show_sources) {
                     render_sources(render, sim->sources);
+                }
+                if (vp.show_vectors) {
+                    bool use_h = (vp.viz_mode == VIEWPORT_VIZ_HX ||
+                                  vp.viz_mode == VIEWPORT_VIZ_HY ||
+                                  vp.viz_mode == VIEWPORT_VIZ_HMAG);
+                    bool use_s = (vp.viz_mode == VIEWPORT_VIZ_SX ||
+                                  vp.viz_mode == VIEWPORT_VIZ_SY ||
+                                  vp.viz_mode == VIEWPORT_VIZ_S_MAG);
+                    if (use_h || use_s) {
+                        SDL_SetRenderDrawColor(render->renderer, 80, 220, 255, 180);
+                        int stride = (int)std::max(4.0f, 24.0f / (float)vp_scale);
+                        float arrow_scale = std::min(18.0f, (float)vp_scale * 3.0f);
+                        for (int i = 0; i < sim->nx; i += stride) {
+                            for (int j = 0; j < sim->ny; j += stride) {
+                                float vx = 0.0f, vy = 0.0f;
+                                if (use_h) {
+                                    vx = (float)sim->Hy[i][j];
+                                    vy = -(float)sim->Hx[i][j];
+                                } else if (use_s) {
+                                    vx = (float)(sim->Ez[i][j] * sim->Hy[i][j]);
+                                    vy = (float)(-sim->Ez[i][j] * sim->Hx[i][j]);
+                                }
+                                float mag = std::sqrt(vx * vx + vy * vy);
+                                if (mag < 1e-6f) continue;
+                                vx /= mag;
+                                vy /= mag;
+                                float len = arrow_scale;
+                                float cx = vp_offset.x + ((float)i + 0.5f) * (float)vp_scale;
+                                float cy = vp_offset.y + ((float)j + 0.5f) * (float)vp_scale;
+                                SDL_RenderDrawLine(render->renderer,
+                                                   (int)cx,
+                                                   (int)cy,
+                                                   (int)(cx + vx * len),
+                                                   (int)(cy + vy * len));
+                            }
+                        }
+                    }
                 }
             }
 
@@ -5686,6 +5797,7 @@ int main(int argc, char** argv) {
         SDL_RenderClear(render->renderer);
 
         // Viewport content (image + overlay toolbar)
+        bool channel_na_flags[4] = {false, false, false, false};
         app.toolbar_valid = false;
         if (app.viewport_valid && viewport_texture) {
             if (frame_counter <= 120) {
@@ -5719,7 +5831,7 @@ int main(int argc, char** argv) {
                 ImDrawList* overlay_dl = ImGui::GetWindowDrawList();
                 ImVec2 win_origin = ImGui::GetWindowPos();
                 const char* labels[] = {"A", "B", "C", "D"};
-                const char* viz_labels[] = {"Field", "Material", "Overlay", "Magnitude"};
+                const char* viz_labels[] = {"Ez", "|Ez|", "Hx", "Hy", "|H|", "Sx", "Sy", "|S|", "Ex", "Ey", "Hz", "Material", "Overlay"};
                 int hovered_idx = -1;
                 ImVec2 mp = ImGui::GetIO().MousePos;
                 bool over_toolbar = false;
@@ -5754,6 +5866,13 @@ int main(int argc, char** argv) {
                     overlay_dl->AddText(ImVec2(l0.x + pad.x, l0.y + pad.y),
                                         IM_COL32(230, 230, 230, 255),
                                         label_buf);
+                    if (channel_na_flags[vp_idx]) {
+                        ImVec2 warn_pos = ImVec2(p0.x + 10.0f, p0.y + 30.0f);
+                        ImVec2 b0 = ImVec2(warn_pos.x - 4.0f, warn_pos.y - 4.0f);
+                        ImVec2 b1 = ImVec2(warn_pos.x + 200.0f, warn_pos.y + 22.0f);
+                        overlay_dl->AddRectFilled(b0, b1, IM_COL32(30, 18, 18, 200), 4.0f);
+                        overlay_dl->AddText(warn_pos, IM_COL32(255, 120, 120, 255), "Channel unavailable (2D model)");
+                    }
                 }
 
                 if (!over_toolbar &&
@@ -5793,17 +5912,37 @@ int main(int argc, char** argv) {
                 ImVec4 toolbar_bg(0.08f, 0.08f, 0.10f, 0.9f * toolbar_alpha);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, toolbar_bg);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f + 0.25f * toolbar_alpha);
-                if (ImGui::BeginChild("ViewportToolbar",
-                                      ImVec2(toolbar_w, toolbar_h),
-                                      true,
-                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
-                    if (frame_counter <= 120) {
-                        debug_logf("frame %d: overlay toolbar begin", frame_counter);
-                    }
-                    ImVec2 focus = active_vp ? ImVec2(active_vp->size.x * 0.5f, active_vp->size.y * 0.5f)
-                                             : ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
-                    ImGui::TextUnformatted("View");
+                        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.75f + 0.25f * toolbar_alpha);
+                            if (ImGui::BeginChild("ViewportToolbar",
+                                                  ImVec2(toolbar_w, toolbar_h),
+                                                  true,
+                                                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+                                if (frame_counter <= 120) {
+                                    debug_logf("frame %d: overlay toolbar begin", frame_counter);
+                                }
+                                if (ImGui::Button("Cfg", ImVec2(36.0f, 0.0f))) {
+                                    ImGui::OpenPopup("ViewportCfgPopup");
+                                }
+                                if (ImGui::BeginPopup("ViewportCfgPopup")) {
+                                    if (active_vp) {
+                                        const char* viz_options[] = {"Ez", "|Ez|", "Hx", "Hy", "|H|", "Sx", "Sy", "|S|", "Ex (n/a)", "Ey (n/a)", "Hz (n/a)", "Material", "Overlay"};
+                                        int v = (int)active_vp->viz_mode;
+                                        if (ImGui::Combo("Channel", &v, viz_options, IM_ARRAYSIZE(viz_options))) {
+                                            active_vp->viz_mode = (ViewportViz)v;
+                                        }
+                                        ImGui::Separator();
+                                        ImGui::Checkbox("Grid", &active_vp->show_grid);
+                                        ImGui::Checkbox("Sources", &active_vp->show_sources);
+                                        ImGui::Checkbox("Vectors", &active_vp->show_vectors);
+                                    }
+                                    ImGui::Separator();
+                                    ImGui::Checkbox("Sync Zoom", &app.sync_zoom);
+                                    ImGui::Checkbox("Sync Pan", &app.sync_pan);
+                                    ImGui::EndPopup();
+                            }
+                            ImVec2 focus = active_vp ? ImVec2(active_vp->size.x * 0.5f, active_vp->size.y * 0.5f)
+                                                     : ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
+                            ImGui::TextUnformatted("View");
                     ImGui::PushButtonRepeat(true);
                     if (ImGui::Button("-", ImVec2(26.0f, 0.0f))) {
                         if (active_vp) {
@@ -5983,7 +6122,7 @@ int main(int argc, char** argv) {
                         debug_logf("frame %d: toolbar after cell block", frame_counter);
                     }
                     if (active_vp) {
-                        const char* viz_options[] = {"Field", "Material", "Overlay", "Magnitude"};
+                        const char* viz_options[] = {"Ez", "|Ez|", "Hx", "Hy", "|H|", "Sx", "Sy", "|S|", "Ex (n/a)", "Ey (n/a)", "Hz (n/a)", "Material", "Overlay"};
                         int v = (int)active_vp->viz_mode;
                         if (ImGui::Combo("Visualization", &v, viz_options, IM_ARRAYSIZE(viz_options))) {
                             active_vp->viz_mode = (ViewportViz)v;
