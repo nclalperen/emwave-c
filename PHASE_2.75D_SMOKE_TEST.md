@@ -1,187 +1,78 @@
-# Phase 2.75D: 5-Minute Smoke Test
+# Phase 2.75D: 5-Minute Smoke Test (ImGui)
 
-**Date:** 2025-11-21
-**Build:** emwave_imgui.exe (Nov 21 01:30, 932 KB)
-**Config:** configs/waveguide.json
-**Objective:** Verify Phase 2.75D features are functional before committing code
+Date: 2025-11-21  
+Build: `build-imgui/Release/emwave_imgui.exe`  
+Config for quick checks: `configs/waveguide.json`
+
+Note: After pressing Clear, simulation sometimes stops rendering until restart or Apply Run Settings + restart (pending fix).
 
 ---
 
 ## How to Run
-
-```bash
-cd c:/projects/emwave-c/build-imgui/Release
-./emwave_imgui.exe --config ../../configs/waveguide.json
+```powershell
+cd C:\projects\emwave-c\build-imgui\Release
+.\emwave_imgui.exe --config ..\..\configs\waveguide.json
+```
+Expected startup (example):
+```
+Grid: 512x256 (...) CFL=0.90
+Sweep: ...
 ```
 
-**Expected startup output:**
-```
-Grid: 512x256 (0.50m x 0.25m) CFL=0.90
-Sweep: 3 pts, 6.000e+09 Hz to 8.500e+09 Hz, 400 steps/pt
-Run mode: fixed (1000 steps)
-Boundary: CPML
-Materials: 3 rectangles, Sources: 1, Ports: 0
-```
+---
 
-✅ **VERIFIED:** App launches without crash
+## Test 1 - Viewports & Transforms (2 min)
+- [x] Alt+1/2/4 switch layouts (Single / Horizontal / Quad). Quad default: A=Ez, B=Hx, C=Hy, D=|S|.
+- [x] Hover each pane: active shows blue outline; labels reflect channel (e.g., "A: Ez").
+- [x] Scroll zoom per-pane; Alt+Left-drag pans. Verify only the active pane moves.
+- [x] Enable Sync Zoom and Sync Pan (toolbar "Cfg"); zoom/pan one pane -> all panes mirror.
+- [x] Toggle Grid/Sources/Vectors in "Cfg" for one pane; only that pane updates. Vectors appear on H/S channels.
+
+Status: PASS (layouts, highlight, per-pane zoom/pan, sync zoom/pan, per-pane overlays OK).
 
 ---
 
-## Test 1: Multi-Viewport Layouts (Prompt #37) — 2 minutes
+## Test 2 - Recording (1.5 min)
+- [x] Open Tools -> Animation Recording.
+- [x] Set Duration=2s, FPS=10, Format=GIF (or MP4). Start -> status counts frames -> Processing -> Saved: `recordings\...`.
+- [x] GIF/MP4 encode inside app. If FFmpeg is found (PATH/`FFMPEG_PATH`/`./ffmpeg/bin/ffmpeg.exe`), MP4+GIF use it; otherwise PNG sequence is produced (status shows failure code). Last FFmpeg command is logged to `recordings/ffmpeg_last.txt`.
+- [x] Start a 5s record, click Stop after ~1s -> stops cleanly (no crash).
 
-### 1.1 Layout Switching (30 seconds)
-- [ ] Press **Alt+1** → Single full viewport appears
-- [ ] Press **Alt+2** → Window splits horizontally (viewport A top, B bottom)
-- [ ] Press **Alt+3** → Window splits vertically (viewport A left, B right)
-- [ ] Press **Alt+4** → Quad view (A/B top, C/D bottom)
-- [ ] Check log: Each keypress should log "Layout: Single/Horizontal/Vertical/Quad"
-
-**Expected Result:** Layouts switch instantly, no flickering or crashes
-
-### 1.2 Active Viewport Highlighting (30 seconds)
-- [ ] In Quad view (Alt+4), hover mouse over each viewport
-- [ ] Verify active viewport shows **blue outline** (IM_COL32(80,160,255,255))
-- [ ] Inactive viewports show **gray outline** (IM_COL32(80,80,80,180))
-- [ ] Top-left corner of each viewport shows label: "A: Field", "B: Field", etc.
-
-**Expected Result:** Active viewport is clearly indicated
-
-### 1.3 Independent Zoom/Pan (1 minute)
-- [ ] In Quad view, click on viewport A
-- [ ] Scroll mouse wheel → zoom changes in A only
-- [ ] Middle-mouse drag → pan changes in A only
-- [ ] Click viewport B, zoom → verify A remains unchanged
-- [ ] Open View menu → Check "Sync Zoom" ✅
-- [ ] Zoom in any viewport → all viewports zoom together
-
-**Expected Result:** Independent transforms work; sync mode works
+Status: PASS (frames visible; GIF/MP4/PNG produced in-app; PNG fallback when FFmpeg missing/fails).
 
 ---
 
-## Test 2: Animation Recording (Prompt #38) — 1.5 minutes
+## Test 3 - Measurements (1.5 min)
+- [x] Area tool: Shift+A, click 3+ vertices, Right-click to close -> filled polygon with area/perimeter label.
+- [x] Annotation: Shift+T -> popup -> add text -> shows at cursor. Note: Always visible; prefer hide unless hovered on area/context.
+- [x] Measurement History: lists distances/areas/annotations; Clear Areas works; Export CSV writes `measurements.csv`. Note: CSV should be numbered (avoid overwrite).
 
-### 2.1 Recording Panel Opens (15 seconds)
-- [ ] Click **Tools → Animation Recording...** (or equivalent menu)
-- [ ] Panel opens with controls:
-  - Duration slider (1-60s)
-  - Framerate slider (10-60 fps)
-  - Resolution scale slider (0.5×-2.0×)
-  - Format combo (GIF/MP4/PNG Sequence)
-  - Auto-play checkbox
-  - Start/Stop buttons
-  - Progress bar + status text
-
-**Expected Result:** Panel appears without errors
-
-### 2.2 Quick Recording Test (1 minute)
-- [ ] Set Duration = 2 seconds
-- [ ] Set Framerate = 10 fps
-- [ ] Set Format = GIF
-- [ ] Click **Start Recording**
-- [ ] Status shows "Recording: 0/20 frames" (2s × 10fps = 20 frames)
-- [ ] Progress bar fills to 100%
-- [ ] Status changes to "Processing..."
-- [ ] After 1-2 seconds, status shows "Complete: recordings/emwave_YYYYMMDD_HHMMSS.gif"
-- [ ] Check that file exists in recordings/ folder
-
-**Expected Result:** GIF created successfully, no crashes
-
-### 2.3 Stop Button (15 seconds)
-- [ ] Start another recording (5s @ 30fps)
-- [ ] After 1 second, click **Stop Recording**
-- [ ] Recording halts early
-- [ ] Partial frames saved or gracefully discarded
-
-**Expected Result:** Stop works without crash
+Status: PASS (area, annotations, history, clear, CSV). Numbered CSV export implemented; annotation hover-only toggle added.
 
 ---
 
-## Test 3: Advanced Measurements (Prompt #39) — 1.5 minutes
+## Hotkeys Sanity (30 sec)
+- [x] Ruler toggle R (measure two clicks, log entry). Request: brief popup showing the measured distance.
+- [x] Layout hotkeys Alt+1/2/4 (Alt+3 optional; not critical).
+- [x] Help F1 toggles overlay (optional). Background overlays are suppressed while F1 is shown.
 
-### 3.1 Area Tool (45 seconds)
-- [ ] Press **Shift+A** key
-- [ ] Log shows "Area mode: ON"
-- [ ] Left-click 3 times in viewport to create triangle vertices
-- [ ] Right-click to close polygon
-- [ ] Polygon fills with green semi-transparent color
-- [ ] Polygon outline appears in bright green
-- [ ] Label at centroid shows area (m²) and perimeter (m)
-
-**Expected Result:** Area calculation displays correctly
-
-### 3.2 Text Annotations (30 seconds)
-- [ ] Press **Shift+T** key
-- [ ] Popup "AddAnnotation" opens with:
-  - Text input field
-  - Color picker (default yellow)
-  - Size slider (8-28 px, default 14)
-  - Add / Cancel buttons
-- [ ] Type "Test Note" in text field
-- [ ] Click **Add**
-- [ ] Yellow text "Test Note" appears at cursor grid position with black background
-
-**Expected Result:** Annotation created and visible
-
-### 3.3 Measurement History Panel (15 seconds)
-- [ ] Open **Tools → Measurement History** (or equivalent)
-- [ ] Panel lists:
-  - Distances section (if ruler tool was used)
-  - Areas section (shows triangle from step 3.1)
-  - Annotations section (shows "Test Note")
-- [ ] Each entry has delete button
-- [ ] Checkboxes: Show Distances, Show Areas, Show Annotations
-- [ ] Buttons: Export to CSV, Clear All
-
-**Expected Result:** History panel displays measurements correctly
+Status: Ruler OK (popup added); Alt+1/2/4 OK; Alt+3 not used/critical. F1 overlay background cleaned.
 
 ---
 
-## Critical Blockers (Stop & Report If Found)
-
-1. **Crash on layout switch** → STOP, report stack trace
-2. **Recording fails silently** → Check for error message, verify FFmpeg presence
-3. **Area tool crashes on polygon close** → STOP, report error
-4. **Annotations don't appear** → Check if text is visible/rendered
+## Pass/Fail Notes
+- Pass if: no crashes; per-pane zoom/pan/channel work; recording produces visible output; measurements/annotations render; history/CSV OK.
+- Current blockers: Clear may stall sim until restart.
 
 ---
 
-## Pass Criteria
-
-- ✅ 0/15 critical tests pass → **All systems functional**
-- ⚠️ 12-14/15 pass → **Minor issues, proceed with caution**
-- ❌ <12/15 pass → **Major regressions, do NOT commit**
-
----
-
-## Post-Test Actions
-
-### If All Tests Pass:
-1. Close the application
-2. Review this checklist for any warnings
-3. Proceed to commit Phase 2.75D implementation
-
-### If Tests Fail:
-1. Note which tests failed
-2. Check logs for error messages
-3. Report issues before committing
-
----
-
-## Time Budget
-
-- Test 1 (Multi-Viewport): 2 min
-- Test 2 (Recording): 1.5 min
-- Test 3 (Measurements): 1.5 min
-- **Total:** 5 minutes
-
----
-
-## Notes
-
-- Application launched successfully on 2025-11-21 01:30
-- Config loaded: waveguide.json (512×256 grid)
-- Build size: 932 KB
-- No compilation errors reported
-- Phase 2.75D implementation: 1,134 lines added to main_imgui.cpp
-
-*This smoke test validates critical functionality only. Detailed testing will occur during real usage (bug fixing stage).*
+## Quick Log Checklist
+- App launch
+- Layout switch
+- Per-pane zoom/pan
+- Sync zoom/pan
+- Vectors
+- Recording (visible output)
+- Area tool
+- Annotation
+- History/CSV

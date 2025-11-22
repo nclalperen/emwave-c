@@ -39,6 +39,9 @@
 #include <ctime>
 #include <cstdlib>
 #ifdef _WIN32
+#include <process.h>
+#endif
+#ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
@@ -880,13 +883,104 @@ static bool export_png_sequence(AnimationRecorder* rec) {
     return true;
 }
 
-static bool has_ffmpeg() {
+static std::string ffmpeg_base_dir() {
+    char* base = SDL_GetBasePath();
+    if (!base) return std::string();
+    std::string path(base);
+    SDL_free(base);
+    return path;
+}
+
+static const std::string& ffmpeg_command() {
+    static bool initialized = false;
+    static std::string cmd;
+    if (initialized) return cmd;
+    initialized = true;
+
+    const char* env_path = std::getenv("FFMPEG_PATH");
+    std::vector<std::filesystem::path> candidates;
+    if (env_path && env_path[0] != '\0') {
+        candidates.emplace_back(env_path);
+    }
 #ifdef _WIN32
-    int rc = std::system("ffmpeg -version >NUL 2>&1");
+    candidates.emplace_back("ffmpeg\\bin\\ffmpeg.exe");
+    candidates.emplace_back("ffmpeg\\ffmpeg.exe");
+    candidates.emplace_back(".\\ffmpeg.exe");
+    candidates.emplace_back("..\\ffmpeg\\bin\\ffmpeg.exe");
+    candidates.emplace_back("..\\..\\ffmpeg\\bin\\ffmpeg.exe");
 #else
-    int rc = std::system("ffmpeg -version >/dev/null 2>&1");
+    candidates.emplace_back("ffmpeg/bin/ffmpeg");
+    candidates.emplace_back("ffmpeg/ffmpeg");
+    candidates.emplace_back("./ffmpeg");
+    candidates.emplace_back("../ffmpeg/bin/ffmpeg");
+    candidates.emplace_back("../../ffmpeg/bin/ffmpeg");
 #endif
-    return rc == 0;
+
+    std::string base_dir = ffmpeg_base_dir();
+    if (!base_dir.empty()) {
+        std::filesystem::path base_path(base_dir);
+#ifdef _WIN32
+        candidates.emplace_back(base_path / "ffmpeg" / "bin" / "ffmpeg.exe");
+#else
+        candidates.emplace_back(base_path / "ffmpeg" / "bin" / "ffmpeg");
+#endif
+    }
+
+    for (const auto& c : candidates) {
+        if (std::filesystem::exists(c)) {
+            std::filesystem::path abs = std::filesystem::absolute(c);
+            cmd = abs.string();
+            return cmd;
+        }
+    }
+
+#ifdef _WIN32
+    if (std::system("ffmpeg -version >NUL 2>&1") == 0) {
+        cmd = "ffmpeg";
+    }
+#else
+    if (std::system("ffmpeg -version >/dev/null 2>&1") == 0) {
+        cmd = "ffmpeg";
+    }
+#endif
+    return cmd;
+}
+
+static bool has_ffmpeg() {
+    return !ffmpeg_command().empty();
+}
+
+static std::string join_args(const std::vector<std::string>& args) {
+    std::string out;
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (i) out.push_back(' ');
+        out += args[i];
+    }
+    return out;
+}
+
+static int run_ffmpeg(const std::vector<std::string>& args) {
+    if (args.empty()) return -1;
+#ifdef _WIN32
+    std::vector<const char*> cargs;
+    cargs.reserve(args.size() + 1);
+    for (const auto& s : args) cargs.push_back(s.c_str());
+    cargs.push_back(nullptr);
+    return _spawnv(_P_WAIT, args[0].c_str(), cargs.data());
+#else
+    std::string cmd = join_args(args);
+    return std::system(cmd.c_str());
+#endif
+}
+
+static void log_ffmpeg_attempt(const char* cmd, int rc) {
+    if (!cmd) return;
+    std::error_code ec;
+    std::filesystem::create_directories("recordings", ec);
+    std::ofstream f("recordings/ffmpeg_last.txt", std::ios::out | std::ios::trunc);
+    if (!f) return;
+    f << "rc=" << rc << "\n";
+    f << "cmd:\n" << cmd << "\n";
 }
 
 static bool write_temp_sequence(const AnimationRecorder* rec, const char* dir) {
@@ -924,100 +1018,105 @@ static void cleanup_temp_sequence(const char* dir, size_t count) {
 
 static bool export_gif(AnimationRecorder* rec) {
     if (!rec || rec->frames.empty()) return false;
-    bool ffmpeg_ok = has_ffmpeg();
-    if (!ffmpeg_ok) {
+    const std::string ffmpeg_cmd = ffmpeg_command();
+    bool ffmpeg_ok = !ffmpeg_cmd.empty();
+
+    if (ffmpeg_ok) {
+        char suffix[32];
+        std::snprintf(suffix, sizeof(suffix), "temp_gif_%ld", (long)time(nullptr));
+        std::filesystem::path temp_dir_rel = std::filesystem::path("recordings") / suffix;
+        std::string temp_dir_str = temp_dir_rel.string();
+        if (!write_temp_sequence(rec, temp_dir_str.c_str())) {
+            cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
+            return false;
+        }
+        std::filesystem::path temp_dir_abs = std::filesystem::absolute(temp_dir_rel);
+        std::string frames_pat = (temp_dir_abs / "frame_%04d.bmp").string();
+        std::vector<std::string> args;
+        args.push_back(ffmpeg_cmd);
+        args.push_back("-y");
+        args.push_back("-framerate");
+        args.push_back(std::to_string(rec->framerate));
+        args.push_back("-i");
+        args.push_back(frames_pat);
+        args.push_back("-vf");
+        {
+            char vfbuf[128];
+            std::snprintf(vfbuf, sizeof(vfbuf), "fps=%.2f,scale=iw:ih:flags=lanczos", rec->framerate);
+            args.emplace_back(vfbuf);
+        }
+        args.push_back(rec->output_path);
+
+        int rc = run_ffmpeg(args);
+        cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
+        std::string cmd_logged = join_args(args);
+        log_ffmpeg_attempt(cmd_logged.c_str(), rc);
+        if (rc == 0) return true;
         std::snprintf(rec->status_message,
                       sizeof(rec->status_message),
-                      "FFmpeg missing, saved PNG sequence");
+                      "FFmpeg GIF failed (rc=%d), saved PNG sequence", rc);
         return export_png_sequence(rec);
     }
 
-    char temp_dir[256];
-    std::snprintf(temp_dir, sizeof(temp_dir), "recordings/temp_gif");
-    if (!write_temp_sequence(rec, temp_dir)) {
-        cleanup_temp_sequence(temp_dir, rec->frames.size());
-        return false;
-    }
-
-    char cmd[1024];
-#ifdef _WIN32
-    std::snprintf(cmd,
-                  sizeof(cmd),
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -vf \"palettegen=stats_mode=diff\" %s_palette.png && "
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -i %s_palette.png -lavfi \"paletteuse=dither=bayer\" \"%s\" >NUL 2>&1",
-                  rec->framerate,
-                  temp_dir,
-                  temp_dir,
-                  rec->framerate,
-                  temp_dir,
-                  temp_dir,
-                  rec->output_path);
-#else
-    std::snprintf(cmd,
-                  sizeof(cmd),
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -vf palettegen=stats_mode=diff %s_palette.png >/dev/null 2>&1 && "
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -i %s_palette.png -lavfi paletteuse=dither=bayer \"%s\" >/dev/null 2>&1",
-                  rec->framerate,
-                  temp_dir,
-                  temp_dir,
-                  rec->framerate,
-                  temp_dir,
-                  temp_dir,
-                  rec->output_path);
-#endif
-    int rc = std::system(cmd);
-    char palette_path[256];
-    std::snprintf(palette_path, sizeof(palette_path), "%s_palette.png", temp_dir);
-    std::remove(palette_path);
-    cleanup_temp_sequence(temp_dir, rec->frames.size());
-    if (rc != 0) {
-        std::snprintf(rec->status_message,
-                      sizeof(rec->status_message),
-                      "FFmpeg GIF failed, saved PNG sequence");
-        return export_png_sequence(rec);
-    }
-    return true;
+    std::snprintf(rec->status_message,
+                  sizeof(rec->status_message),
+                  "FFmpeg missing, saved PNG sequence");
+    return export_png_sequence(rec);
 }
 
 static bool export_mp4(AnimationRecorder* rec) {
     if (!rec || rec->frames.empty()) return false;
-    bool ffmpeg_ok = has_ffmpeg();
+    const std::string ffmpeg_cmd = ffmpeg_command();
+    bool ffmpeg_ok = !ffmpeg_cmd.empty();
+
     if (!ffmpeg_ok) {
+        std::filesystem::path alt = std::filesystem::path(rec->output_path).replace_extension(".gif");
+        std::string alt_str = alt.string();
+        std::snprintf(rec->output_path, sizeof(rec->output_path), "%s", alt_str.c_str());
         std::snprintf(rec->status_message,
                       sizeof(rec->status_message),
-                      "FFmpeg missing, saved PNG sequence");
-        return export_png_sequence(rec);
+                      "FFmpeg missing, saved GIF instead");
+        return export_gif(rec);
     }
 
-    char temp_dir[256];
-    std::snprintf(temp_dir, sizeof(temp_dir), "recordings/temp_mp4");
-    if (!write_temp_sequence(rec, temp_dir)) {
-        cleanup_temp_sequence(temp_dir, rec->frames.size());
+    std::filesystem::path temp_dir_rel = std::filesystem::path("recordings") / "temp_mp4";
+    std::string temp_dir_str = temp_dir_rel.string();
+    if (!write_temp_sequence(rec, temp_dir_str.c_str())) {
+        cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
         return false;
     }
+    std::filesystem::path temp_dir_abs = std::filesystem::absolute(temp_dir_rel);
+    std::string frames_pat = (temp_dir_abs / "frame_%04d.bmp").string();
     char cmd[1024];
 #ifdef _WIN32
     std::snprintf(cmd,
                   sizeof(cmd),
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -c:v libx264 -pix_fmt yuv420p \"%s\" >NUL 2>&1",
+                  "%s -y -framerate %.2f -i \"%s\" -c:v mpeg4 -qscale:v 2 -pix_fmt yuv420p \"%s\" >NUL 2>&1",
+                  ffmpeg_cmd.c_str(),
                   rec->framerate,
-                  temp_dir,
+                  frames_pat.c_str(),
                   rec->output_path);
 #else
     std::snprintf(cmd,
                   sizeof(cmd),
-                  "ffmpeg -y -framerate %.2f -i %s/frame_%%04d.bmp -c:v libx264 -pix_fmt yuv420p \"%s\" >/dev/null 2>&1",
+                  "%s -y -framerate %.2f -i \"%s\" -c:v mpeg4 -qscale:v 2 -pix_fmt yuv420p \"%s\" >/dev/null 2>&1",
+                  ffmpeg_cmd.c_str(),
                   rec->framerate,
-                  temp_dir,
+                  frames_pat.c_str(),
                   rec->output_path);
 #endif
     int rc = std::system(cmd);
-    cleanup_temp_sequence(temp_dir, rec->frames.size());
+    cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
+    log_ffmpeg_attempt(cmd, rc);
     if (rc != 0) {
+        std::filesystem::path alt = std::filesystem::path(rec->output_path).replace_extension(".gif");
+        std::string alt_str = alt.string();
+        std::snprintf(rec->output_path, sizeof(rec->output_path), "%s", alt_str.c_str());
         std::snprintf(rec->status_message,
                       sizeof(rec->status_message),
-                      "FFmpeg MP4 failed, saved PNG sequence");
-        return export_png_sequence(rec);
+                      "FFmpeg MP4 failed (cmd: %s), saved GIF instead",
+                      ffmpeg_cmd.c_str());
+        return export_gif(rec);
     }
     return true;
 }
@@ -5328,18 +5427,22 @@ int main(int argc, char** argv) {
         ImGui::PopStyleVar();
 
         // Help overlay (F1)
-        if (show_help_overlay) {
-            ImGui::SetNextWindowSize(ImVec2(600.0f, 400.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                                    ImGuiCond_Appearing,
-                                    ImVec2(0.5f, 0.5f));
-
-            if (ImGui::Begin("Keyboard Shortcuts & Help",
-                             &show_help_overlay,
-                             ImGuiWindowFlags_NoCollapse)) {
-                if (ImGui::BeginTabBar("HelpTabs")) {
-                    if (ImGui::BeginTabItem("Shortcuts")) {
-                        ImGui::TextUnformatted("File Operations");
+    if (show_help_overlay) {
+        ImGui::SetNextWindowSize(ImVec2(600.0f, 400.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                                ImGuiCond_Appearing,
+                                ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        bool help_open = ImGui::Begin("Keyboard Shortcuts & Help",
+                                      &show_help_overlay,
+                                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking);
+        if (help_open) {
+            if (ImGui::BeginTabBar("HelpTabs")) {
+                if (ImGui::BeginTabItem("Shortcuts")) {
+                    ImGui::TextUnformatted("File Operations");
                         ImGui::Separator();
                         ImGui::Columns(2, "file_ops_cols", false);
                         ImGui::SetColumnWidth(0, 140.0f);
@@ -5416,13 +5519,16 @@ int main(int argc, char** argv) {
                         ImGui::BulletText("-3 dB bandwidth markers derived from peak S21");
                         ImGui::BulletText("Export enhanced CSV with VSWR and annotations");
                         ImGui::BulletText("Smith Chart window visualizes reflection coefficients");
-                        ImGui::EndTabItem();
-                    }
-                    ImGui::EndTabBar();
+                    ImGui::EndTabItem();
                 }
+                ImGui::EndTabBar();
             }
-            ImGui::End();
         }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+    }
+        bool suppress_overlays = show_help_overlay;
 
         SDL_Texture* viewport_texture = NULL;
         static SDL_Texture* field_texture = NULL;
@@ -5431,7 +5537,7 @@ int main(int argc, char** argv) {
 
 
         // Overlay: show source IDs and wizard blocks on top of the field
-        {
+        if (!suppress_overlays) {
             ImDrawList* dl = ImGui::GetForegroundDrawList();
             const ImU32 src_col = IM_COL32(255, 255, 255, 230);
             const ImU32 block_col = IM_COL32(255, 255, 0, 160);
@@ -6556,8 +6662,8 @@ int main(int argc, char** argv) {
             debug_logf("frame %d: before imgui render", frame_counter);
         }
         ImGui::Render();
-        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), render->renderer);
+        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0);
         SDL_RenderPresent(render->renderer);
 
         if (frame_counter <= 120) {
@@ -6578,4 +6684,3 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
