@@ -1,0 +1,23 @@
+{
+  "pages": [
+    {
+      "name": "Page 1",
+      "res_w": 1280,
+      "res_h": 720,
+      "output_name": "composer_page_1",
+      "output_format": 1,
+      "fps": 30,
+      "frames": 60,
+      "video_kbps": 4000,
+      "transparent_bg": 0,
+      "bg": [0.05, 0.05, 0.06, 1.0],
+      "items": [
+        { "id": 1, "type": "field", "viewport": 0, "pos": [80, 80], "size": [720, 480] },
+        { "id": 2, "type": "legend", "pos": [840, 80], "size": [280, 180] },
+        { "id": 3, "type": "scope", "pos": [80, 580], "size": [360, 120] },
+        { "id": 4, "type": "fft", "pos": [460, 580], "size": [360, 120] },
+        { "id": 5, "type": "region", "viewport": 0, "pos": [860, 300], "size": [320, 220], "region_norm": [0.2, 0.2, 0.6, 0.6] }
+      ]
+    }
+  ]
+}

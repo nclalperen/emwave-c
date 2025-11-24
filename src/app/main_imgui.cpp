@@ -291,39 +291,6 @@ static void log_ffmpeg_attempt(const char* cmd, int rc);
 static int run_ffmpeg(const std::vector<std::string>& args);
 static std::string join_args(const std::vector<std::string>& args);
 
-enum RecordingFormat {
-    RECORDING_GIF = 0,
-    RECORDING_MP4 = 1,
-    RECORDING_PNG_SEQUENCE = 2
-};
-
-enum RecordingState {
-    RECORDING_IDLE = 0,
-    RECORDING_ACTIVE = 1,
-    RECORDING_PROCESSING = 2,
-    RECORDING_ERROR = 3
-};
-
-struct AnimationRecorder {
-    RecordingState state;
-    RecordingFormat format;
-    float framerate;
-    int target_frames;
-    int frame_count;
-    float resolution_scale;
-    std::vector<SDL_Surface*> frames;
-    int capture_width;
-    int capture_height;
-    char output_path[260];
-    bool auto_play;
-    bool composer_preview_mode;
-    int composer_preview_page;
-    int composer_preview_frames;
-    bool composer_preview_done;
-    float progress;
-    char status_message[128];
-};
-
 enum ComposerItemType {
     COMPOSER_FIELD_VIEW = 0,
     COMPOSER_REGION = 1,
@@ -356,6 +323,18 @@ struct ComposerPage {
     int frames;
     int video_kbps;     // target video bitrate for MP4
     std::vector<ComposerItem> items;
+};
+
+struct HeadlessComposerOpts {
+    bool enabled;
+    int fmt;        // 0 bmp,1 png,2 mp4,3 gif
+    int fps;
+    int frames;
+    int res_w;
+    int res_h;
+    int tmpl_idx;   // -1 = none
+    char output_name[64];
+    char layout_path[260];
 };
 
 struct DistanceMeasurement {
@@ -489,10 +468,6 @@ struct AppState {
     bool sync_zoom;
     bool sync_pan;
 
-    // Recording (Prompt #38)
-    AnimationRecorder recorder;
-    bool show_recording_panel;
-
     // Measurements (Prompt #39)
     bool area_mode;
     AreaMeasurement current_area;
@@ -510,6 +485,19 @@ struct AppState {
     int composer_active_page;
     int composer_next_item_id;
     char composer_status[128];
+    char composer_last_export_path[260];
+    SDL_Texture* composer_preview_tex;
+    ImVec2 composer_preview_tex_size;
+    std::vector<SDL_Texture*> composer_preview_frames;
+    int composer_preview_frame_idx;
+    int composer_preview_frame_count;
+    float composer_preview_fps;
+    float composer_preview_time;
+    bool composer_preview_playing;
+    int composer_preview_max_frames;
+    int composer_preview_target_width;
+    bool composer_preview_mutate_sim;
+    std::vector<ComposerPage> composer_user_templates;
     bool composer_dragging;
     int composer_drag_item;
     ImVec2 composer_drag_offset;
@@ -540,16 +528,9 @@ struct AppState {
 };
 
 static void ui_log_add(AppState* app, const char* fmt, ...);
-static void start_recording(AppState* app,
-                            RecordingFormat format,
-                            float fps,
-                            int duration_sec,
-                            float scale_factor,
-                            int output_w,
-                            int output_h);
-static void stop_recording(AppState* app);
-
-static double g_record_last_capture_time = 0.0;
+static void clear_composer_preview(AppState* app);
+static SimulationState* clone_simulation_state(const SimulationState* src);
+static bool composer_load_layout_json(AppState* app, const char* path);
 
 static double calculate_area_m2(const AreaMeasurement& a, const SimulationState* sim) {
     if (!sim || a.vertices.size() < 3) return 0.0;
@@ -809,6 +790,19 @@ static void ensure_composer_initialized(AppState* app) {
     app->composer_pages.push_back(page);
     app->composer_active_page = 0;
     std::snprintf(app->composer_status, sizeof(app->composer_status), "Composer ready");
+    app->composer_last_export_path[0] = '\0';
+    app->composer_preview_tex = nullptr;
+    app->composer_preview_tex_size = ImVec2(0, 0);
+    app->composer_preview_frames.clear();
+    app->composer_preview_frame_idx = 0;
+    app->composer_preview_frame_count = 0;
+    app->composer_preview_fps = 30.0f;
+    app->composer_preview_time = 0.0f;
+    app->composer_preview_playing = false;
+    app->composer_preview_max_frames = 120;
+    app->composer_preview_target_width = 480;
+    app->composer_preview_mutate_sim = true;
+    app->composer_user_templates.clear();
     app->composer_dragging = false;
     app->composer_drag_item = -1;
     app->composer_drag_offset = ImVec2(0, 0);
@@ -1474,22 +1468,32 @@ static SDL_Surface* composer_render_measurements_surface(RenderContext* render,
 }
 
 static SDL_Surface* render_composer_page_surface(AppState* app,
-                                                 RenderContext* render,
-                                                 SimulationState* sim,
-                                                 const Scope* scope,
-                                                 int page_idx,
-                                                 bool* out_any_field,
-                                                 bool* out_any_field_blitted) {
+                                                  RenderContext* render,
+                                                  SimulationState* sim,
+                                                  const Scope* scope,
+                                                  int page_idx,
+                                                  bool* out_any_field,
+                                                  bool* out_any_field_blitted) {
     if (out_any_field) *out_any_field = false;
     if (out_any_field_blitted) *out_any_field_blitted = false;
     if (!app || !render || !render->renderer || !sim) return nullptr;
     ensure_composer_initialized(app);
     if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return nullptr;
     const ComposerPage& page = app->composer_pages[page_idx];
+    std::printf("Composer render page %d items=%zu bg=%.3f,%.3f,%.3f,%.3f transparent=%d\n",
+                page_idx,
+                page.items.size(),
+                page.bg.x, page.bg.y, page.bg.z, page.bg.w,
+                page.transparent_bg ? 1 : 0);
 
     SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, page.res_w, page.res_h, 32, SDL_PIXELFORMAT_RGBA32);
     if (!out) return nullptr;
     Uint8 alpha = page.transparent_bg ? 0 : (Uint8)(page.bg.w * 255);
+    std::printf("Composer render fill bg rgba=(%d,%d,%d,%d)\n",
+                (int)(page.bg.x * 255),
+                (int)(page.bg.y * 255),
+                (int)(page.bg.z * 255),
+                (int)alpha);
     SDL_FillRect(out, nullptr,
                  SDL_MapRGBA(out->format,
                              (Uint8)(page.bg.x * 255),
@@ -1505,6 +1509,10 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
         dst.y = (int)std::lround(item.pos.y);
         dst.w = (int)std::lround(item.size.x);
         dst.h = (int)std::lround(item.size.y);
+        std::printf("  item id=%d type=%d pos=(%d,%d) size=(%d,%d)\n",
+                    item.id,
+                    (int)item.type,
+                    dst.x, dst.y, dst.w, dst.h);
 
         bool blitted = false;
         if (item.type == COMPOSER_FIELD_VIEW || item.type == COMPOSER_REGION) {
@@ -1587,7 +1595,56 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
                                                  (col >> IM_COL32_G_SHIFT) & 0xFF,
                                                  (col >> IM_COL32_B_SHIFT) & 0xFF,
                                                  255));
+            std::printf("    filled placeholder color=%08x\n", col);
         }
+    }
+
+    // Fallback: if the image is uniform, stamp placeholder rectangles so headless output is never blank.
+    auto surface_has_variance = [](SDL_Surface* s) -> bool {
+        if (!s) return false;
+        Uint8* pixels = (Uint8*)s->pixels;
+        int bpp = s->format->BytesPerPixel;
+        if (bpp < 3) return false;
+        Uint8 r0 = pixels[0], g0 = pixels[1], b0 = pixels[2];
+        const int stride = s->pitch;
+        for (int y = 0; y < s->h; y += std::max(1, s->h / 16)) {
+            Uint8* row = pixels + y * stride;
+            for (int x = 0; x < s->w; x += std::max(1, s->w / 16)) {
+                Uint8* p = row + x * bpp;
+                if (p[0] != r0 || p[1] != g0 || p[2] != b0) return true;
+            }
+        }
+        return false;
+    };
+
+    if (!surface_has_variance(out)) {
+        std::printf("Composer render: uniform surface, stamping %zu placeholders\n", page.items.size());
+        for (const auto& item : page.items) {
+            SDL_Rect dst;
+            dst.x = (int)std::lround(item.pos.x);
+            dst.y = (int)std::lround(item.pos.y);
+            dst.w = (int)std::lround(item.size.x);
+            dst.h = (int)std::lround(item.size.y);
+            Uint32 col = composer_item_color(item);
+            std::printf("    fallback fill id=%d type=%d color=%08x\n", item.id, (int)item.type, col);
+            SDL_FillRect(out, &dst, SDL_MapRGBA(out->format,
+                                                (col >> IM_COL32_R_SHIFT) & 0xFF,
+                                                (col >> IM_COL32_G_SHIFT) & 0xFF,
+                                                (col >> IM_COL32_B_SHIFT) & 0xFF,
+                                                255));
+            SDL_Rect border = dst;
+            SDL_Rect lines[4] = {
+                {border.x, border.y, border.w, 1},
+                {border.x, border.y + border.h - 1, border.w, 1},
+                {border.x, border.y, 1, border.h},
+                {border.x + border.w - 1, border.y, 1, border.h}
+            };
+            Uint32 edge = SDL_MapRGBA(out->format, 255, 255, 255, 255);
+            for (auto& l : lines) {
+                SDL_FillRect(out, &l, edge);
+            }
+        }
+        if (out_any_field_blitted) *out_any_field_blitted = false;
     }
 
     if (out_any_field) *out_any_field = any_field;
@@ -1659,7 +1716,7 @@ static bool export_composer_page(AppState* app,
             args.push_back("-");
             if (page.output_format == 2) {
                 int kbps = page.video_kbps > 0 ? page.video_kbps : 4000;
-                kbps = std::clamp(kbps, 500, 50000);
+                kbps = std::clamp(kbps, 1000, 50000);
                 args.push_back("-c:v");
                 args.push_back("mpeg4");
                 args.push_back("-b:v");
@@ -1738,6 +1795,8 @@ static bool export_composer_page(AppState* app,
             std::snprintf(app->composer_status, sizeof(app->composer_status), "Exported %s", out_path);
             ui_log_add(app, "Composer exported: %s", out_path);
         }
+        std::filesystem::path p(out_path);
+        std::snprintf(app->composer_last_export_path, sizeof(app->composer_last_export_path), "%s", p.parent_path().string().c_str());
     } else {
         std::snprintf(app->composer_status, sizeof(app->composer_status), "Export failed: %s", out_path);
         ui_log_add(app, "Composer export failed: %s", out_path);
@@ -1749,7 +1808,8 @@ static bool export_composer_animation(AppState* app,
                                       RenderContext* render,
                                       SimulationState* sim,
                                       const Scope* scope,
-                                      int page_idx) {
+                                      int page_idx,
+                                      bool preview_only) {
     if (!app || !render || !render->renderer || !sim) return false;
     ensure_composer_initialized(app);
     if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return false;
@@ -1774,7 +1834,15 @@ static bool export_composer_animation(AppState* app,
     bool ffmpeg_ok = !ffmpeg_cmd.empty();
     std::error_code ec;
 
-    if (page.output_format == 0 || page.output_format == 1) {
+    bool fallback_png = false;
+    int effective_format = page.output_format;
+    if (!preview_only && (page.output_format == 2 || page.output_format == 3) && !ffmpeg_ok) {
+        // Fallback to PNG sequence if ffmpeg unavailable
+        effective_format = 1;
+        fallback_png = true;
+    }
+
+    if (effective_format == 0 || effective_format == 1) {
         // PNG sequence
         std::filesystem::path dir = std::filesystem::path("recordings") / (std::string(base) + "_frames");
         std::filesystem::remove_all(dir, ec);
@@ -1806,12 +1874,12 @@ static bool export_composer_animation(AppState* app,
         std::snprintf(out_path, sizeof(out_path), "%s", dir.string().c_str());
     } else {
         // MP4 or GIF via ffmpeg rawvideo pipe (no PNG decode)
-        const char* ext = (page.output_format == 2) ? "mp4" : "gif";
+        const char* ext = (effective_format == 2) ? "mp4" : "gif";
         std::filesystem::path video_path = std::filesystem::path("recordings") / (std::string(base) + "." + ext);
         std::snprintf(out_path, sizeof(out_path), "%s", video_path.string().c_str());
         saved = false;
 
-        if (ffmpeg_ok) {
+        if (ffmpeg_ok && !preview_only) {
             std::vector<std::string> args;
             args.push_back(ffmpeg_cmd);
             args.push_back("-y");
@@ -1827,9 +1895,9 @@ static bool export_composer_animation(AppState* app,
             args.push_back(std::to_string(fps));
             args.push_back("-i");
             args.push_back("-");
-            if (page.output_format == 2) {
+            if (effective_format == 2) {
                 int kbps = page.video_kbps > 0 ? page.video_kbps : 4000;
-                kbps = std::clamp(kbps, 500, 50000);
+                kbps = std::clamp(kbps, 1000, 50000);
                 args.push_back("-c:v");
                 args.push_back("mpeg4");
                 args.push_back("-b:v");
@@ -1893,9 +1961,23 @@ static bool export_composer_animation(AppState* app,
         }
     }
 
+    if (preview_only) {
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Preview done (%d frames @ %d fps)", frames, fps);
+        return saved;
+    }
     if (saved) {
-        std::snprintf(app->composer_status, sizeof(app->composer_status), "Animation exported: %s", out_path);
-        ui_log_add(app, "Composer animation exported: %s (%d frames @ %d fps)", out_path, frames, fps);
+        std::snprintf(app->composer_status,
+                      sizeof(app->composer_status),
+                      fallback_png ? "Animation exported PNG sequence: %s" : "Animation exported: %s",
+                      out_path);
+        std::filesystem::path p(out_path);
+        std::snprintf(app->composer_last_export_path, sizeof(app->composer_last_export_path), "%s", p.parent_path().string().c_str());
+        ui_log_add(app,
+                   fallback_png ? "Composer animation exported PNG sequence: %s (%d frames @ %d fps)"
+                                : "Composer animation exported: %s (%d frames @ %d fps)",
+                   out_path,
+                   frames,
+                   fps);
     } else {
         std::snprintf(app->composer_status, sizeof(app->composer_status), "Animation export failed");
         ui_log_add(app, "Composer animation export failed");
@@ -1903,7 +1985,29 @@ static bool export_composer_animation(AppState* app,
     return saved;
 }
 
-static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
+static bool composer_generate_preview(AppState* app,
+                                      RenderContext* render,
+                                      SimulationState* sim,
+                                      const Scope* scope,
+                                      int page_idx) {
+    if (!app || !render || !render->renderer || !sim) return false;
+    SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, nullptr, nullptr);
+    if (!frame_surface) return false;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(render->renderer, frame_surface);
+    SDL_FreeSurface(frame_surface);
+    if (!tex) return false;
+    if (app->composer_preview_tex) {
+        SDL_DestroyTexture(app->composer_preview_tex);
+    }
+    int w = 0, h = 0;
+    SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
+    app->composer_preview_tex = tex;
+    app->composer_preview_tex_size = ImVec2((float)w, (float)h);
+    std::snprintf(app->composer_status, sizeof(app->composer_status), "Preview updated (%dx%d)", w, h);
+    return true;
+}
+
+static void draw_print_composer(AppState* app, SDL_Renderer* renderer, SimulationState* sim, Scope* scope, RenderContext* render_ctx) {
     if (!app || !app->show_print_composer) return;
     ensure_composer_initialized(app);
     if (!ImGui::Begin("Print Composer", &app->show_print_composer)) {
@@ -1974,15 +2078,50 @@ static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
             composer_apply_template(app, app->composer_pages[app->composer_active_page], tmpl_choice);
         }
     }
+    static char user_tmpl_name[32] = "MyTemplate";
+    ImGui::InputText("Template name", user_tmpl_name, IM_ARRAYSIZE(user_tmpl_name));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Save Current as Template")) {
+        if (app->composer_active_page >= 0 && app->composer_active_page < (int)app->composer_pages.size()) {
+            ComposerPage saved = app->composer_pages[app->composer_active_page];
+            std::snprintf(saved.name, sizeof(saved.name), "%s", user_tmpl_name[0] ? user_tmpl_name : "UserTemplate");
+            app->composer_user_templates.push_back(saved);
+            if (app->composer_user_templates.size() > 8) {
+                app->composer_user_templates.erase(app->composer_user_templates.begin());
+            }
+        }
+    }
+    if (!app->composer_user_templates.empty()) {
+        ImGui::SameLine();
+        if (ImGui::BeginCombo("User Templates", app->composer_user_templates.front().name)) {
+            for (size_t i = 0; i < app->composer_user_templates.size(); ++i) {
+                bool selected = false;
+                if (ImGui::Selectable(app->composer_user_templates[i].name, &selected)) {
+                    if (app->composer_active_page >= 0 && app->composer_active_page < (int)app->composer_pages.size()) {
+                        app->composer_pages[app->composer_active_page] = app->composer_user_templates[i];
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
 
+    ImGui::TextUnformatted("Pages:");
+    ImGui::BeginChild("PageStrip", ImVec2(0, 110), true, ImGuiWindowFlags_HorizontalScrollbar);
     for (size_t i = 0; i < app->composer_pages.size(); ++i) {
         ImGui::PushID((int)i);
+        ImVec2 thumb = ImVec2(140, 80);
         bool sel = (int)i == app->composer_active_page;
-        if (ImGui::Selectable(app->composer_pages[i].name, sel)) {
+        ImGui::PushStyleColor(ImGuiCol_Button, sel ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_Button]);
+        if (ImGui::Button(app->composer_pages[i].name, thumb)) {
             app->composer_active_page = (int)i;
         }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
         ImGui::PopID();
     }
+    ImGui::NewLine();
+    ImGui::EndChild();
 
     if (app->composer_active_page < 0) app->composer_active_page = 0;
     ComposerPage& page = app->composer_pages[app->composer_active_page];
@@ -2041,13 +2180,16 @@ static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
     if (page.frames < 1) page.frames = 1;
     if (page.output_format == 2) {
         ImGui::BeginDisabled(!ffmpeg_ok);
-        ImGui::SliderInt("Video bitrate (kbps, MP4)", &page.video_kbps, 500, 50000);
+        ImGui::SliderInt("Video bitrate (kbps, MP4)", &page.video_kbps, 1000, 50000);
         ImGui::EndDisabled();
-        if (page.video_kbps < 500) page.video_kbps = 500;
+        if (page.video_kbps < 1000) page.video_kbps = 1000;
         if (page.video_kbps > 50000) page.video_kbps = 50000;
     }
     ImGui::Checkbox("Transparent BG (PNG/GIF)", &page.transparent_bg);
     ImGui::ColorEdit4("Background", (float*)&page.bg, ImGuiColorEditFlags_NoInputs);
+    ImGui::SliderInt("Preview max frames", &app->composer_preview_max_frames, 10, 240);
+    ImGui::SliderInt("Preview width (px)", &app->composer_preview_target_width, 240, 800);
+    ImGui::Checkbox("Preview mutates sim", &app->composer_preview_mutate_sim);
     ImGui::Checkbox("Snap to grid", &app->composer_snap);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120.0f);
@@ -2109,6 +2251,23 @@ static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
                       app->composer_pages.size());
     }
     ImGui::SameLine();
+    if (ImGui::Button("Export Static PNG")) {
+        int old_fmt = page.output_format;
+        page.output_format = 1;  // PNG
+        export_composer_page(app, render_ctx, sim, scope, app->composer_active_page);
+        page.output_format = old_fmt;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export All Static PNG")) {
+        for (size_t pi = 0; pi < app->composer_pages.size(); ++pi) {
+            int old_fmt = app->composer_pages[pi].output_format;
+            app->composer_pages[pi].output_format = 1;
+            export_composer_page(app, render_ctx, sim, scope, (int)pi);
+            app->composer_pages[pi].output_format = old_fmt;
+        }
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Exported all pages as PNG");
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Export Animation (ffmpeg/PNG)")) {
         app->composer_request_export_all = false;
         app->composer_request_animation = true;
@@ -2119,7 +2278,130 @@ static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
                       page.name);
     }
     ImGui::SameLine();
+    if (ImGui::Button("Preview Animation")) {
+        clear_composer_preview(app);
+        SimulationState* preview_sim = nullptr;
+        if (app->composer_preview_mutate_sim) {
+            preview_sim = sim;
+        } else {
+            preview_sim = clone_simulation_state(sim);
+            if (!preview_sim) {
+                std::snprintf(app->composer_status, sizeof(app->composer_status), "Preview clone failed");
+            }
+        }
+        if (!preview_sim) {
+            // no sim to preview
+        } else {
+        // Build preview frames (small) without file IO
+        const int max_preview_frames = std::min(page.frames, app->composer_preview_max_frames);
+        int steps_per_frame = std::max(1, app->composer_animation_steps_per_frame);
+        float scale_factor = 1.0f;
+        int target_w = page.res_w;
+        int target_h = page.res_h;
+        int preview_max_w = std::max(240, app->composer_preview_target_width);
+        if (target_w > preview_max_w) {
+            scale_factor = (float)preview_max_w / (float)target_w;
+            target_w = preview_max_w;
+            target_h = (int)std::lround(page.res_h * scale_factor);
+        }
+        bool ok_all = true;
+        Uint64 t0 = SDL_GetPerformanceCounter();
+        for (int i = 0; i < max_preview_frames; ++i) {
+            if (i > 0) {
+                for (int s = 0; s < steps_per_frame; ++s) {
+                    fdtd_step(preview_sim);
+                }
+            }
+            SDL_Surface* frame_surface = render_composer_page_surface(app, render_ctx, preview_sim, scope, app->composer_active_page, nullptr, nullptr);
+            if (!frame_surface) { ok_all = false; break; }
+            SDL_Surface* scaled = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+            if (scaled) {
+                SDL_Rect dst = {0, 0, target_w, target_h};
+                SDL_BlitScaled(frame_surface, nullptr, scaled, &dst);
+            }
+            SDL_FreeSurface(frame_surface);
+            if (!scaled) { ok_all = false; break; }
+            SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, scaled);
+            SDL_FreeSurface(scaled);
+            if (!tex) { ok_all = false; break; }
+            app->composer_preview_frames.push_back(tex);
+        }
+        app->composer_preview_frame_count = (int)app->composer_preview_frames.size();
+        app->composer_preview_frame_idx = 0;
+        app->composer_preview_fps = (float)page.fps;
+        app->composer_preview_playing = ok_all && app->composer_preview_frame_count > 0;
+        app->composer_preview_time = 0.0f;
+        if (app->composer_preview_frame_count > 0) {
+            int w = 0, h = 0;
+            SDL_QueryTexture(app->composer_preview_frames[0], nullptr, nullptr, &w, &h);
+            app->composer_preview_tex_size = ImVec2((float)w, (float)h);
+        }
+        double dt = 0.0;
+        if (SDL_GetPerformanceFrequency() > 0) {
+            Uint64 t1 = SDL_GetPerformanceCounter();
+            dt = (double)(t1 - t0) / (double)SDL_GetPerformanceFrequency();
+        }
+        std::snprintf(app->composer_status,
+                      sizeof(app->composer_status),
+                      ok_all ? "Preview built (%d frames @ %d fps in %.2fs)" : "Preview failed",
+                      app->composer_preview_frame_count,
+                      page.fps,
+                      dt);
+        }
+        if (!app->composer_preview_mutate_sim && preview_sim && preview_sim != sim) {
+            fdtd_free(preview_sim);
+        }
+    }
+    ImGui::SameLine();
     ImGui::TextUnformatted(app->composer_status);
+    if (app->composer_last_export_path[0]) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy export folder")) {
+            SDL_SetClipboardText(app->composer_last_export_path);
+        }
+    }
+    // Preview controls
+    if (!app->composer_preview_frames.empty()) {
+        ImGui::Separator();
+        ImGui::Text("Preview: %d frames @ %.0f fps", app->composer_preview_frame_count, app->composer_preview_fps);
+        if (ImGui::Button(app->composer_preview_playing ? "Pause" : "Play")) {
+            app->composer_preview_playing = !app->composer_preview_playing;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop")) {
+            app->composer_preview_playing = false;
+            app->composer_preview_frame_idx = 0;
+            app->composer_preview_time = 0.0f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear Preview")) {
+            clear_composer_preview(app);
+        }
+        ImGui::SliderInt("Frame", &app->composer_preview_frame_idx, 0, app->composer_preview_frame_count - 1);
+        if (app->composer_preview_playing && app->composer_preview_frame_count > 0) {
+            float dt = ImGui::GetIO().DeltaTime;
+            app->composer_preview_time += dt;
+            float frame_interval = 1.0f / std::max(1.0f, app->composer_preview_fps);
+            while (app->composer_preview_time >= frame_interval) {
+                app->composer_preview_time -= frame_interval;
+                app->composer_preview_frame_idx = (app->composer_preview_frame_idx + 1) % app->composer_preview_frame_count;
+            }
+        }
+        if (app->composer_preview_frame_idx >= 0 && app->composer_preview_frame_idx < app->composer_preview_frame_count) {
+            SDL_Texture* tex = app->composer_preview_frames[app->composer_preview_frame_idx];
+            if (tex) {
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                float scale = 1.0f;
+                if (app->composer_preview_tex_size.x > 1.0f && app->composer_preview_tex_size.y > 1.0f) {
+                    scale = std::min(avail.x / app->composer_preview_tex_size.x, 240.0f / app->composer_preview_tex_size.y);
+                    if (scale > 2.0f) scale = 2.0f;
+                    if (scale < 0.1f) scale = 0.1f;
+                }
+                ImVec2 tex_sz(app->composer_preview_tex_size.x * scale, app->composer_preview_tex_size.y * scale);
+                ImGui::Image((ImTextureID)tex, tex_sz);
+            }
+        }
+    }
 
     ImGui::Separator();
     ImVec2 canvas_size = ImVec2(ImGui::GetContentRegionAvail().x, 480.0f);
@@ -2370,59 +2652,6 @@ static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
         ImGui::TextUnformatted("Select an item to edit properties.");
     }
 
-    ImGui::End();
-}
-
-static void draw_recording_panel(AppState* app, SDL_Renderer* renderer, ImVec2 viewport_size) {
-    if (!app) return;
-    if (!app->show_recording_panel) return;
-    if (!ImGui::Begin("Animation Recording", &app->show_recording_panel)) {
-        ImGui::End();
-        return;
-    }
-    AnimationRecorder& rec = app->recorder;
-    static float duration_sec = 10.0f;
-    static float framerate = 30.0f;
-    static float resolution_scale = 1.0f;
-    static int format_idx = 0;
-
-    ImGui::SliderFloat("Duration (s)", &duration_sec, 1.0f, 60.0f, "%.1f");
-    ImGui::SliderFloat("Framerate", &framerate, 10.0f, 60.0f, "%.0f fps");
-    ImGui::SliderFloat("Resolution Scale", &resolution_scale, 0.5f, 2.0f, "%.1fx");
-    const char* formats[] = {"GIF (ffmpeg, fallback PNG)", "MP4 (ffmpeg, fallback PNG)", "PNG Sequence"};
-    ImGui::Combo("Format", &format_idx, formats, IM_ARRAYSIZE(formats));
-    ImGui::Checkbox("Auto-play (n/a in stub)", &rec.auto_play);
-
-    ImGui::Separator();
-    if (rec.state == RECORDING_IDLE || rec.state == RECORDING_ERROR) {
-        if (ImGui::Button("Start Recording", ImVec2(-1, 0))) {
-            int w = 0, h = 0;
-            SDL_GetRendererOutputSize(renderer, &w, &h);
-            if (w < 1) w = (int)viewport_size.x;
-            if (h < 1) h = (int)viewport_size.y;
-            start_recording(app, (RecordingFormat)format_idx, framerate, (int)duration_sec, resolution_scale, w, h);
-        }
-    } else if (rec.state == RECORDING_ACTIVE) {
-        if (ImGui::Button("Stop", ImVec2(-1, 0))) {
-            stop_recording(app);
-        }
-    } else if (rec.state == RECORDING_PROCESSING) {
-        ImGui::TextUnformatted("Processing...");
-    }
-
-    ImGui::Separator();
-    ImGui::Text("Status: %s", rec.status_message);
-    ImGui::ProgressBar(rec.progress, ImVec2(-1, 0));
-    const char* out_hint = rec.output_path[0]
-                               ? rec.output_path
-                               : "recordings/<timestamp>.(gif|mp4|png)";
-    ImGui::TextWrapped("Output: %s", out_hint);
-    if (rec.output_path[0]) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Copy path")) {
-            SDL_SetClipboardText(rec.output_path);
-        }
-    }
     ImGui::End();
 }
 
@@ -2808,21 +3037,6 @@ static SDL_Surface* capture_frame(SDL_Renderer* renderer,
     return surface;
 }
 
-static bool export_png_sequence(AnimationRecorder* rec) {
-    if (!rec || rec->frames.empty()) return false;
-    std::filesystem::create_directories("recordings");
-    std::string dir = std::string(rec->output_path) + "_frames";
-    std::filesystem::create_directories(dir);
-    for (size_t i = 0; i < rec->frames.size(); ++i) {
-        char frame_path[512];
-        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir.c_str(), i);
-        if (SDL_SaveBMP(rec->frames[i], frame_path) != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static std::string ffmpeg_base_dir() {
     char* base = SDL_GetBasePath();
     if (!base) return std::string();
@@ -2890,6 +3104,303 @@ static bool has_ffmpeg() {
     return !ffmpeg_command().empty();
 }
 
+static bool save_surface_png(const std::filesystem::path& path, SDL_Surface* surf) {
+    if (!surf) return false;
+    SDL_Surface* conv = SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_RGBA32, 0);
+    if (!conv) return false;
+    int ok = stbi_write_png(path.string().c_str(),
+                            conv->w,
+                            conv->h,
+                            4,
+                            conv->pixels,
+                            conv->pitch);
+    SDL_FreeSurface(conv);
+    return ok == 1;
+}
+
+static void clear_composer_preview(AppState* app) {
+    if (!app) return;
+    if (app->composer_preview_tex) {
+        SDL_DestroyTexture(app->composer_preview_tex);
+        app->composer_preview_tex = nullptr;
+    }
+    for (SDL_Texture* t : app->composer_preview_frames) {
+        if (t) SDL_DestroyTexture(t);
+    }
+    app->composer_preview_frames.clear();
+    app->composer_preview_frame_idx = 0;
+    app->composer_preview_frame_count = 0;
+    app->composer_preview_playing = false;
+    app->composer_preview_time = 0.0f;
+    app->composer_preview_tex_size = ImVec2(0, 0);
+    app->composer_preview_fps = 30.0f;
+}
+
+static SimulationState* clone_simulation_state(const SimulationState* src) {
+    if (!src) return nullptr;
+    SimulationState* dst = fdtd_init(&src->config);
+    if (!dst) return nullptr;
+    int nxy = src->nx * src->ny;
+    auto copy_buf = [](void* dstb, const void* srcb, size_t bytes) {
+        if (dstb && srcb && bytes > 0) std::memcpy(dstb, srcb, bytes);
+    };
+    copy_buf(dst->Ez_data, src->Ez_data, sizeof(double) * nxy);
+    copy_buf(dst->Hx_data, src->Hx_data, sizeof(double) * nxy);
+    copy_buf(dst->Hy_data, src->Hy_data, sizeof(double) * nxy);
+    copy_buf(dst->Ez_old_data, src->Ez_old_data, sizeof(double) * nxy);
+    copy_buf(dst->psi_Ezx_data, src->psi_Ezx_data, sizeof(double) * nxy);
+    copy_buf(dst->psi_Ezy_data, src->psi_Ezy_data, sizeof(double) * nxy);
+    copy_buf(dst->psi_Hyx_data, src->psi_Hyx_data, sizeof(double) * nxy);
+    copy_buf(dst->psi_Hxy_data, src->psi_Hxy_data, sizeof(double) * nxy);
+    copy_buf(dst->epsr_data, src->epsr_data, sizeof(double) * nxy);
+    copy_buf(dst->sigma_map_data, src->sigma_map_data, sizeof(double) * nxy);
+    copy_buf(dst->tag_grid_data, src->tag_grid_data, sizeof(unsigned char) * nxy);
+    dst->timestep = src->timestep;
+    dst->freq = src->freq;
+    dst->step_Ez_absmax = src->step_Ez_absmax;
+    dst->ports_on = src->ports_on;
+    std::memcpy(dst->sources, src->sources, sizeof(dst->sources));
+    for (int i = 0; i < MAX_PORTS; ++i) {
+        dst->ports[i].active = src->ports[i].active;
+        dst->ports[i].head = src->ports[i].head;
+        dst->ports[i].n = src->ports[i].n;
+        dst->ports[i].len = src->ports[i].len;
+        dst->ports[i].x = src->ports[i].x;
+        dst->ports[i].y0 = src->ports[i].y0;
+        dst->ports[i].y1 = src->ports[i].y1;
+        copy_buf(dst->ports[i].V, src->ports[i].V, sizeof(double) * src->ports[i].n);
+        copy_buf(dst->ports[i].I, src->ports[i].I, sizeof(double) * src->ports[i].n);
+    }
+    // CPML buffers
+    copy_buf(dst->cpml.kx, src->cpml.kx, sizeof(double) * dst->cpml.kx_capacity);
+    copy_buf(dst->cpml.bx, src->cpml.bx, sizeof(double) * dst->cpml.kx_capacity);
+    copy_buf(dst->cpml.cx, src->cpml.cx, sizeof(double) * dst->cpml.kx_capacity);
+    copy_buf(dst->cpml.ky, src->cpml.ky, sizeof(double) * dst->cpml.ky_capacity);
+    copy_buf(dst->cpml.by, src->cpml.by, sizeof(double) * dst->cpml.ky_capacity);
+    copy_buf(dst->cpml.cy, src->cpml.cy, sizeof(double) * dst->cpml.ky_capacity);
+    dst->cpml.enabled = src->cpml.enabled;
+    dst->cpml.thickness = src->cpml.thickness;
+    dst->cpml.preset_idx = src->cpml.preset_idx;
+    dst->cpml.sigma_max = src->cpml.sigma_max;
+    dst->cpml.kappa_max = src->cpml.kappa_max;
+    dst->cpml.alpha_max = src->cpml.alpha_max;
+    dst->cpml.boundary_type = src->cpml.boundary_type;
+    return dst;
+}
+
+// Minimal JSON parser for composer layouts (expects array "pages" with fields we use)
+static bool composer_load_layout_json(AppState* app, const char* path) {
+    if (!app || !path) return false;
+    std::error_code ec;
+    std::string data;
+    if (!std::filesystem::exists(path, ec)) return false;
+    {
+        std::ifstream f(path, std::ios::in | std::ios::binary);
+        if (!f) return false;
+        std::ostringstream oss;
+        oss << f.rdbuf();
+        data = oss.str();
+    }
+    if (data.empty()) return false;
+    // Very naive JSON-ish reader for our saved format. This is intentionally permissive:
+    // it looks for keys and brackets without needing strict JSON.
+    auto read_int = [&](const std::string& key, const std::string& src, size_t from, int defv) -> int {
+        std::string pat = "\"" + key + "\"";
+        size_t pos = src.find(pat, from);
+        if (pos == std::string::npos) return defv;
+        pos = src.find(":", pos);
+        if (pos == std::string::npos) return defv;
+        size_t start = src.find_first_of("-0123456789", pos + 1);
+        if (start == std::string::npos) return defv;
+        size_t end = src.find_first_not_of("0123456789", start);
+        return std::atoi(src.substr(start, end - start).c_str());
+    };
+    auto read_float = [&](const std::string& key, const std::string& src, size_t from, float defv) -> float {
+        std::string pat = "\"" + key + "\"";
+        size_t pos = src.find(pat, from);
+        if (pos == std::string::npos) return defv;
+        pos = src.find(":", pos);
+        if (pos == std::string::npos) return defv;
+        size_t start = src.find_first_of("-0123456789.", pos + 1);
+        if (start == std::string::npos) return defv;
+        size_t end = src.find_first_not_of("0123456789.", start);
+        return std::atof(src.substr(start, end - start).c_str());
+    };
+    auto read_string = [&](const std::string& key, const std::string& src, size_t from) -> std::string {
+        std::string pat = "\"" + key + "\"";
+        size_t pos = src.find(pat, from);
+        if (pos == std::string::npos) return std::string();
+        pos = src.find(":", pos);
+        if (pos == std::string::npos) return std::string();
+        size_t start = src.find("\"", pos);
+        if (start == std::string::npos) return std::string();
+        size_t end = src.find("\"", start + 1);
+        if (end == std::string::npos) return std::string();
+        return src.substr(start + 1, end - start - 1);
+    };
+    auto read_vec2 = [&](const std::string& key, const std::string& src, size_t from, ImVec2 defv) -> ImVec2 {
+        std::string pat = "\"" + key + "\"";
+        size_t pos = src.find(pat, from);
+        if (pos == std::string::npos) return defv;
+        size_t lb = src.find("[", pos);
+        size_t rb = (lb != std::string::npos) ? src.find("]", lb) : std::string::npos;
+        if (lb == std::string::npos || rb == std::string::npos) return defv;
+        float a = defv.x, b = defv.y;
+        std::sscanf(src.substr(lb + 1, rb - lb - 1).c_str(), "%f , %f", &a, &b);
+        return ImVec2(a, b);
+    };
+    auto read_vec4 = [&](const std::string& key, const std::string& src, size_t from, ImVec4 defv) -> ImVec4 {
+        std::string pat = "\"" + key + "\"";
+        size_t pos = src.find(pat, from);
+        if (pos == std::string::npos) return defv;
+        size_t lb = src.find("[", pos);
+        size_t rb = (lb != std::string::npos) ? src.find("]", lb) : std::string::npos;
+        if (lb == std::string::npos || rb == std::string::npos) return defv;
+        float a = defv.x, b = defv.y, c = defv.z, d = defv.w;
+        std::sscanf(src.substr(lb + 1, rb - lb - 1).c_str(), "%f , %f , %f , %f", &a, &b, &c, &d);
+        return ImVec4(a, b, c, d);
+    };
+    auto read_bool = [&](const std::string& key, const std::string& src, size_t from, bool defv) -> bool {
+        return read_int(key, src, from, defv ? 1 : 0) != 0;
+    };
+
+    size_t pages_pos = data.find("\"pages\"");
+    if (pages_pos == std::string::npos) return false;
+    size_t arr_pos = data.find("[", pages_pos);
+    if (arr_pos == std::string::npos) return false;
+
+    std::vector<ComposerPage> loaded;
+    int max_item_id = 1;
+    size_t pos = arr_pos;
+    while (true) {
+        size_t obj_start = data.find("{", pos);
+        if (obj_start == std::string::npos) break;
+        int brace = 0;
+        size_t obj_end = std::string::npos;
+        for (size_t i = obj_start; i < data.size(); ++i) {
+            if (data[i] == '{') brace++;
+            else if (data[i] == '}') {
+                brace--;
+                if (brace == 0) {
+                    obj_end = i;
+                    break;
+                }
+            }
+        }
+        if (obj_end == std::string::npos) break;
+        std::string obj = data.substr(obj_start, obj_end - obj_start + 1);
+
+        ComposerPage p{};
+        std::snprintf(p.name, sizeof(p.name), "Page %zu", loaded.size() + 1);
+        std::string pname = read_string("name", obj, 0);
+        if (!pname.empty()) std::snprintf(p.name, sizeof(p.name), "%s", pname.c_str());
+        p.res_w = read_int("res_w", obj, 0, 1280);
+        p.res_h = read_int("res_h", obj, 0, 720);
+        std::string oname = read_string("output_name", obj, 0);
+        if (!oname.empty()) std::snprintf(p.output_name, sizeof(p.output_name), "%s", oname.c_str());
+        p.output_format = read_int("output_format", obj, 0, 0);
+        p.fps = read_int("fps", obj, 0, 30);
+        p.frames = read_int("frames", obj, 0, 60);
+        p.video_kbps = read_int("video_kbps", obj, 0, 4000);
+        p.transparent_bg = read_bool("transparent_bg", obj, 0, false);
+        ImVec4 bg_from_vec = read_vec4("bg", obj, 0, ImVec4(-1, -1, -1, -1));
+        if (bg_from_vec.x >= 0.0f) {
+            p.bg = bg_from_vec;
+        } else {
+            float bgx = read_float("bg_r", obj, 0, 0.08f);
+            float bgy = read_float("bg_g", obj, 0, 0.08f);
+            float bgz = read_float("bg_b", obj, 0, 0.10f);
+            float bga = read_float("bg_a", obj, 0, 1.0f);
+            p.bg = ImVec4(bgx, bgy, bgz, bga);
+        }
+
+        // Items
+        size_t items_pos = obj.find("\"items\"");
+        if (items_pos != std::string::npos) {
+            size_t arr_start = obj.find("[", items_pos);
+            if (arr_start != std::string::npos) {
+                size_t arr_end = std::string::npos;
+                int arr_depth = 0;
+                for (size_t i = arr_start; i < obj.size(); ++i) {
+                    if (obj[i] == '[') arr_depth++;
+                    else if (obj[i] == ']') {
+                        arr_depth--;
+                        if (arr_depth == 0) {
+                            arr_end = i;
+                            break;
+                        }
+                    }
+                }
+                size_t cursor = arr_start + 1;
+                while (arr_end != std::string::npos && cursor < arr_end) {
+                    size_t it_start = obj.find("{", cursor);
+                    if (it_start == std::string::npos || it_start > arr_end) break;
+                    int it_depth = 0;
+                    size_t it_end = std::string::npos;
+                    for (size_t i = it_start; i <= arr_end; ++i) {
+                        if (obj[i] == '{') it_depth++;
+                        else if (obj[i] == '}') {
+                            it_depth--;
+                            if (it_depth == 0) {
+                                it_end = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (it_end == std::string::npos) break;
+                    std::string item_str = obj.substr(it_start, it_end - it_start + 1);
+                    ComposerItem it{};
+                    it.id = read_int("id", item_str, 0, max_item_id++);
+                    max_item_id = std::max(max_item_id, it.id + 1);
+                    std::string tname = read_string("type", item_str, 0);
+                    if (!tname.empty()) {
+                        std::string lower = tname;
+                        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                        if (lower.find("field") != std::string::npos) it.type = COMPOSER_FIELD_VIEW;
+                        else if (lower.find("legend") != std::string::npos) it.type = COMPOSER_LEGEND;
+                        else if (lower.find("scope") != std::string::npos) it.type = COMPOSER_SCOPE;
+                        else if (lower.find("fft") != std::string::npos) it.type = COMPOSER_FFT;
+                        else if (lower.find("region") != std::string::npos) it.type = COMPOSER_REGION;
+                        else if (lower.find("meas") != std::string::npos) it.type = COMPOSER_MEAS;
+                        else if (lower.find("smith") != std::string::npos) it.type = COMPOSER_SMITH;
+                    } else {
+                        it.type = (ComposerItemType)read_int("type", item_str, 0, (int)COMPOSER_FIELD_VIEW);
+                    }
+                    if (it.type < COMPOSER_FIELD_VIEW || it.type > COMPOSER_SMITH) {
+                        it.type = COMPOSER_FIELD_VIEW;
+                    }
+                    it.viewport_idx = read_int("viewport_idx", item_str, 0, 0);
+                    it.viewport_idx = read_int("viewport", item_str, 0, it.viewport_idx);
+                    it.viewport_idx = read_int("vp", item_str, 0, it.viewport_idx);
+                    it.pos = read_vec2("pos", item_str, 0, ImVec2(80, 80));
+                    it.size = read_vec2("size", item_str, 0, ImVec2(320, 240));
+                    if (it.size.x <= 0.0f) it.size.x = read_float("w", item_str, 0, 320.0f);
+                    if (it.size.y <= 0.0f) it.size.y = read_float("h", item_str, 0, 240.0f);
+                    ImVec4 reg = read_vec4("region", item_str, 0, ImVec4(0, 0, 1, 1));
+                    ImVec4 reg_norm = read_vec4("region_norm", item_str, 0, reg);
+                    it.region_norm = reg_norm;
+                    it.selected = false;
+                    p.items.push_back(it);
+                    cursor = it_end + 1;
+                }
+            }
+        }
+
+        loaded.push_back(p);
+        pos = obj_end + 1;
+        size_t next_obj = data.find("{", pos);
+        size_t closing = data.find("]", pos);
+        if (closing != std::string::npos && (next_obj == std::string::npos || closing < next_obj)) break;
+    }
+    if (!loaded.empty()) {
+        app->composer_pages = loaded;
+        app->composer_active_page = 0;
+        app->composer_next_item_id = max_item_id;
+        return true;
+    }
+    return false;
+}
+
 static std::string join_args(const std::vector<std::string>& args) {
     std::string out;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -2921,319 +3432,6 @@ static void log_ffmpeg_attempt(const char* cmd, int rc) {
     if (!f) return;
     f << "rc=" << rc << "\n";
     f << "cmd:\n" << cmd << "\n";
-}
-
-static bool write_temp_sequence(const AnimationRecorder* rec, const char* dir) {
-    if (!rec || !dir) return false;
-#ifdef _WIN32
-    _mkdir("recordings");
-    _mkdir(dir);
-#else
-    mkdir("recordings", 0755);
-    mkdir(dir, 0755);
-#endif
-    for (size_t i = 0; i < rec->frames.size(); ++i) {
-        char frame_path[512];
-        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir, i);
-        if (SDL_SaveBMP(rec->frames[i], frame_path) != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void cleanup_temp_sequence(const char* dir, size_t count) {
-    if (!dir) return;
-    for (size_t i = 0; i < count; ++i) {
-        char frame_path[512];
-        std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04zu.bmp", dir, i);
-        std::remove(frame_path);
-    }
-#ifdef _WIN32
-    _rmdir(dir);
-#else
-    rmdir(dir);
-#endif
-}
-
-static bool export_gif(AnimationRecorder* rec) {
-    if (!rec || rec->frames.empty()) return false;
-    const std::string ffmpeg_cmd = ffmpeg_command();
-    bool ffmpeg_ok = !ffmpeg_cmd.empty();
-
-    if (ffmpeg_ok) {
-        char suffix[32];
-        std::snprintf(suffix, sizeof(suffix), "temp_gif_%ld", (long)time(nullptr));
-        std::filesystem::path temp_dir_rel = std::filesystem::path("recordings") / suffix;
-        std::string temp_dir_str = temp_dir_rel.string();
-        if (!write_temp_sequence(rec, temp_dir_str.c_str())) {
-            cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
-            return false;
-        }
-        std::filesystem::path temp_dir_abs = std::filesystem::absolute(temp_dir_rel);
-        std::string frames_pat = (temp_dir_abs / "frame_%04d.bmp").string();
-        std::vector<std::string> args;
-        args.push_back(ffmpeg_cmd);
-        args.push_back("-y");
-        args.push_back("-framerate");
-        args.push_back(std::to_string(rec->framerate));
-        args.push_back("-i");
-        args.push_back(frames_pat);
-        args.push_back("-vf");
-        {
-            char vfbuf[128];
-            std::snprintf(vfbuf, sizeof(vfbuf), "fps=%.2f,scale=iw:ih:flags=lanczos", rec->framerate);
-            args.emplace_back(vfbuf);
-        }
-        args.push_back(rec->output_path);
-
-        int rc = run_ffmpeg(args);
-        cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
-        std::string cmd_logged = join_args(args);
-        log_ffmpeg_attempt(cmd_logged.c_str(), rc);
-        if (rc == 0) return true;
-        std::snprintf(rec->status_message,
-                      sizeof(rec->status_message),
-                      "FFmpeg GIF failed (rc=%d), saved PNG sequence", rc);
-        return export_png_sequence(rec);
-    }
-
-    std::snprintf(rec->status_message,
-                  sizeof(rec->status_message),
-                  "FFmpeg missing, saved PNG sequence");
-    return export_png_sequence(rec);
-}
-
-static bool export_mp4(AnimationRecorder* rec) {
-    if (!rec || rec->frames.empty()) return false;
-    const std::string ffmpeg_cmd = ffmpeg_command();
-    bool ffmpeg_ok = !ffmpeg_cmd.empty();
-
-    if (!ffmpeg_ok) {
-        std::filesystem::path alt = std::filesystem::path(rec->output_path).replace_extension(".gif");
-        std::string alt_str = alt.string();
-        std::snprintf(rec->output_path, sizeof(rec->output_path), "%s", alt_str.c_str());
-        std::snprintf(rec->status_message,
-                      sizeof(rec->status_message),
-                      "FFmpeg missing, saved GIF instead");
-        return export_gif(rec);
-    }
-
-    std::filesystem::path temp_dir_rel = std::filesystem::path("recordings") / "temp_mp4";
-    std::string temp_dir_str = temp_dir_rel.string();
-    if (!write_temp_sequence(rec, temp_dir_str.c_str())) {
-        cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
-        return false;
-    }
-    std::filesystem::path temp_dir_abs = std::filesystem::absolute(temp_dir_rel);
-    std::string frames_pat = (temp_dir_abs / "frame_%04d.bmp").string();
-    char cmd[1024];
-#ifdef _WIN32
-    std::snprintf(cmd,
-                  sizeof(cmd),
-                  "%s -y -framerate %.2f -i \"%s\" -c:v mpeg4 -qscale:v 2 -pix_fmt yuv420p \"%s\" >NUL 2>&1",
-                  ffmpeg_cmd.c_str(),
-                  rec->framerate,
-                  frames_pat.c_str(),
-                  rec->output_path);
-#else
-    std::snprintf(cmd,
-                  sizeof(cmd),
-                  "%s -y -framerate %.2f -i \"%s\" -c:v mpeg4 -qscale:v 2 -pix_fmt yuv420p \"%s\" >/dev/null 2>&1",
-                  ffmpeg_cmd.c_str(),
-                  rec->framerate,
-                  frames_pat.c_str(),
-                  rec->output_path);
-#endif
-    int rc = std::system(cmd);
-    cleanup_temp_sequence(temp_dir_str.c_str(), rec->frames.size());
-    log_ffmpeg_attempt(cmd, rc);
-    if (rc != 0) {
-        std::filesystem::path alt = std::filesystem::path(rec->output_path).replace_extension(".gif");
-        std::string alt_str = alt.string();
-        std::snprintf(rec->output_path, sizeof(rec->output_path), "%s", alt_str.c_str());
-        std::snprintf(rec->status_message,
-                      sizeof(rec->status_message),
-                      "FFmpeg MP4 failed (cmd: %s), saved GIF instead",
-                      ffmpeg_cmd.c_str());
-        return export_gif(rec);
-    }
-    return true;
-}
-
-static void clear_recording_frames(AnimationRecorder* rec) {
-    if (!rec) return;
-    for (SDL_Surface* s : rec->frames) {
-        SDL_FreeSurface(s);
-    }
-    rec->frames.clear();
-}
-
-static void start_recording(AppState* app,
-                            RecordingFormat format,
-                            float fps,
-                            int duration_sec,
-                            float scale_factor,
-                            int output_w,
-                            int output_h) {
-    if (!app) return;
-    AnimationRecorder& rec = app->recorder;
-    rec.state = RECORDING_ACTIVE;
-    rec.format = format;
-    rec.framerate = std::clamp(fps, 10.0f, 60.0f);
-    rec.target_frames = (int)(rec.framerate * duration_sec);
-    if (rec.target_frames < 1) rec.target_frames = 1;
-    rec.frame_count = 0;
-    rec.resolution_scale = std::clamp(scale_factor, 0.5f, 2.0f);
-    rec.capture_width = output_w;
-    rec.capture_height = output_h;
-    rec.progress = 0.0f;
-    std::error_code mkdir_ec;
-    std::filesystem::path out_dir = std::filesystem::absolute("recordings");
-    std::filesystem::create_directories(out_dir, mkdir_ec);
-    clear_recording_frames(&rec);
-    rec.frames.reserve(rec.target_frames);
-
-    time_t now = time(nullptr);
-    struct tm* tm_info = localtime(&now);
-    const char* ext = (format == RECORDING_GIF) ? "gif" :
-                      (format == RECORDING_MP4) ? "mp4" : "png";
-    char fname[128];
-    std::snprintf(fname,
-                  sizeof(fname),
-                  "emwave_%04d%02d%02d_%02d%02d%02d.%s",
-                  tm_info->tm_year + 1900,
-                  tm_info->tm_mon + 1,
-                  tm_info->tm_mday,
-                  tm_info->tm_hour,
-                  tm_info->tm_min,
-                  tm_info->tm_sec,
-                  ext);
-    std::filesystem::path out_path = out_dir / fname;
-    std::string out_str = out_path.string();
-    std::snprintf(rec.output_path, sizeof(rec.output_path), "%s", out_str.c_str());
-    std::snprintf(rec.status_message,
-                  sizeof(rec.status_message),
-                  "Recording: 0/%d frames", rec.target_frames);
-    ui_log_add(app,
-               "Recording started: %d frames @ %.0f fps -> %s",
-               rec.target_frames,
-               rec.framerate,
-               rec.output_path);
-    g_record_last_capture_time = 0.0;
-}
-
-static void stop_recording(AppState* app) {
-    if (!app) return;
-    AnimationRecorder& rec = app->recorder;
-    if (rec.state != RECORDING_ACTIVE) return;
-    rec.state = RECORDING_PROCESSING;
-    std::snprintf(rec.status_message,
-                  sizeof(rec.status_message),
-                  "Processing %d frames...", rec.frame_count);
-
-    bool success = false;
-    switch (rec.format) {
-        case RECORDING_GIF:
-            success = export_gif(&rec);
-            break;
-        case RECORDING_MP4:
-            success = export_mp4(&rec);
-            break;
-        case RECORDING_PNG_SEQUENCE:
-        default:
-            success = export_png_sequence(&rec);
-            break;
-    }
-
-    if (success) {
-        rec.state = rec.composer_preview_mode ? RECORDING_IDLE : RECORDING_IDLE;
-        std::snprintf(rec.status_message,
-                      sizeof(rec.status_message),
-                      "Saved: %s", rec.output_path);
-        ui_log_add(app, "Animation saved: %s", rec.output_path);
-        if (rec.composer_preview_mode) {
-            rec.composer_preview_done = true;
-            rec.composer_preview_mode = false;
-        }
-        if (rec.auto_play) {
-#ifdef _WIN32
-            ShellExecuteA(NULL, "open", rec.output_path, NULL, NULL, SW_SHOWNORMAL);
-#elif __APPLE__
-            char cmd[512];
-            std::snprintf(cmd, sizeof(cmd), "open \"%s\"", rec.output_path);
-            std::system(cmd);
-#else
-            char cmd[512];
-            std::snprintf(cmd, sizeof(cmd), "xdg-open \"%s\"", rec.output_path);
-            std::system(cmd);
-#endif
-        }
-    } else {
-        rec.state = RECORDING_ERROR;
-        std::snprintf(rec.status_message,
-                      sizeof(rec.status_message),
-                      "Error: failed to encode");
-        ui_log_add(app, "Recording failed to encode");
-    }
-    clear_recording_frames(&rec);
-    g_record_last_capture_time = 0.0;
-}
-
-static void capture_frame_if_recording(AppState* app,
-                                       SDL_Renderer* renderer,
-                                       double now_seconds,
-                                       SDL_Texture* override_texture) {
-    if (!app || !renderer) return;
-    AnimationRecorder& rec = app->recorder;
-    if (rec.state != RECORDING_ACTIVE) return;
-    double frame_interval = 1.0 / rec.framerate;
-    if (now_seconds - g_record_last_capture_time + 1e-6 < frame_interval) return;
-    g_record_last_capture_time = now_seconds;
-
-    SDL_Surface* frame = nullptr;
-    if (override_texture) {
-        int tex_w = rec.capture_width;
-        int tex_h = rec.capture_height;
-        if (tex_w < 2) tex_w = 2;
-        if (tex_h < 2) tex_h = 2;
-        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, tex_w, tex_h, 32, SDL_PIXELFORMAT_RGBA32);
-        if (surf) {
-            SDL_Texture* old_target = SDL_GetRenderTarget(renderer);
-            SDL_SetRenderTarget(renderer, override_texture);
-            SDL_Rect src = {0, 0, tex_w, tex_h};
-            if (SDL_RenderReadPixels(renderer, &src, surf->format->format, surf->pixels, surf->pitch) == 0) {
-                frame = surf;
-            } else {
-                SDL_FreeSurface(surf);
-            }
-            SDL_SetRenderTarget(renderer, old_target);
-        }
-    } else {
-        frame = capture_frame(renderer,
-                              rec.capture_width,
-                              rec.capture_height,
-                              rec.resolution_scale);
-    }
-    if (!frame) {
-        rec.state = RECORDING_ERROR;
-        std::snprintf(rec.status_message,
-                      sizeof(rec.status_message),
-                      "Error: capture failed");
-        return;
-    }
-    rec.frames.push_back(frame);
-    rec.frame_count++;
-    rec.progress = (float)rec.frame_count / (float)rec.target_frames;
-    std::snprintf(rec.status_message,
-                  sizeof(rec.status_message),
-                  "Recording: %d/%d (%.0f%%)",
-                  rec.frame_count,
-                  rec.target_frames,
-                  rec.progress * 100.0f);
-    if (rec.frame_count >= rec.target_frames) {
-        stop_recording(app);
-    }
 }
 
 static void free_source_expression(Source* s) {
@@ -5224,6 +5422,47 @@ static void draw_log_panel(AppState* app) {
 }
 
 int main(int argc, char** argv) {
+    HeadlessComposerOpts headless{};
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (std::strcmp(a, "--composer-headless") == 0) {
+            headless.enabled = true;
+        } else if (std::strncmp(a, "--ch-format=", 12) == 0) {
+            const char* v = a + 12;
+            if (_stricmp(v, "bmp") == 0) headless.fmt = 0;
+            else if (_stricmp(v, "png") == 0) headless.fmt = 1;
+            else if (_stricmp(v, "mp4") == 0) headless.fmt = 2;
+            else if (_stricmp(v, "gif") == 0) headless.fmt = 3;
+        } else if (std::strncmp(a, "--ch-fps=", 9) == 0) {
+            headless.fps = std::atoi(a + 9);
+        } else if (std::strncmp(a, "--ch-frames=", 12) == 0) {
+            headless.frames = std::atoi(a + 12);
+        } else if (std::strncmp(a, "--ch-output=", 12) == 0) {
+            std::snprintf(headless.output_name, sizeof(headless.output_name), "%s", a + 12);
+        } else if (std::strncmp(a, "--ch-width=", 11) == 0) {
+            headless.res_w = std::atoi(a + 11);
+        } else if (std::strncmp(a, "--ch-height=", 12) == 0) {
+            headless.res_h = std::atoi(a + 12);
+        } else if (std::strncmp(a, "--ch-template=", 14) == 0) {
+            const char* v = a + 14;
+            if (_stricmp(v, "blank") == 0) headless.tmpl_idx = 0;
+            else if (_stricmp(v, "field+legend") == 0) headless.tmpl_idx = 1;
+            else if (_stricmp(v, "field+scope") == 0) headless.tmpl_idx = 2;
+            else if (_stricmp(v, "field+fft+legend") == 0) headless.tmpl_idx = 3;
+        } else if (std::strncmp(a, "--ch-layout=", 12) == 0) {
+            std::snprintf(headless.layout_path, sizeof(headless.layout_path), "%s", a + 12);
+            headless.enabled = true;
+            headless.tmpl_idx = -2; // signal external layout load
+        }
+    }
+    if (headless.fmt < 0 || headless.fmt > 3) headless.fmt = 1;
+    if (headless.fps <= 0) headless.fps = 30;
+    if (headless.frames <= 0) headless.frames = 60;
+    if (headless.res_w <= 0) headless.res_w = 1280;
+    if (headless.res_h <= 0) headless.res_h = 720;
+    if (headless.output_name[0] == '\0') {
+        std::snprintf(headless.output_name, sizeof(headless.output_name), "composer_page_1");
+    }
     SimulationBootstrap bootstrap;
     int bootstrap_status = simulation_bootstrap_from_args(argc, argv, &bootstrap);
     if (bootstrap_status == 0) {
@@ -5343,21 +5582,6 @@ int main(int argc, char** argv) {
     app.active_viewport_idx = 0;
     app.sync_zoom = false;
     app.sync_pan = false;
-    app.recorder.state = RECORDING_IDLE;
-    app.recorder.format = RECORDING_GIF;
-    app.recorder.framerate = 30.0f;
-    app.recorder.target_frames = 0;
-    app.recorder.frame_count = 0;
-    app.recorder.resolution_scale = 1.0f;
-    app.recorder.capture_width = 0;
-    app.recorder.capture_height = 0;
-    app.recorder.output_path[0] = '\0';
-    app.recorder.auto_play = false;
-    app.recorder.progress = 0.0f;
-    std::snprintf(app.recorder.status_message,
-                  sizeof(app.recorder.status_message),
-                  "Recording idle");
-    app.show_recording_panel = false;
     app.area_mode = false;
     app.annotation_mode = false;
     app.temp_annotation.text[0] = '\0';
@@ -5478,6 +5702,50 @@ int main(int argc, char** argv) {
         material_library_shutdown();
         simulation_bootstrap_shutdown(&bootstrap);
         return 1;
+    }
+
+    if (headless.enabled) {
+        ensure_composer_initialized(&app);
+        if (headless.tmpl_idx == -2 && headless.layout_path[0]) {
+            if (!composer_load_layout_json(&app, headless.layout_path)) {
+                ui_log_add(&app, "Headless: failed to load layout '%s'", headless.layout_path);
+            }
+        } else if (headless.tmpl_idx >= 0) {
+            composer_apply_template(&app, app.composer_pages[0], headless.tmpl_idx);
+        }
+        ComposerPage& hp = app.composer_pages[0];
+        hp.output_format = headless.fmt;
+        hp.fps = std::clamp(headless.fps, 5, 60);
+        hp.frames = std::max(1, headless.frames);
+        hp.res_w = headless.res_w;
+        hp.res_h = headless.res_h;
+        std::snprintf(hp.output_name, sizeof(hp.output_name), "%s", headless.output_name);
+        // Log summary for headless runs
+        int total_items = 0;
+        for (const auto& p : app.composer_pages) total_items += (int)p.items.size();
+        std::printf("Headless composer: pages=%zu items=%d fmt=%d fps=%d frames=%d res=%dx%d\n",
+                    app.composer_pages.size(),
+                    total_items,
+                    hp.output_format,
+                    hp.fps,
+                    hp.frames,
+                    hp.res_w,
+                    hp.res_h);
+        bool ok = true;
+        if (hp.frames > 1) {
+            ok = export_composer_animation(&app, render, sim, &scope, 0, false);
+        } else {
+            ok = export_composer_page(&app, render, sim, &scope, 0);
+        }
+        scope_free(&scope);
+        ImGui_ImplSDLRenderer2_Shutdown();
+        ImGui_ImplSDL2_Shutdown();
+        ImPlot::DestroyContext();
+        ImGui::DestroyContext();
+        render_free(render);
+        material_library_shutdown();
+        simulation_bootstrap_shutdown(&bootstrap);
+        return ok ? 0 : 1;
     }
 
     bool running = true;
@@ -6948,11 +7216,88 @@ int main(int argc, char** argv) {
                 }
                 if (ImGui::MenuItem("Measurement History...", nullptr, &app.show_measurement_history)) {
                 }
+                if (paused) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Save Scope Snapshot (PNG)")) {
+                        std::filesystem::create_directories("recordings");
+                        SDL_Surface* surf = composer_render_scope_surface(&app, render, &scope, 800, 480);
+                        if (surf) {
+                            time_t now = time(nullptr);
+                            struct tm* tm_info = localtime(&now);
+                            char fname[128];
+                            std::snprintf(fname,
+                                          sizeof(fname),
+                                          "scope_%04d%02d%02d_%02d%02d%02d.png",
+                                          tm_info->tm_year + 1900,
+                                          tm_info->tm_mon + 1,
+                                          tm_info->tm_mday,
+                                          tm_info->tm_hour,
+                                          tm_info->tm_min,
+                                          tm_info->tm_sec);
+                            std::filesystem::path outp = std::filesystem::path("recordings") / fname;
+                            if (save_surface_png(outp, surf)) {
+                                std::snprintf(app.composer_status, sizeof(app.composer_status), "Saved scope: %s", outp.string().c_str());
+                                std::snprintf(app.composer_last_export_path, sizeof(app.composer_last_export_path), "%s", outp.parent_path().string().c_str());
+                                ui_log_add(&app, "Saved scope snapshot: %s", outp.string().c_str());
+                            }
+                            SDL_FreeSurface(surf);
+                        }
+                    }
+                    if (ImGui::MenuItem("Save FFT Snapshot (PNG)")) {
+                        std::filesystem::create_directories("recordings");
+                        SDL_Surface* surf = composer_render_fft_surface(&app, render, sim, &scope, 800, 480);
+                        if (surf) {
+                            time_t now = time(nullptr);
+                            struct tm* tm_info = localtime(&now);
+                            char fname[128];
+                            std::snprintf(fname,
+                                          sizeof(fname),
+                                          "fft_%04d%02d%02d_%02d%02d%02d.png",
+                                          tm_info->tm_year + 1900,
+                                          tm_info->tm_mon + 1,
+                                          tm_info->tm_mday,
+                                          tm_info->tm_hour,
+                                          tm_info->tm_min,
+                                          tm_info->tm_sec);
+                            std::filesystem::path outp = std::filesystem::path("recordings") / fname;
+                            if (save_surface_png(outp, surf)) {
+                                std::snprintf(app.composer_status, sizeof(app.composer_status), "Saved FFT: %s", outp.string().c_str());
+                                std::snprintf(app.composer_last_export_path, sizeof(app.composer_last_export_path), "%s", outp.parent_path().string().c_str());
+                                ui_log_add(&app, "Saved FFT snapshot: %s", outp.string().c_str());
+                            }
+                            SDL_FreeSurface(surf);
+                        }
+                    }
+                    if (ImGui::MenuItem("Save Legend Snapshot (PNG)")) {
+                        std::filesystem::create_directories("recordings");
+                        SDL_Surface* surf = composer_render_legend_surface(render, 400, 300);
+                        if (surf) {
+                            time_t now = time(nullptr);
+                            struct tm* tm_info = localtime(&now);
+                            char fname[128];
+                            std::snprintf(fname,
+                                          sizeof(fname),
+                                          "legend_%04d%02d%02d_%02d%02d%02d.png",
+                                          tm_info->tm_year + 1900,
+                                          tm_info->tm_mon + 1,
+                                          tm_info->tm_mday,
+                                          tm_info->tm_hour,
+                                          tm_info->tm_min,
+                                          tm_info->tm_sec);
+                            std::filesystem::path outp = std::filesystem::path("recordings") / fname;
+                            if (save_surface_png(outp, surf)) {
+                                std::snprintf(app.composer_status, sizeof(app.composer_status), "Saved legend: %s", outp.string().c_str());
+                                std::snprintf(app.composer_last_export_path, sizeof(app.composer_last_export_path), "%s", outp.parent_path().string().c_str());
+                                ui_log_add(&app, "Saved legend snapshot: %s", outp.string().c_str());
+                            }
+                            SDL_FreeSurface(surf);
+                        }
+                    }
+                }
                 ImGui::EndMenu();
             }
 
             if (ImGui::BeginMenu("Tools")) {
-                ImGui::MenuItem("Animation Recording...", nullptr, &app.show_recording_panel);
                 ImGui::MenuItem("Print Composer...", nullptr, &app.show_print_composer);
                 ImGui::EndMenu();
             }
@@ -7322,14 +7667,8 @@ int main(int argc, char** argv) {
         draw_measurement_history_panel(&app);
     }
 
-    {
-        ViewportInstance* panel_vp = ensure_active_viewport();
-        ImVec2 rec_size = panel_vp ? panel_vp->size : app.viewport_size;
-        draw_recording_panel(&app, render->renderer, rec_size);
-    }
-
     if (app.show_print_composer) {
-        draw_print_composer(&app, render->renderer);
+        draw_print_composer(&app, render->renderer, sim, &scope, render);
     }
 
         if (app.annotation_mode) {
@@ -8665,6 +9004,91 @@ int main(int argc, char** argv) {
                     int cy = app.context_menu_cell_j;
                     ImGui::Text("Cell (%d, %d)", cx, cy);
                     ImGui::Separator();
+                    if (paused && app.viewport_valid) {
+                        if (ImGui::MenuItem("Save viewport snapshot (PNG)")) {
+                            std::filesystem::create_directories("recordings");
+                            time_t now = time(nullptr);
+                            struct tm* tm_info = localtime(&now);
+                            char fname[128];
+                            std::snprintf(fname,
+                                          sizeof(fname),
+                                          "viewport_%04d%02d%02d_%02d%02d%02d.png",
+                                          tm_info->tm_year + 1900,
+                                          tm_info->tm_mon + 1,
+                                          tm_info->tm_mday,
+                                          tm_info->tm_hour,
+                                          tm_info->tm_min,
+                                          tm_info->tm_sec);
+                            std::filesystem::path outp = std::filesystem::path("recordings") / fname;
+                            SDL_Surface* snap = capture_frame(render->renderer,
+                                                              (int)app.viewport_size.x,
+                                                              (int)app.viewport_size.y,
+                                                              1.0f);
+                            if (snap) {
+                                SDL_Surface* conv = SDL_ConvertSurfaceFormat(snap, SDL_PIXELFORMAT_RGBA32, 0);
+                                SDL_FreeSurface(snap);
+                                if (conv) {
+                                    int ok = stbi_write_png(outp.string().c_str(),
+                                                            conv->w,
+                                                            conv->h,
+                                                            4,
+                                                            conv->pixels,
+                                                            conv->pitch);
+                                    SDL_FreeSurface(conv);
+                                    if (ok == 1) {
+                                        std::snprintf(app.composer_status,
+                                                      sizeof(app.composer_status),
+                                                      "Saved viewport snapshot: %s",
+                                                      outp.string().c_str());
+                                        ui_log_add(&app, "Saved viewport snapshot: %s", outp.string().c_str());
+                                        std::snprintf(app.composer_last_export_path,
+                                                      sizeof(app.composer_last_export_path),
+                                                      "%s",
+                                                      outp.parent_path().string().c_str());
+                                    } else {
+                                        ui_log_add(&app, "Viewport snapshot failed: %s", outp.string().c_str());
+                                    }
+                                }
+                            }
+                        }
+                        ImGui::Separator();
+                    }
+                    if (paused && ImGui::MenuItem("Save viewport snapshot (PNG)")) {
+                        std::filesystem::create_directories("recordings");
+                        time_t now = time(nullptr);
+                        struct tm* tm_info = localtime(&now);
+                        char fname[128];
+                        std::snprintf(fname,
+                                      sizeof(fname),
+                                      "viewport_%04d%02d%02d_%02d%02d%02d.png",
+                                      tm_info->tm_year + 1900,
+                                      tm_info->tm_mon + 1,
+                                      tm_info->tm_mday,
+                                      tm_info->tm_hour,
+                                      tm_info->tm_min,
+                                      tm_info->tm_sec);
+                        std::filesystem::path outp = std::filesystem::path("recordings") / fname;
+                        SDL_Surface* snap = capture_frame(render->renderer,
+                                                          (int)app.viewport_size.x,
+                                                          (int)app.viewport_size.y,
+                                                          1.0f);
+                        if (snap) {
+                            if (save_surface_png(outp, snap)) {
+                                std::snprintf(app.composer_status,
+                                              sizeof(app.composer_status),
+                                              "Saved viewport snapshot: %s",
+                                              outp.string().c_str());
+                                ui_log_add(&app, "Saved viewport snapshot: %s", outp.string().c_str());
+                                std::snprintf(app.composer_last_export_path,
+                                              sizeof(app.composer_last_export_path),
+                                              "%s",
+                                              outp.parent_path().string().c_str());
+                            } else {
+                                ui_log_add(&app, "Viewport snapshot failed: %s", outp.string().c_str());
+                            }
+                            SDL_FreeSurface(snap);
+                        }
+                    }
                     if (ImGui::MenuItem("Add Source Here")) {
                         create_new_source_at(&wizard, sim, &app, cx, cy);
                         app.show_context_menu = false;
@@ -8740,7 +9164,7 @@ int main(int argc, char** argv) {
         ImGui::Render();
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), render->renderer);
         if (app.composer_request_animation) {
-            bool ok = export_composer_animation(&app, render, sim, &scope, app.composer_request_page);
+            bool ok = export_composer_animation(&app, render, sim, &scope, app.composer_request_page, false);
             if (!ok) {
                 std::snprintf(app.composer_status,
                               sizeof(app.composer_status),
@@ -8773,7 +9197,6 @@ int main(int argc, char** argv) {
                           app.composer_pages.size());
             app.composer_request_export_all = false;
         }
-        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0, nullptr);
         SDL_RenderPresent(render->renderer);
 
         if (frame_counter <= 120) {
@@ -8790,6 +9213,10 @@ int main(int argc, char** argv) {
     render_free(render);
     material_library_shutdown();
     simulation_bootstrap_shutdown(&bootstrap);
+    if (app.composer_preview_tex) {
+        SDL_DestroyTexture(app.composer_preview_tex);
+        app.composer_preview_tex = nullptr;
+    }
     debug_log_close();
 
     return 0;

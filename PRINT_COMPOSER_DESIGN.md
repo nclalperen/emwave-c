@@ -48,6 +48,34 @@
 - Estimated memory/time shown; warn if caching too large; auto-stream to FFmpeg to avoid RAM bloat.
 - File naming: label + page suffix (e.g., `_page1`, `_page2`); per-page override via tab context menu.
 
+## Layout JSON (headless import)
+- `--ch-layout=path.json` loads a saved layout before applying CLI overrides (format/fps/frames/output/resolution/template).
+- Expected shape (permissive parser): top-level `"pages"` array. Page keys: `name`, `res_w`, `res_h`, `output_name`, `output_format` (0=BMP,1=PNG seq,2=MP4,3=GIF), `fps`, `frames`, `video_kbps`, `transparent_bg` (0/1), and `bg` as `[r,g,b,a]` or `bg_r/bg_g/bg_b/bg_a`.
+- Each page may contain `"items"`: keys include `id` (optional), `type` (string: `field|legend|scope|fft|region|meas|smith` or numeric enum), `viewport_idx` (or `viewport`/`vp`), `pos` `[x,y]`, `size` `[w,h]` (or `w`,`h`), and `region_norm` `[x0,y0,x1,y1]` for region captures. Unknown types default to `field`. Missing ids auto-increment.
+- Example:
+  ```json
+  {
+    "pages": [
+      {
+        "name": "Page 1",
+        "res_w": 1280,
+        "res_h": 720,
+        "output_name": "composer_page_1",
+        "output_format": 1,
+        "fps": 30,
+        "frames": 60,
+        "video_kbps": 4000,
+        "transparent_bg": 0,
+        "bg": [0.05, 0.05, 0.06, 1.0],
+        "items": [
+          { "type": "field", "viewport": 0, "pos": [80,80], "size": [720,480] },
+          { "type": "legend", "pos": [840,80], "size": [280,180] }
+        ]
+      }
+    ]
+  }
+  ```
+
 ## Open Questions / Decisions
 - Thumbnail strip: horizontal (collapsible) vs vertical—default horizontal; switchable in settings.
 - Do we support PDF/static page export now or later? (nice-to-have for legends/plots)
