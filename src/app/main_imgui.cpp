@@ -480,6 +480,22 @@ struct AppState {
     bool show_area_measurements;
     bool show_annotations;
 
+    // Toolbar source tool / modal
+    bool new_source_modal_open;
+    bool new_source_request_open;
+    bool new_source_pause_was_paused;
+    int new_source_cell_i;
+    int new_source_cell_j;
+    int new_source_field;      // 0=Ez,1=Hx,2=Hy
+    int new_source_type;       // SourceType enum
+    int new_source_tab;        // 0=Basic,1=Expression
+    int new_source_template;   // expression template index
+    float new_source_amp;
+    float new_source_freq_ghz;
+    float new_source_phase_deg;
+    float new_source_sigma2;
+    char new_source_expr[SOURCE_EXPR_MAX_LEN];
+
     // Print Composer
     bool show_print_composer;
     std::vector<ComposerPage> composer_pages;
@@ -517,6 +533,8 @@ struct AppState {
     float composer_snap_step;
     bool composer_canvas_grid;
     int composer_canvas_grid_step;
+    bool composer_headless_verbose;
+    bool show_toolbar_panel;
     // Region pick state
     bool composer_pick_region_active;
     bool composer_pick_region_dragging;
@@ -781,11 +799,11 @@ static void ensure_composer_initialized(AppState* app) {
     page.res_h = 720;
     page.bg = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
     page.transparent_bg = false;
-    std::snprintf(page.output_name, sizeof(page.output_name), "composer_page_1");
-    page.output_format = 0;
-    page.fps = 30;
-    page.frames = 60;
-     page.video_kbps = 4000;
+        std::snprintf(page.output_name, sizeof(page.output_name), "composer_page_1");
+        page.output_format = 0;
+        page.fps = 30;
+        page.frames = 60;
+         page.video_kbps = 4000;
     composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(80, 80), ImVec2(720, 480));
     composer_add_item(app, page, COMPOSER_LEGEND, 0, ImVec2(840, 80), ImVec2(320, 200));
     app->composer_pages.push_back(page);
@@ -818,6 +836,7 @@ static void ensure_composer_initialized(AppState* app) {
     app->composer_canvas_grid = false;
     app->composer_canvas_grid_step = 32;
     app->composer_request_export_all = false;
+    app->composer_headless_verbose = false;
     app->composer_pick_region_active = false;
     app->composer_pick_region_dragging = false;
     app->composer_pick_region_viewport = 0;
@@ -942,6 +961,115 @@ static void composer_theme(SDL_Color* bg, SDL_Color* border, SDL_Color* accent) 
     if (border) *border = SDL_Color{70, 74, 96, 255};
     if (accent) *accent = SDL_Color{0, 220, 120, 255};
 }
+
+// -----------------------------------------------------------------------------
+// Lightweight vector icons for toolbar (drawn via ImDrawList, no textures)
+// -----------------------------------------------------------------------------
+enum ToolbarIcon {
+    ICON_SRC_ADD = 0,
+    ICON_BLOCK_ADD,
+    ICON_REGION,
+    ICON_SNAP,
+    ICON_PAINT,
+    ICON_RESET_VIEW,
+    ICON_LAYOUT,
+    ICON_COMPOSER,
+    ICON_HELP
+};
+
+static void draw_toolbar_icon(ImDrawList* dl, ImVec2 pos, ImVec2 size, ToolbarIcon icon, ImU32 col) {
+    if (!dl) return;
+    const float w = size.x;
+    const float h = size.y;
+    const float cx = pos.x + w * 0.5f;
+    const float cy = pos.y + h * 0.5f;
+    const float r  = ImMin(w, h) * 0.22f;
+    const float thick = 2.0f;
+    switch (icon) {
+        case ICON_SRC_ADD: {
+            dl->AddCircleFilled(ImVec2(pos.x + w * 0.2f, pos.y + h * 0.75f), r * 0.9f, col);
+            dl->AddLine(ImVec2(pos.x + w * 0.35f, pos.y + h * 0.6f), ImVec2(pos.x + w * 0.85f, pos.y + h * 0.2f), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.35f, pos.y + h * 0.4f), ImVec2(pos.x + w * 0.8f, pos.y + h * 0.05f), col, thick * 0.8f);
+            dl->AddLine(ImVec2(pos.x + w * 0.12f, pos.y + h * 0.15f), ImVec2(pos.x + w * 0.32f, pos.y + h * 0.15f), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.22f, pos.y + h * 0.05f), ImVec2(pos.x + w * 0.22f, pos.y + h * 0.25f), col, thick);
+        } break;
+        case ICON_BLOCK_ADD: {
+            ImVec2 p0(pos.x + w * 0.18f, pos.y + h * 0.22f);
+            ImVec2 p1(pos.x + w * 0.82f, pos.y + h * 0.22f);
+            ImVec2 p2(pos.x + w * 0.82f, pos.y + h * 0.72f);
+            ImVec2 p3(pos.x + w * 0.18f, pos.y + h * 0.72f);
+            dl->AddRect(p0, p2, col, 2.0f, 0, thick);
+            dl->AddLine(ImVec2(cx, p0.y), ImVec2(cx, p2.y), col, thick);
+            dl->AddLine(ImVec2(p0.x, cy), ImVec2(p1.x, cy), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.1f, pos.y + h * 0.1f), ImVec2(pos.x + w * 0.28f, pos.y + h * 0.1f), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.19f, pos.y + h * 0.02f), ImVec2(pos.x + w * 0.19f, pos.y + h * 0.18f), col, thick);
+        } break;
+        case ICON_REGION: {
+            dl->AddRect(ImVec2(pos.x + w * 0.22f, pos.y + h * 0.22f),
+                        ImVec2(pos.x + w * 0.78f, pos.y + h * 0.78f),
+                        col, 2.0f, 0, thick);
+            dl->AddRect(ImVec2(pos.x + w * 0.1f, pos.y + h * 0.1f),
+                        ImVec2(pos.x + w * 0.9f, pos.y + h * 0.9f),
+                        col, 2.0f, 0, thick * 0.6f);
+        } break;
+        case ICON_SNAP: {
+            dl->AddRect(ImVec2(pos.x + w * 0.2f, pos.y + h * 0.2f),
+                        ImVec2(pos.x + w * 0.8f, pos.y + h * 0.8f),
+                        col, 3.0f, 0, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.2f, cy), ImVec2(pos.x + w * 0.8f, cy), col, thick);
+            dl->AddLine(ImVec2(cx, pos.y + h * 0.2f), ImVec2(cx, pos.y + h * 0.8f), col, thick);
+        } break;
+        case ICON_PAINT: {
+            dl->AddLine(ImVec2(pos.x + w * 0.25f, pos.y + h * 0.25f),
+                        ImVec2(pos.x + w * 0.7f, pos.y + h * 0.7f), col, thick);
+            dl->AddRect(ImVec2(pos.x + w * 0.6f, pos.y + h * 0.18f),
+                        ImVec2(pos.x + w * 0.8f, pos.y + h * 0.38f),
+                        col, 2.0f, 0, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.18f, pos.y + h * 0.72f),
+                        ImVec2(pos.x + w * 0.35f, pos.y + h * 0.55f), col, thick);
+        } break;
+        case ICON_RESET_VIEW: {
+            dl->AddTriangle(ImVec2(cx, pos.y + h * 0.18f),
+                            ImVec2(pos.x + w * 0.22f, pos.y + h * 0.45f),
+                            ImVec2(pos.x + w * 0.78f, pos.y + h * 0.45f),
+                            col, thick);
+            dl->AddRect(ImVec2(pos.x + w * 0.28f, pos.y + h * 0.5f),
+                        ImVec2(pos.x + w * 0.72f, pos.y + h * 0.85f),
+                        col, 1.5f, 1.5f, thick);
+            dl->AddLine(ImVec2(cx, pos.y + h * 0.5f), ImVec2(cx, pos.y + h * 0.85f), col, thick);
+        } break;
+        case ICON_LAYOUT: {
+            dl->AddRect(ImVec2(pos.x + w * 0.12f, pos.y + h * 0.18f),
+                        ImVec2(pos.x + w * 0.88f, pos.y + h * 0.82f),
+                        col, 2.0f, 0, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.4f, pos.y + h * 0.18f),
+                        ImVec2(pos.x + w * 0.4f, pos.y + h * 0.82f), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.6f, pos.y + h * 0.18f),
+                        ImVec2(pos.x + w * 0.6f, pos.y + h * 0.82f), col, thick);
+            dl->AddLine(ImVec2(pos.x + w * 0.12f, pos.y + h * 0.6f),
+                        ImVec2(pos.x + w * 0.88f, pos.y + h * 0.6f), col, thick);
+        } break;
+        case ICON_COMPOSER: {
+            dl->AddCircle(ImVec2(cx, cy), ImMin(w, h) * 0.42f, col, 32, thick);
+            dl->AddCircle(ImVec2(cx, cy), ImMin(w, h) * 0.18f, col, 32, thick);
+            dl->AddLine(ImVec2(cx, pos.y + h * 0.12f), ImVec2(cx, pos.y + h * 0.22f), col, thick);
+            dl->AddLine(ImVec2(cx, pos.y + h * 0.78f), ImVec2(cx, pos.y + h * 0.88f), col, thick);
+        } break;
+        case ICON_HELP: {
+            dl->AddCircle(ImVec2(cx, cy), ImMin(w, h) * 0.42f, col, 32, thick);
+            dl->AddBezierQuadratic(ImVec2(pos.x + w * 0.32f, pos.y + h * 0.36f),
+                                   ImVec2(pos.x + w * 0.5f, pos.y + h * 0.2f),
+                                   ImVec2(pos.x + w * 0.6f, pos.y + h * 0.36f),
+                                   col, thick);
+            dl->AddCircleFilled(ImVec2(cx, pos.y + h * 0.72f), 2.0f, col);
+        } break;
+        default:
+            break;
+    }
+}
+
+static const char* kToolbarWindowName = "##Toolbar";
+
 
 static SDL_Surface* composer_render_field_surface(AppState* app,
                                                   RenderContext* render,
@@ -1481,20 +1609,24 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
     ensure_composer_initialized(app);
     if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return nullptr;
     const ComposerPage& page = app->composer_pages[page_idx];
-    std::printf("Composer render page %d items=%zu bg=%.3f,%.3f,%.3f,%.3f transparent=%d\n",
-                page_idx,
-                page.items.size(),
-                page.bg.x, page.bg.y, page.bg.z, page.bg.w,
-                page.transparent_bg ? 1 : 0);
+    if (app->composer_headless_verbose) {
+        std::printf("Composer render page %d items=%zu bg=%.3f,%.3f,%.3f,%.3f transparent=%d\n",
+                    page_idx,
+                    page.items.size(),
+                    page.bg.x, page.bg.y, page.bg.z, page.bg.w,
+                    page.transparent_bg ? 1 : 0);
+    }
 
     SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, page.res_w, page.res_h, 32, SDL_PIXELFORMAT_RGBA32);
     if (!out) return nullptr;
     Uint8 alpha = page.transparent_bg ? 0 : (Uint8)(page.bg.w * 255);
-    std::printf("Composer render fill bg rgba=(%d,%d,%d,%d)\n",
-                (int)(page.bg.x * 255),
-                (int)(page.bg.y * 255),
-                (int)(page.bg.z * 255),
-                (int)alpha);
+    if (app->composer_headless_verbose) {
+        std::printf("Composer render fill bg rgba=(%d,%d,%d,%d)\n",
+                    (int)(page.bg.x * 255),
+                    (int)(page.bg.y * 255),
+                    (int)(page.bg.z * 255),
+                    (int)alpha);
+    }
     SDL_FillRect(out, nullptr,
                  SDL_MapRGBA(out->format,
                              (Uint8)(page.bg.x * 255),
@@ -1503,7 +1635,9 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
                              alpha));
     {
         Uint8* p = (Uint8*)out->pixels;
-        std::printf("  first pixel after bg fill: %u %u %u %u\n", p[0], p[1], p[2], p[3]);
+        if (app->composer_headless_verbose) {
+            std::printf("  first pixel after bg fill: %u %u %u %u\n", p[0], p[1], p[2], p[3]);
+        }
     }
     bool any_field = false;
     bool any_field_blitted = false;
@@ -1514,10 +1648,12 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
         dst.y = (int)std::lround(item.pos.y);
         dst.w = (int)std::lround(item.size.x);
         dst.h = (int)std::lround(item.size.y);
-        std::printf("  item id=%d type=%d pos=(%d,%d) size=(%d,%d)\n",
-                    item.id,
-                    (int)item.type,
-                    dst.x, dst.y, dst.w, dst.h);
+        if (app->composer_headless_verbose) {
+            std::printf("  item id=%d type=%d pos=(%d,%d) size=(%d,%d)\n",
+                        item.id,
+                        (int)item.type,
+                        dst.x, dst.y, dst.w, dst.h);
+        }
 
         bool blitted = false;
         if (item.type == COMPOSER_FIELD_VIEW || item.type == COMPOSER_REGION) {
@@ -1600,7 +1736,9 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
                                                  (col >> IM_COL32_G_SHIFT) & 0xFF,
                                                  (col >> IM_COL32_B_SHIFT) & 0xFF,
                                                  255));
-            std::printf("    filled placeholder color=%08x\n", col);
+            if (app->composer_headless_verbose) {
+                std::printf("    filled placeholder color=%08x\n", col);
+            }
         }
     }
 
@@ -1623,7 +1761,9 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
     };
 
     if (!surface_has_variance(out)) {
-        std::printf("Composer render: uniform surface, stamping %zu placeholders\n", page.items.size());
+        if (app->composer_headless_verbose) {
+            std::printf("Composer render: uniform surface, stamping %zu placeholders\n", page.items.size());
+        }
         for (const auto& item : page.items) {
             SDL_Rect dst;
             dst.x = (int)std::lround(item.pos.x);
@@ -1631,7 +1771,9 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
             dst.w = (int)std::lround(item.size.x);
             dst.h = (int)std::lround(item.size.y);
             Uint32 col = composer_item_color(item);
-            std::printf("    fallback fill id=%d type=%d color=%08x\n", item.id, (int)item.type, col);
+            if (app->composer_headless_verbose) {
+                std::printf("    fallback fill id=%d type=%d color=%08x\n", item.id, (int)item.type, col);
+            }
             SDL_FillRect(out, &dst, SDL_MapRGBA(out->format,
                                                 (col >> IM_COL32_R_SHIFT) & 0xFF,
                                                 (col >> IM_COL32_G_SHIFT) & 0xFF,
@@ -2945,59 +3087,91 @@ static void apply_layout_preset(ImGuiID dockspace_id, LayoutPreset preset) {
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
 
     ImGuiID dock_center = dockspace_id;
-    ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.25f, nullptr, &dock_center);
-    ImGuiID dock_left = dock_center;
-    ImGuiID dock_right = dock_center;
+    ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.22f, nullptr, &dock_center);
+    ImGuiID dock_toolbar = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.08f, nullptr, &dock_center);
+    ImGuiID dock_left = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.22f, nullptr, &dock_center);
+    ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.24f, nullptr, &dock_center);
+
+    // Split left into top/mid/bottom
+    ImGuiID left_top = 0, left_rest = 0;
+    ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.38f, &left_top, &left_rest);
+    ImGuiID left_mid = 0, left_bottom = 0;
+    ImGui::DockBuilderSplitNode(left_rest, ImGuiDir_Down, 0.5f, &left_mid, &left_bottom);
+
+    // Split right into top/mid
+    ImGuiID right_top = 0, right_mid = 0;
+    ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.5f, &right_top, &right_mid);
 
     switch (preset) {
         case LAYOUT_BEGINNER: {
+            ImGui::DockBuilderDockWindow(kToolbarWindowName, dock_toolbar);
             ImGui::DockBuilderDockWindow("Viewport", dock_center);
-            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
-            ImGui::DockBuilderDockWindow("Sources", dock_right);
+            ImGui::DockBuilderDockWindow("Scenes", left_top);
+            ImGui::DockBuilderDockWindow("Grid & Domain", left_top);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", left_mid);
+            ImGui::DockBuilderDockWindow("Material Legend", left_mid);
+            ImGui::DockBuilderDockWindow("Sources", left_bottom);
+            ImGui::DockBuilderDockWindow("Probes", right_top);
+            ImGui::DockBuilderDockWindow("Run Controls", right_mid);
+            ImGui::DockBuilderDockWindow("Run Settings", right_mid);
             ImGui::DockBuilderDockWindow("Scope", dock_bottom);
             ImGui::DockBuilderDockWindow("Log", dock_bottom);
             break;
         }
         case LAYOUT_POWER_USER: {
-            dock_left = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.2f, nullptr, &dock_center);
-            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.22f, nullptr, &dock_center);
-
+            ImGui::DockBuilderDockWindow(kToolbarWindowName, dock_toolbar);
             ImGui::DockBuilderDockWindow("Viewport", dock_center);
-            ImGui::DockBuilderDockWindow("Sources", dock_left);
-            ImGui::DockBuilderDockWindow("Materials / Blocks", dock_left);
+            ImGui::DockBuilderDockWindow("Scenes", left_top);
+            ImGui::DockBuilderDockWindow("Grid & Domain", left_top);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", left_mid);
+            ImGui::DockBuilderDockWindow("Material Legend", left_mid);
+            ImGui::DockBuilderDockWindow("Sources", left_bottom);
             ImGui::DockBuilderDockWindow("Scope", dock_bottom);
             ImGui::DockBuilderDockWindow("Log", dock_bottom);
-            ImGui::DockBuilderDockWindow("Material Legend", dock_right);
-            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
+            ImGui::DockBuilderDockWindow("Probes", right_top);
+            ImGui::DockBuilderDockWindow("Run Controls", right_mid);
+            ImGui::DockBuilderDockWindow("Run Settings", right_mid);
             break;
         }
         case LAYOUT_ANALYSIS: {
-            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.4f, nullptr, &dock_center);
-            ImGuiID dock_right_bottom = ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.5f, nullptr, &dock_right);
-
+            ImGui::DockBuilderDockWindow(kToolbarWindowName, dock_toolbar);
             ImGui::DockBuilderDockWindow("Viewport", dock_center);
+            ImGui::DockBuilderDockWindow("Scenes", left_top);
+            ImGui::DockBuilderDockWindow("Grid & Domain", left_top);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", left_mid);
+            ImGui::DockBuilderDockWindow("Material Legend", left_mid);
+            ImGui::DockBuilderDockWindow("Sources", left_bottom);
             ImGui::DockBuilderDockWindow("Scope", dock_bottom);
-            ImGui::DockBuilderDockWindow("S-Parameters", dock_right);
-            ImGui::DockBuilderDockWindow("Smith Chart", dock_right_bottom);
             ImGui::DockBuilderDockWindow("Log", dock_bottom);
+            ImGui::DockBuilderDockWindow("S-Parameters", right_top);
+            ImGui::DockBuilderDockWindow("Smith Chart", right_mid);
+            ImGui::DockBuilderDockWindow("Probes", right_top);
+            ImGui::DockBuilderDockWindow("Run Controls", right_mid);
+            ImGui::DockBuilderDockWindow("Run Settings", right_mid);
             break;
         }
         case LAYOUT_CANVAS_FIRST: {
-            dock_left = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Left, 0.16f, nullptr, &dock_center);
-            dock_right = ImGui::DockBuilderSplitNode(dock_center, ImGuiDir_Right, 0.18f, nullptr, &dock_center);
-
+            ImGui::DockBuilderDockWindow(kToolbarWindowName, dock_toolbar);
             ImGui::DockBuilderDockWindow("Viewport", dock_center);
-            ImGui::DockBuilderDockWindow("Sources", dock_left);
-            ImGui::DockBuilderDockWindow("Materials / Blocks", dock_left);
-            ImGui::DockBuilderDockWindow("Grid & Domain", dock_left);
-            ImGui::DockBuilderDockWindow("Run Controls", dock_right);
-            ImGui::DockBuilderDockWindow("Material Legend", dock_right);
+            ImGui::DockBuilderDockWindow("Scenes", left_top);
+            ImGui::DockBuilderDockWindow("Grid & Domain", left_top);
+            ImGui::DockBuilderDockWindow("Materials / Blocks", left_mid);
+            ImGui::DockBuilderDockWindow("Material Legend", left_mid);
+            ImGui::DockBuilderDockWindow("Sources", left_bottom);
+            ImGui::DockBuilderDockWindow("Run Controls", right_top);
+            ImGui::DockBuilderDockWindow("Run Settings", right_top);
+            ImGui::DockBuilderDockWindow("Probes", right_mid);
             ImGui::DockBuilderDockWindow("Scope", dock_bottom);
             ImGui::DockBuilderDockWindow("Log", dock_bottom);
             break;
         }
         default:
             break;
+    }
+
+    // Toolbar node flags to hide tab bar
+    if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(dock_toolbar)) {
+        n->LocalFlags |= ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe;
     }
 
     ImGui::DockBuilderFinish(dockspace_id);
@@ -3550,6 +3724,9 @@ static void apply_source_spec_to_runtime(SimulationState* sim,
             dst->expr_program = prog;
         } else {
             dst->expr_program = NULL;
+            std::fprintf(stderr, "Source expr compile failed (idx=%d): %s\n",
+                         idx,
+                         (errbuf[0] != '\0') ? errbuf : "unknown error");
         }
     }
 }
@@ -5590,6 +5767,7 @@ int main(int argc, char** argv) {
     app.show_log_panel = true;
     app.show_expression_panel = true;
     app.show_scenes_panel = true;
+    app.show_toolbar_panel = true;
     app.show_grid_overlay = true;
     app.theme_preset = 0;
     app.accent_color = ImVec4(0.26f, 0.59f, 0.98f, 1.0f);
@@ -5686,6 +5864,20 @@ int main(int argc, char** argv) {
     app.show_distance_measurements = true;
     app.show_area_measurements = true;
     app.show_annotations = true;
+    app.new_source_modal_open = false;
+    app.new_source_request_open = false;
+    app.new_source_pause_was_paused = false;
+    app.new_source_cell_i = -1;
+    app.new_source_cell_j = -1;
+    app.new_source_field = 0;
+    app.new_source_type = (int)SRC_CW;
+    app.new_source_tab = 0;
+    app.new_source_template = 0;
+    app.new_source_amp = 1.0f;
+    app.new_source_freq_ghz = 1.0f;
+    app.new_source_phase_deg = 0.0f;
+    app.new_source_sigma2 = 4.0f;
+    app.new_source_expr[0] = '\0';
     app.show_print_composer = false;
     app.composer_pages.clear();
     app.composer_active_page = 0;
@@ -5793,6 +5985,7 @@ int main(int argc, char** argv) {
 
     if (headless.enabled) {
         ensure_composer_initialized(&app);
+        app.composer_headless_verbose = headless.verbose;
         if (headless.tmpl_idx == -2 && headless.layout_path[0]) {
             if (!composer_load_layout_json(&app, headless.layout_path)) {
                 ui_log_add(&app, "Headless: failed to load layout '%s'", headless.layout_path);
@@ -6006,7 +6199,14 @@ int main(int argc, char** argv) {
 
                 switch (key) {
                     case SDLK_ESCAPE:
-                        if (app.area_mode) {
+                        if (app.new_source_modal_open) {
+                            // Let ImGui handle closing the popup; don't quit the app.
+                            handled_globally = true;
+                        } else if (app.placing_source) {
+                            app.placing_source = false;
+                            ui_log_add(&app, "Source tool: cancelled.");
+                            handled_globally = true;
+                        } else if (app.area_mode) {
                             app.area_mode = false;
                             app.current_area.vertices.clear();
                             app.current_area.closed = false;
@@ -6807,6 +7007,31 @@ int main(int argc, char** argv) {
                         continue;
                     }
 
+                    // Toolbar source placement tool
+                    if (app.placing_source) {
+                        app.new_source_cell_i = ix;
+                        app.new_source_cell_j = iy;
+                        app.new_source_field = 0; // default Ez
+                        app.new_source_type = (int)SRC_CW;
+                        app.new_source_tab = 0;
+                        // Use simulation frequency if available
+                        float f_ghz = (sim->freq > 0.0) ? (float)(sim->freq * 1e-9) : 1.0f;
+                        if (f_ghz <= 0.0f) f_ghz = 1.0f;
+                        app.new_source_amp = 1.0f;
+                        app.new_source_freq_ghz = f_ghz;
+                        app.new_source_phase_deg = 0.0f;
+                        app.new_source_sigma2 = 4.0f;
+                        // Default expression template uses A and f parameters
+                        std::snprintf(app.new_source_expr,
+                                      sizeof(app.new_source_expr),
+                                      "A * sin(2*pi*f*t)");
+                        app.new_source_pause_was_paused = paused;
+                        paused = true;
+                        app.new_source_request_open = true;
+                        app.new_source_modal_open = true;
+                        continue;
+                    }
+
                     app.last_click_i = ix;
                     app.last_click_j = iy;
 
@@ -7054,6 +7279,203 @@ int main(int argc, char** argv) {
         ImVec2 host_pos = main_viewport->Pos;
         ImVec2 host_size = ImVec2(main_viewport->Size.x, main_viewport->Size.y - status_bar_h);
         if (host_size.y < 0.0f) host_size.y = 0.0f;
+
+        // -----------------------------------------------------------------
+        // Toolbar: New Source modal (opened from source tool)
+        // Placed early to avoid disabled scopes elsewhere freezing the popup.
+        // -----------------------------------------------------------------
+        if (app.new_source_request_open) {
+            ImGui::OpenPopup("New Source");
+            app.new_source_modal_open = true;
+            app.new_source_request_open = false;
+        }
+        bool new_source_popup_open = ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId);
+        if (new_source_popup_open) {
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(main_viewport->Pos.x + main_viewport->Size.x * 0.5f,
+                                           main_viewport->Pos.y + main_viewport->Size.y * 0.5f),
+                                    ImGuiCond_FirstUseEver,
+                                    ImVec2(0.5f, 0.5f));
+        }
+        bool popup_open_flag = true;
+        if (ImGui::BeginPopupModal("New Source",
+                                   &popup_open_flag,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::Text("Place new source");
+            ImGui::Separator();
+            ImGui::Text("Cell: (%d, %d)",
+                        app.new_source_cell_i,
+                        app.new_source_cell_j);
+
+            int field_idx = app.new_source_field;
+            ImGui::Separator();
+            ImGui::Text("Field:");
+            ImGui::SameLine();
+            ImGui::RadioButton("Ez", &field_idx, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Hx", &field_idx, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Hy", &field_idx, 2);
+            if (field_idx < 0 || field_idx > 2) field_idx = 0;
+            app.new_source_field = field_idx;
+
+            if (ImGui::BeginTabBar("NewSourceTabs")) {
+                if (ImGui::BeginTabItem("Basic")) {
+                    app.new_source_tab = 0;
+                    const char* type_names[] = {"Continuous wave", "Gaussian pulse", "Ricker wavelet"};
+                    int type_idx = app.new_source_type;
+                    if (type_idx < 0 || type_idx > 2) type_idx = 0;
+                    ImGui::Combo("Type", &type_idx, type_names, IM_ARRAYSIZE(type_names));
+                    app.new_source_type = type_idx;
+
+                    ImGui::SliderFloat("Amplitude A", &app.new_source_amp, 0.0f, 10.0f, "%.3f");
+                    float f_ghz = app.new_source_freq_ghz;
+                    if (f_ghz <= 0.0f) f_ghz = 1.0f;
+                    if (ImGui::SliderFloat("Frequency f (GHz)", &f_ghz, 0.001f, 20.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                        if (f_ghz <= 0.0f) f_ghz = 0.001f;
+                        app.new_source_freq_ghz = f_ghz;
+                    }
+                    ImGui::SliderFloat("Phase (deg)", &app.new_source_phase_deg, -180.0f, 180.0f, "%.1f");
+                    ImGui::SliderFloat("Sigma^2 (footprint)", &app.new_source_sigma2, 0.1f, 10.0f, "%.2f");
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Basic parameters feed both classic CW/pulse types and the\n"
+                                        "A, f parameters in expression mode.");
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Expression")) {
+                    app.new_source_tab = 1;
+                    const char* tmpl_names[] = {
+                        "A * sin(2*pi*f*t)",
+                        "A * sin(omega*t)",
+                        "Gaussian envelope",
+                        "Ricker wavelet",
+                        "Custom (blank)"
+                    };
+                    int tmpl = app.new_source_template;
+                    if (tmpl < 0 || tmpl >= 5) tmpl = 0;
+                    if (ImGui::Combo("Template", &tmpl, tmpl_names, IM_ARRAYSIZE(tmpl_names))) {
+                        app.new_source_template = tmpl;
+                        switch (tmpl) {
+                            case 0:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * sin(2*pi*f*t)");
+                                break;
+                            case 1:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * sin(omega*t)");
+                                break;
+                            case 2:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * exp(-((t - t0)/tau)^2) * sin(2*pi*f*(t - t0))");
+                                break;
+                            case 3:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * (1 - 2*(pi*f*(t - t0))^2) * exp(-(pi*f*(t - t0))^2)");
+                                break;
+                            default:
+                                app.new_source_expr[0] = '\0';
+                                break;
+                        }
+                    }
+                    ImGui::TextDisabled("Variables: t (s), A (amplitude), f (Hz), omega = 2*pi*f.\n"
+                                        "Optional t0 and tau may be used in templates.");
+                    ImGui::InputTextMultiline("##src_expr",
+                                              app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              ImVec2(480.0f, 140.0f));
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+
+            ImGui::Separator();
+            bool want_add = false;
+            bool want_cancel = false;
+            if (ImGui::Button("Add", ImVec2(120.0f, 0.0f))) {
+                want_add = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+                want_cancel = true;
+            }
+
+            if (want_add) {
+                if (sim && wizard.cfg.source_count < MAX_SRC) {
+                    int idx = wizard.cfg.source_count;
+                    SourceConfigSpec* spec = &wizard.cfg.source_configs[idx];
+                    spec->active = 1;
+                    spec->amp = (double)app.new_source_amp;
+                    spec->freq = (double)app.new_source_freq_ghz * 1e9;
+                    spec->sigma2 = (double)app.new_source_sigma2;
+                    int fidx = app.new_source_field;
+                    if (fidx < 0 || fidx > 2) fidx = 0;
+                    spec->field = (SourceFieldType)fidx;
+
+                    int ix = app.new_source_cell_i;
+                    int iy = app.new_source_cell_j;
+                    if (ix < 0) ix = 0;
+                    if (iy < 0) iy = 0;
+                    if (ix >= sim->nx) ix = sim->nx - 1;
+                    if (iy >= sim->ny) iy = sim->ny - 1;
+                    double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
+                    double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
+                    spec->x = (double)ix / nx1;
+                    spec->y = (double)iy / ny1;
+
+                    if (app.new_source_expr[0] != '\0') {
+                        spec->type = SRC_EXPR;
+                        std::strncpy(spec->expr, app.new_source_expr, SOURCE_EXPR_MAX_LEN - 1);
+                        spec->expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
+                    } else {
+                        int t = app.new_source_type;
+                        if (t < 0 || t > (int)SRC_RICKER) t = (int)SRC_CW;
+                        spec->type = (SourceType)t;
+                        spec->expr[0] = '\0';
+                    }
+
+                    wizard.cfg.source_count = idx + 1;
+                    apply_source_spec_to_runtime(sim, idx, spec);
+                    sim->sources[idx].active = 1;
+                    source_reparam(&sim->sources[idx]);
+                    app.selected_source = idx;
+                    app.show_sources_panel = true;
+                    ui_log_add(&app,
+                               "Added source #%d at cell (%d, %d)",
+                               idx,
+                               app.new_source_cell_i,
+                               app.new_source_cell_j);
+                } else {
+                    ui_log_add(&app,
+                               "Cannot add source: maximum number of sources (%d) reached.",
+                               MAX_SRC);
+                }
+
+                app.placing_source = false;
+                app.new_source_modal_open = false;
+                new_source_popup_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (want_cancel) {
+                app.placing_source = false;
+                app.new_source_modal_open = false;
+                new_source_popup_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+        if ((!popup_open_flag || !new_source_popup_open) && app.new_source_modal_open) {
+            app.new_source_modal_open = false;
+            app.placing_source = false;
+            paused = app.new_source_pause_was_paused;
+        }
+
         ImGui::SetNextWindowPos(host_pos);
         ImGui::SetNextWindowSize(host_size);
         ImGui::SetNextWindowViewport(main_viewport->ID);
@@ -7397,7 +7819,7 @@ int main(int argc, char** argv) {
         ImGui::End();
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGuiWindowFlags viewport_flags = ImGuiWindowFlags_NoScrollbar |
+    ImGuiWindowFlags viewport_flags = ImGuiWindowFlags_NoScrollbar |
                                           ImGuiWindowFlags_NoScrollWithMouse |
                                           ImGuiWindowFlags_NoCollapse |
                                           ImGuiWindowFlags_NoSavedSettings |
@@ -7417,6 +7839,66 @@ int main(int argc, char** argv) {
         }
         ImGui::End();
         ImGui::PopStyleVar();
+
+        // Left toolbar (docked by default)
+        if (app.show_toolbar_panel) {
+            ImGuiWindowFlags tb_flags = ImGuiWindowFlags_NoTitleBar |
+                                        ImGuiWindowFlags_NoScrollbar |
+                                        ImGuiWindowFlags_NoCollapse |
+                                        ImGuiWindowFlags_NoResize;
+            ImGui::SetNextWindowDockID(dockspace_id, ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(56.0f, 200.0f), ImVec2(56.0f, FLT_MAX));
+            if (ImGui::Begin(kToolbarWindowName, &app.show_toolbar_panel, tb_flags)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 6));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+                ImVec2 btn = ImVec2(36, 32);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                auto IconButton = [&](ToolbarIcon icon, const char* tooltip, bool active = false) {
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    bool pressed = ImGui::InvisibleButton(tooltip, btn);
+                    bool hovered = ImGui::IsItemHovered();
+                    ImU32 col = ImGui::GetColorU32((active || hovered) ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+                    draw_toolbar_icon(dl, p, btn, icon, col);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNone) && tooltip) {
+                        ImGui::SetTooltip("%s", tooltip);
+                    }
+                    return pressed;
+                };
+                if (IconButton(ICON_SRC_ADD, "Add Source", app.placing_source)) {
+                    app.placing_source = !app.placing_source;
+                    if (app.placing_source) {
+                        paint_mode = false;
+                        app.area_mode = false;
+                        app.ruler_mode = false;
+                        ui_log_add(&app,
+                                   "Source tool: click in viewport to place a source (Esc to cancel).");
+                    } else {
+                        ui_log_add(&app, "Source tool: cancelled.");
+                    }
+                }
+                if (IconButton(ICON_BLOCK_ADD, "Blocks / Materials")) app.show_blocks_panel = true;
+                if (IconButton(ICON_REGION, "Grid & Domain / Region")) app.show_grid_panel = true;
+                if (IconButton(ICON_SNAP, "Snap / Probes")) {
+                    app.show_probes_panel = true;
+                }
+                if (IconButton(ICON_PAINT, "Paint mode / Materials", paint_mode)) app.show_blocks_panel = true;
+                if (IconButton(ICON_RESET_VIEW, "Reset View")) {
+                    app.viewport_pan_x = app.viewport_pan_y = 0.0f;
+                    app.viewport_zoom = kDefaultViewportZoom;
+                }
+                if (IconButton(ICON_LAYOUT, "Layout presets")) {
+                    // trigger reset layout
+                    ImGuiContext& g = *ImGui::GetCurrentContext();
+                    g.IO.ConfigDockingAlwaysTabBar = g.IO.ConfigDockingAlwaysTabBar; // no-op to avoid unused
+                    // handled via menu; here just log
+                    ui_log_add(&app, "Tip: use Layout menu to switch presets");
+                }
+                if (IconButton(ICON_COMPOSER, "Print Composer")) app.show_print_composer = true;
+                if (IconButton(ICON_HELP, "Help / Log")) app.show_log_panel = true;
+                ImGui::PopStyleVar(2);
+            }
+            ImGui::End();
+        }
 
         // If docking collapses the viewport window to nearly zero, fall back to host area
         if (!app.viewport_valid) {
@@ -7749,16 +8231,17 @@ int main(int argc, char** argv) {
         }
 
         if (app.show_log_panel) {
-        draw_log_panel(&app);
-    }
+            draw_log_panel(&app);
+        }
 
-    if (app.show_measurement_history) {
-        draw_measurement_history_panel(&app);
-    }
+        if (app.show_measurement_history) {
+            draw_measurement_history_panel(&app);
+        }
 
-    if (app.show_print_composer) {
-        draw_print_composer(&app, render->renderer, sim, &scope, render);
-    }
+        if (app.show_print_composer) {
+            draw_print_composer(&app, render->renderer, sim, &scope, render);
+        }
+
 
         if (app.annotation_mode) {
             ImGui::OpenPopup("AddAnnotation");
@@ -8447,6 +8930,33 @@ int main(int argc, char** argv) {
                             overlay_dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), bcol, blabel);
                         }
 
+                        // Preview marker for toolbar source tool
+                        if (app.placing_source && app.active_viewport_idx == vp_idx) {
+                            float local_x = io.MousePos.x - p0.x;
+                            float local_y = io.MousePos.y - p0.y;
+                            if (local_x >= 0.0f && local_y >= 0.0f &&
+                                local_x < vp.size.x && local_y < vp.size.y) {
+                                float field_x = local_x - viewport_offset.x;
+                                float field_y = local_y - viewport_offset.y;
+                                int ix = (int)(field_x / (float)vp_scale);
+                                int iy = (int)(field_y / (float)vp_scale);
+                                if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                                    float cx = p0.x + viewport_offset.x +
+                                               ((float)ix + 0.5f) * (float)vp_scale;
+                                    float cy = p0.y + viewport_offset.y +
+                                               ((float)iy + 0.5f) * (float)vp_scale;
+                                    float radius = 6.0f * (float)vp_scale * 0.25f;
+                                    ImU32 col_src = IM_COL32(120, 255, 120, 230);
+                                    overlay_dl->AddCircleFilled(ImVec2(cx, cy), radius, col_src, 24);
+                                    overlay_dl->AddCircle(ImVec2(cx, cy),
+                                                          radius + 2.0f,
+                                                          IM_COL32(0, 0, 0, 200),
+                                                          24,
+                                                          1.5f);
+                                }
+                            }
+                        }
+
                         if (paint_mode && app.active_viewport_idx == vp_idx) {
                             float local_x = io.MousePos.x - p0.x;
                             float local_y = io.MousePos.y - p0.y;
@@ -9080,6 +9590,20 @@ int main(int argc, char** argv) {
                         dl->AddText(ImVec2(rect_min.x + info_pad.x, rect_min.y + info_pad.y),
                                     IM_COL32(230, 230, 240, 255),
                                     info);
+
+                        if (app.placing_source) {
+                            const char* hint = "Source tool: left-click to place (Esc to cancel)";
+                            ImVec2 hint_sz = ImGui::CalcTextSize(hint);
+                            ImVec2 hint_pad(8.0f, 4.0f);
+                            ImVec2 h_min = ImVec2(rect_min.x,
+                                                  rect_min.y - hint_sz.y - hint_pad.y * 2.0f - 6.0f);
+                            ImVec2 h_max = ImVec2(h_min.x + hint_sz.x + hint_pad.x * 2.0f,
+                                                  h_min.y + hint_sz.y + hint_pad.y * 2.0f);
+                            dl->AddRectFilled(h_min, h_max, IM_COL32(12, 18, 24, 220), 4.0f);
+                            dl->AddText(ImVec2(h_min.x + hint_pad.x, h_min.y + hint_pad.y),
+                                        IM_COL32(180, 230, 255, 255),
+                                        hint);
+                        }
                     }
                 }
 

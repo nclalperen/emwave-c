@@ -50,6 +50,7 @@
 
 ## Layout JSON (headless import)
 - `--ch-layout=path.json` loads a saved layout before applying CLI overrides (format/fps/frames/output/resolution/template).
+- CLI flags summary: `--composer-headless` plus `--ch-layout` (layout path) or `--ch-template=blank|field+legend|field+scope|field+fft+legend`, `--ch-format=bmp|png|mp4|gif`, `--ch-fps=N`, `--ch-frames=N`, `--ch-output=basename`, `--ch-width/--ch-height` for resolution, and `--ch-verbose` for extra headless logging.
 - Expected shape (permissive parser): top-level `"pages"` array. Page keys: `name`, `res_w`, `res_h`, `output_name`, `output_format` (0=BMP,1=PNG seq,2=MP4,3=GIF), `fps`, `frames`, `video_kbps`, `transparent_bg` (0/1), and `bg` as `[r,g,b,a]` or `bg_r/bg_g/bg_b/bg_a`.
 - Each page may contain `"items"`: keys include `id` (optional), `type` (string: `field|legend|scope|fft|region|meas|smith` or numeric enum), `viewport_idx` (or `viewport`/`vp`), `pos` `[x,y]`, `size` `[w,h]` (or `w`,`h`), and `region_norm` `[x0,y0,x1,y1]` for region captures. Unknown types default to `field`. Missing ids auto-increment.
 - Example:
