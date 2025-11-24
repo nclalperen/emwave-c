@@ -48,6 +48,181 @@
 #include <direct.h>
 #endif
 
+// Minimal PNG write (embedded, trimmed from stb_image_write for PNG-only)
+#include <cassert>
+#include <climits>
+#include <cstring>
+#include <cstdlib>
+#include <cmath>
+#include <cstdarg>
+#include <cstdint>
+#define STBIW_MALLOC(sz)           malloc(sz)
+#define STBIW_FREE(p)              free(p)
+#define STBIW_MEMMOVE(a,b,sz)      memmove(a,b,sz)
+#define STBIW_MEMCPY(a,b,sz)       memcpy(a,b,sz)
+#define STBIW_ASSERT(x)            assert(x)
+#define STBIW_MIN(a,b)             ((a) < (b) ? (a) : (b))
+#define STBIW_MAX(a,b)             ((a) > (b) ? (a) : (b))
+#define STBIW_UCHAR(x)             (unsigned char)(x)
+#define STBIW_ZLIB_QUALITY 8
+
+static void _stbiw_write_bytes(FILE* f, const void* data, int len) {
+    if (!f || !data || len <= 0) return;
+    fwrite(data, 1, (size_t)len, f);
+}
+
+// CRC
+static unsigned int stb_crc32(unsigned char* buffer, int len) {
+    static unsigned int crc_table[256];
+    static int init = 0;
+    if (!init) {
+        for (unsigned int i = 0; i < 256; i++) {
+            unsigned int c = i;
+            for (int j = 0; j < 8; j++) {
+                c = (c & 1) ? 0xedb88320 ^ (c >> 1) : c >> 1;
+            }
+            crc_table[i] = c;
+        }
+        init = 1;
+    }
+    unsigned int c = 0xffffffff;
+    for (int i = 0; i < len; ++i)
+        c = crc_table[(c ^ buffer[i]) & 0xff] ^ (c >> 8);
+    return c ^ 0xffffffff;
+}
+
+// zlib (very small, not optimized)
+static unsigned char* _stbiw__zlib_compress(unsigned char* data, int data_len, int* out_len, int quality) {
+    (void)quality;
+    // naive: store uncompressed (zlib with no compression)
+    int header_size = 2;
+    int adler_size = 4;
+    int block_overhead = 5; // final block header + len + nlen
+    int needed = header_size + block_overhead + data_len + adler_size;
+    unsigned char* out = (unsigned char*)STBIW_MALLOC(needed);
+    if (!out) return nullptr;
+    unsigned char* p = out;
+    *p++ = 0x78; // CMF
+    *p++ = 0x01; // FLG (no compression)
+    // single uncompressed block
+    *p++ = 1; // final block, uncompressed
+    unsigned short len = (unsigned short)data_len;
+    unsigned short nlen = ~len;
+    *p++ = (unsigned char)(len & 0xFF);
+    *p++ = (unsigned char)(len >> 8);
+    *p++ = (unsigned char)(nlen & 0xFF);
+    *p++ = (unsigned char)(nlen >> 8);
+    STBIW_MEMCPY(p, data, data_len);
+    p += data_len;
+    // Adler-32
+    unsigned int s1 = 1, s2 = 0;
+    for (int i = 0; i < data_len; ++i) {
+        s1 = (s1 + data[i]) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    unsigned int adler = (s2 << 16) | s1;
+    *p++ = (unsigned char)((adler >> 24) & 0xFF);
+    *p++ = (unsigned char)((adler >> 16) & 0xFF);
+    *p++ = (unsigned char)((adler >> 8) & 0xFF);
+    *p++ = (unsigned char)(adler & 0xFF);
+    *out_len = (int)(p - out);
+    return out;
+}
+
+static void _stbiw_write32be(FILE* f, unsigned int v) {
+    unsigned char b[4];
+    b[0] = (unsigned char)((v >> 24) & 0xFF);
+    b[1] = (unsigned char)((v >> 16) & 0xFF);
+    b[2] = (unsigned char)((v >> 8) & 0xFF);
+    b[3] = (unsigned char)(v & 0xFF);
+    _stbiw_write_bytes(f, b, 4);
+}
+
+static void _stbiw_write_chunk(FILE* f, const char* tag, unsigned char* data, int len) {
+    unsigned char len_bytes[4];
+    len_bytes[0] = (unsigned char)((len >> 24) & 0xFF);
+    len_bytes[1] = (unsigned char)((len >> 16) & 0xFF);
+    len_bytes[2] = (unsigned char)((len >> 8) & 0xFF);
+    len_bytes[3] = (unsigned char)(len & 0xFF);
+    _stbiw_write_bytes(f, len_bytes, 4);
+    _stbiw_write_bytes(f, tag, 4);
+    if (data) _stbiw_write_bytes(f, data, len);
+    unsigned char crc_src[4096];
+    int crc_len = len + 4;
+    if (crc_len > (int)sizeof(crc_src)) {
+        unsigned char* tmp = (unsigned char*)STBIW_MALLOC(crc_len);
+        STBIW_MEMCPY(tmp, tag, 4);
+        if (data) STBIW_MEMCPY(tmp + 4, data, len);
+        unsigned int crc = stb_crc32(tmp, crc_len);
+        STBIW_FREE(tmp);
+        unsigned char crc_bytes[4];
+        crc_bytes[0] = (unsigned char)((crc >> 24) & 0xFF);
+        crc_bytes[1] = (unsigned char)((crc >> 16) & 0xFF);
+        crc_bytes[2] = (unsigned char)((crc >> 8) & 0xFF);
+        crc_bytes[3] = (unsigned char)(crc & 0xFF);
+        _stbiw_write_bytes(f, crc_bytes, 4);
+    } else {
+        STBIW_MEMCPY(crc_src, tag, 4);
+        if (data) STBIW_MEMCPY(crc_src + 4, data, len);
+        unsigned int crc = stb_crc32(crc_src, crc_len);
+        unsigned char crc_bytes[4];
+        crc_bytes[0] = (unsigned char)((crc >> 24) & 0xFF);
+        crc_bytes[1] = (unsigned char)((crc >> 16) & 0xFF);
+        crc_bytes[2] = (unsigned char)((crc >> 8) & 0xFF);
+        crc_bytes[3] = (unsigned char)(crc & 0xFF);
+        _stbiw_write_bytes(f, crc_bytes, 4);
+    }
+}
+
+static int stbi_write_png(const char* filename, int w, int h, int comp, const void* data, int stride_bytes) {
+    if (!filename || !data || w <= 0 || h <= 0) return 0;
+    if (comp != 3 && comp != 4) return 0;
+    FILE* f = fopen(filename, "wb");
+    if (!f) return 0;
+
+    static const unsigned char sig[8] = {137,80,78,71,13,10,26,10};
+    _stbiw_write_bytes(f, sig, 8);
+
+    unsigned char ihdr[13];
+    ihdr[0] = (unsigned char)((w >> 24) & 0xFF);
+    ihdr[1] = (unsigned char)((w >> 16) & 0xFF);
+    ihdr[2] = (unsigned char)((w >> 8) & 0xFF);
+    ihdr[3] = (unsigned char)(w & 0xFF);
+    ihdr[4] = (unsigned char)((h >> 24) & 0xFF);
+    ihdr[5] = (unsigned char)((h >> 16) & 0xFF);
+    ihdr[6] = (unsigned char)((h >> 8) & 0xFF);
+    ihdr[7] = (unsigned char)(h & 0xFF);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = (unsigned char)(comp == 3 ? 2 : 6); // color type
+    ihdr[10] = 0; // compression
+    ihdr[11] = 0; // filter
+    ihdr[12] = 0; // interlace
+    _stbiw_write_chunk(f, "IHDR", ihdr, 13);
+
+    // Pack data with filter byte per row (0)
+    int stride = stride_bytes ? stride_bytes : (w * comp);
+    int raw_len = (stride + 1) * h;
+    unsigned char* raw = (unsigned char*)STBIW_MALLOC(raw_len);
+    if (!raw) { fclose(f); return 0; }
+    const unsigned char* src = (const unsigned char*)data;
+    for (int y = 0; y < h; ++y) {
+        unsigned char* row = raw + y * (stride + 1);
+        row[0] = 0; // filter type 0
+        STBIW_MEMCPY(row + 1, src + y * stride, stride);
+    }
+
+    int zlen = 0;
+    unsigned char* zdata = _stbiw__zlib_compress(raw, raw_len, &zlen, STBIW_ZLIB_QUALITY);
+    STBIW_FREE(raw);
+    if (!zdata) { fclose(f); return 0; }
+    _stbiw_write_chunk(f, "IDAT", zdata, zlen);
+    STBIW_FREE(zdata);
+
+    _stbiw_write_chunk(f, "IEND", nullptr, 0);
+    fclose(f);
+    return 1;
+}
+
 enum ViewportLayout {
     VIEWPORT_SINGLE = 0,
     VIEWPORT_HORIZONTAL = 1,
@@ -85,6 +260,37 @@ struct ViewportInstance {
     bool show_vectors;
 };
 
+// Forward declarations for helpers defined later in this file (need types above)
+static ImVec2 compute_viewport_offset(const ViewportInstance& vp,
+                                      const SimulationState* sim,
+                                      int scale);
+static int compute_grid_step_from_scale(int scale);
+static void render_material_distribution(RenderContext* render,
+                                         const SimulationState* sim,
+                                         int scale);
+static void render_material_overlay(RenderContext* render,
+                                    const SimulationState* sim,
+                                    int scale,
+                                    float alpha);
+static void render_material_outlines(RenderContext* render,
+                                     const SimulationState* sim,
+                                     int scale);
+static void render_grid_overlay(RenderContext* render,
+                                const SimulationState* sim,
+                                SDL_Color color,
+                                int grid_step);
+static int compute_scope_fft(const Scope* scope,
+                             double dt,
+                             double* freq,
+                             double* mag,
+                             double* phase,
+                             int max_fft);
+static const std::string& ffmpeg_command();
+static bool has_ffmpeg();
+static void log_ffmpeg_attempt(const char* cmd, int rc);
+static int run_ffmpeg(const std::vector<std::string>& args);
+static std::string join_args(const std::vector<std::string>& args);
+
 enum RecordingFormat {
     RECORDING_GIF = 0,
     RECORDING_MP4 = 1,
@@ -110,8 +316,46 @@ struct AnimationRecorder {
     int capture_height;
     char output_path[260];
     bool auto_play;
+    bool composer_preview_mode;
+    int composer_preview_page;
+    int composer_preview_frames;
+    bool composer_preview_done;
     float progress;
     char status_message[128];
+};
+
+enum ComposerItemType {
+    COMPOSER_FIELD_VIEW = 0,
+    COMPOSER_REGION = 1,
+    COMPOSER_SCOPE = 2,
+    COMPOSER_FFT = 3,
+    COMPOSER_LEGEND = 4,
+    COMPOSER_MEAS = 5,
+    COMPOSER_SMITH = 6
+};
+
+struct ComposerItem {
+    int id;
+    ComposerItemType type;
+    int viewport_idx;   // for field items
+    ImVec2 pos;         // page space (px)
+    ImVec2 size;        // page space (px)
+    bool selected;
+    ImVec4 region_norm; // x0,y0,x1,y1 normalized (for region captures)
+};
+
+struct ComposerPage {
+    char name[32];
+    int res_w;
+    int res_h;
+    ImVec4 bg;
+    bool transparent_bg;
+    char output_name[64];
+    int output_format;  // 0=BMP,1=PNG seq,2=MP4,3=GIF
+    int fps;
+    int frames;
+    int video_kbps;     // target video bitrate for MP4
+    std::vector<ComposerItem> items;
 };
 
 struct DistanceMeasurement {
@@ -259,6 +503,40 @@ struct AppState {
     bool show_distance_measurements;
     bool show_area_measurements;
     bool show_annotations;
+
+    // Print Composer
+    bool show_print_composer;
+    std::vector<ComposerPage> composer_pages;
+    int composer_active_page;
+    int composer_next_item_id;
+    char composer_status[128];
+    bool composer_dragging;
+    int composer_drag_item;
+    ImVec2 composer_drag_offset;
+    bool composer_resizing;
+    int composer_resize_item;
+    int composer_resize_corner;
+    ImVec2 composer_resize_start_pos;
+    ImVec2 composer_resize_start_size;
+    ImVec2 composer_resize_start_mouse;
+    bool composer_request_export;
+    int composer_request_page;
+    bool composer_request_export_all;
+    bool composer_request_animation;
+    int composer_animation_steps_per_frame;
+    bool composer_snap;
+    float composer_snap_step;
+    bool composer_canvas_grid;
+    int composer_canvas_grid_step;
+    // Region pick state
+    bool composer_pick_region_active;
+    bool composer_pick_region_dragging;
+    int composer_pick_region_viewport;
+    int composer_pick_region_page;
+    int composer_pick_region_target_item;
+    ImVec2 composer_pick_region_start_norm;
+    ImVec2 composer_pick_region_end_norm;
+    bool composer_pick_region_snap;
 };
 
 static void ui_log_add(AppState* app, const char* fmt, ...);
@@ -350,6 +628,213 @@ static void export_measurements_csv(const AppState* app, const char* path) {
     fclose(f);
 }
 
+static void composer_add_item(AppState* app,
+                              ComposerPage& page,
+                              ComposerItemType type,
+                              int viewport_idx,
+                              ImVec2 pos,
+                              ImVec2 size) {
+    ComposerItem item{};
+    item.id = app->composer_next_item_id++;
+    item.type = type;
+    item.viewport_idx = viewport_idx;
+    item.pos = pos;
+    item.size = size;
+    item.selected = false;
+    item.region_norm = ImVec4(0.0f, 0.0f, 1.0f, 1.0f);
+    page.items.push_back(item);
+}
+
+static void composer_apply_template(AppState* app, ComposerPage& page, int tmpl_idx) {
+    if (!app) return;
+    page.items.clear();
+    float w = (float)page.res_w;
+    float h = (float)page.res_h;
+    switch (tmpl_idx) {
+        case 0: {  // Blank
+        } break;
+        case 1: {  // Field + Legend
+            composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(w * 0.05f, h * 0.1f), ImVec2(w * 0.65f, h * 0.75f));
+            composer_add_item(app, page, COMPOSER_LEGEND, 0, ImVec2(w * 0.72f, h * 0.1f), ImVec2(w * 0.22f, h * 0.3f));
+        } break;
+        case 2: {  // Field + Scope
+            composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(w * 0.05f, h * 0.05f), ImVec2(w * 0.9f, h * 0.6f));
+            composer_add_item(app, page, COMPOSER_SCOPE, 0, ImVec2(w * 0.05f, h * 0.68f), ImVec2(w * 0.42f, h * 0.25f));
+            composer_add_item(app, page, COMPOSER_FFT, 0, ImVec2(w * 0.53f, h * 0.68f), ImVec2(w * 0.42f, h * 0.25f));
+        } break;
+        case 3: {  // Field + FFT + Legend
+            composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(w * 0.05f, h * 0.08f), ImVec2(w * 0.65f, h * 0.55f));
+            composer_add_item(app, page, COMPOSER_FFT, 0, ImVec2(w * 0.05f, h * 0.66f), ImVec2(w * 0.65f, h * 0.28f));
+            composer_add_item(app, page, COMPOSER_LEGEND, 0, ImVec2(w * 0.73f, h * 0.08f), ImVec2(w * 0.22f, h * 0.3f));
+        } break;
+        default:
+            break;
+    }
+}
+
+static void composer_select_all(ComposerPage& page, bool select) {
+    for (auto& it : page.items) it.selected = select;
+}
+
+static void composer_align_selected(ComposerPage& page,
+                                    int page_w,
+                                    int page_h,
+                                    const char* mode,
+                                    bool snap,
+                                    float snap_step) {
+    std::vector<ComposerItem*> sel;
+    for (auto& it : page.items) {
+        if (it.selected) sel.push_back(&it);
+    }
+    if (sel.empty()) return;
+
+    auto clamp_to_page = [&](ComposerItem* it) {
+        if (!it) return;
+        if (it->pos.x < 0.0f) it->pos.x = 0.0f;
+        if (it->pos.y < 0.0f) it->pos.y = 0.0f;
+        if (it->pos.x + it->size.x > page_w) it->pos.x = page_w - it->size.x;
+        if (it->pos.y + it->size.y > page_h) it->pos.y = page_h - it->size.y;
+    };
+
+    auto snap_pos = [&](ImVec2 v) {
+        if (!snap) return v;
+        float step = std::max(1.0f, snap_step);
+        v.x = std::round(v.x / step) * step;
+        v.y = std::round(v.y / step) * step;
+        return v;
+    };
+
+    if (strcmp(mode, "left") == 0) {
+        float min_x = sel[0]->pos.x;
+        for (auto* it : sel) min_x = std::min(min_x, it->pos.x);
+        for (auto* it : sel) {
+            it->pos.x = min_x;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "right") == 0) {
+        float max_r = sel[0]->pos.x + sel[0]->size.x;
+        for (auto* it : sel) max_r = std::max(max_r, it->pos.x + it->size.x);
+        for (auto* it : sel) {
+            it->pos.x = max_r - it->size.x;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "top") == 0) {
+        float min_y = sel[0]->pos.y;
+        for (auto* it : sel) min_y = std::min(min_y, it->pos.y);
+        for (auto* it : sel) {
+            it->pos.y = min_y;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "bottom") == 0) {
+        float max_b = sel[0]->pos.y + sel[0]->size.y;
+        for (auto* it : sel) max_b = std::max(max_b, it->pos.y + it->size.y);
+        for (auto* it : sel) {
+            it->pos.y = max_b - it->size.y;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "center_x") == 0) {
+        float c = 0.0f;
+        for (auto* it : sel) c += it->pos.x + it->size.x * 0.5f;
+        c /= (float)sel.size();
+        for (auto* it : sel) {
+            it->pos.x = c - it->size.x * 0.5f;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "center_y") == 0) {
+        float c = 0.0f;
+        for (auto* it : sel) c += it->pos.y + it->size.y * 0.5f;
+        c /= (float)sel.size();
+        for (auto* it : sel) {
+            it->pos.y = c - it->size.y * 0.5f;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+        }
+    } else if (strcmp(mode, "distribute_x") == 0 && sel.size() >= 2) {
+        std::sort(sel.begin(), sel.end(), [](const ComposerItem* a, const ComposerItem* b) {
+            return a->pos.x < b->pos.x;
+        });
+        float start = sel.front()->pos.x;
+        float end = sel.back()->pos.x + sel.back()->size.x;
+        float total_w = 0.0f;
+        for (auto* it : sel) total_w += it->size.x;
+        float gap = (sel.size() > 1) ? (end - start - total_w) / (float)(sel.size() - 1) : 0.0f;
+        float x = start;
+        for (auto* it : sel) {
+            it->pos.x = x;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+            x += it->size.x + gap;
+        }
+    } else if (strcmp(mode, "distribute_y") == 0 && sel.size() >= 2) {
+        std::sort(sel.begin(), sel.end(), [](const ComposerItem* a, const ComposerItem* b) {
+            return a->pos.y < b->pos.y;
+        });
+        float start = sel.front()->pos.y;
+        float end = sel.back()->pos.y + sel.back()->size.y;
+        float total_h = 0.0f;
+        for (auto* it : sel) total_h += it->size.y;
+        float gap = (sel.size() > 1) ? (end - start - total_h) / (float)(sel.size() - 1) : 0.0f;
+        float y = start;
+        for (auto* it : sel) {
+            it->pos.y = y;
+            it->pos = snap_pos(it->pos);
+            clamp_to_page(it);
+            y += it->size.y + gap;
+        }
+    }
+}
+
+static void ensure_composer_initialized(AppState* app) {
+    if (!app) return;
+    if (!app->composer_pages.empty()) return;
+    app->composer_next_item_id = 1;
+    ComposerPage page{};
+    std::snprintf(page.name, sizeof(page.name), "Page 1");
+    page.res_w = 1280;
+    page.res_h = 720;
+    page.bg = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
+    page.transparent_bg = false;
+    std::snprintf(page.output_name, sizeof(page.output_name), "composer_page_1");
+    page.output_format = 0;
+    page.fps = 30;
+    page.frames = 60;
+     page.video_kbps = 4000;
+    composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(80, 80), ImVec2(720, 480));
+    composer_add_item(app, page, COMPOSER_LEGEND, 0, ImVec2(840, 80), ImVec2(320, 200));
+    app->composer_pages.push_back(page);
+    app->composer_active_page = 0;
+    std::snprintf(app->composer_status, sizeof(app->composer_status), "Composer ready");
+    app->composer_dragging = false;
+    app->composer_drag_item = -1;
+    app->composer_drag_offset = ImVec2(0, 0);
+    app->composer_resizing = false;
+    app->composer_resize_item = -1;
+    app->composer_resize_corner = -1;
+    app->composer_resize_start_pos = ImVec2(0, 0);
+    app->composer_resize_start_size = ImVec2(0, 0);
+    app->composer_resize_start_mouse = ImVec2(0, 0);
+    app->composer_snap = true;
+    app->composer_snap_step = 4.0f;
+    app->composer_canvas_grid = false;
+    app->composer_canvas_grid_step = 32;
+    app->composer_request_export_all = false;
+    app->composer_pick_region_active = false;
+    app->composer_pick_region_dragging = false;
+    app->composer_pick_region_viewport = 0;
+    app->composer_pick_region_page = 0;
+    app->composer_pick_region_target_item = -1;
+    app->composer_pick_region_start_norm = ImVec2(0.0f, 0.0f);
+    app->composer_pick_region_end_norm = ImVec2(1.0f, 1.0f);
+    app->composer_pick_region_snap = true;
+    app->composer_request_animation = false;
+    app->composer_animation_steps_per_frame = 1;
+}
+
 static void draw_measurement_history_panel(AppState* app) {
     if (!app) return;
     if (!ImGui::Begin("Measurement History", &app->show_measurement_history)) {
@@ -418,7 +903,6 @@ static void draw_measurement_history_panel(AppState* app) {
         ImGui::TreePop();
     }
 
-    ImGui::Separator();
     if (ImGui::Button("Export CSV", ImVec2(-1, 0))) {
         export_measurements_csv(app, "measurements.csv");
         ui_log_add(app, "Measurements exported: measurements.csv");
@@ -428,6 +912,1462 @@ static void draw_measurement_history_panel(AppState* app) {
         app->measurements.areas.clear();
         app->measurements.annotations.clear();
         ui_log_add(app, "Measurements cleared");
+    }
+
+    ImGui::End();
+}
+
+static ImU32 composer_item_color(const ComposerItem& item) {
+    switch (item.type) {
+        case COMPOSER_FIELD_VIEW: return IM_COL32(70, 150, 240, 200);
+        case COMPOSER_REGION:     return IM_COL32(160, 120, 240, 200);
+        case COMPOSER_SCOPE:      return IM_COL32(120, 200, 120, 200);
+        case COMPOSER_FFT:        return IM_COL32(200, 160, 80, 200);
+        case COMPOSER_LEGEND:     return IM_COL32(220, 220, 120, 200);
+        case COMPOSER_MEAS:       return IM_COL32(240, 120, 120, 200);
+        case COMPOSER_SMITH:      return IM_COL32(120, 200, 200, 200);
+        default:                  return IM_COL32(200, 200, 200, 180);
+    }
+}
+
+static SDL_Color composer_viewport_clear(const AppState* app) {
+    int preset = app ? app->theme_preset : 0;
+    switch (preset) {
+        case 2:  // THEME_PRESET_LIGHT
+            return SDL_Color{235, 236, 240, 255};
+        case 3:  // THEME_PRESET_HIGH_CONTRAST
+            return SDL_Color{4, 4, 4, 255};
+        default:  // Dark/Blender
+            return SDL_Color{8, 8, 10, 255};
+    }
+}
+
+static void composer_theme(SDL_Color* bg, SDL_Color* border, SDL_Color* accent) {
+    if (bg) *bg = SDL_Color{22, 24, 34, 255};
+    if (border) *border = SDL_Color{70, 74, 96, 255};
+    if (accent) *accent = SDL_Color{0, 220, 120, 255};
+}
+
+static SDL_Surface* composer_render_field_surface(AppState* app,
+                                                  RenderContext* render,
+                                                  const SimulationState* sim,
+                                                  const ViewportInstance& vp_src,
+                                                  int target_w,
+                                                  int target_h,
+                                                  bool use_region,
+                                                  ImVec4 region_norm) {
+    if (!render || !render->renderer || !sim) return nullptr;
+    if (target_w <= 1 || target_h <= 1) return nullptr;
+
+    SDL_Renderer* rr = render->renderer;
+    SDL_Texture* tex = SDL_CreateTexture(rr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         target_w,
+                                         target_h);
+    if (!tex) return nullptr;
+
+    SDL_Texture* prev_target = SDL_GetRenderTarget(rr);
+    SDL_Rect prev_viewport;
+    SDL_RenderGetViewport(rr, &prev_viewport);
+    int prev_scale = render->scale;
+    float prev_off_x = render->offset_x;
+    float prev_off_y = render->offset_y;
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(rr, &prev_blend);
+
+    SDL_Color clear = composer_viewport_clear(app);
+    SDL_SetRenderTarget(rr, tex);
+    SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(rr, clear.r, clear.g, clear.b, clear.a);
+    SDL_RenderClear(rr);
+
+    SDL_Rect full = {0, 0, target_w, target_h};
+    SDL_RenderSetViewport(rr, &full);
+
+    ViewportInstance vp = vp_src;
+    vp.size = ImVec2((float)target_w, (float)target_h);
+    int vp_scale = (int)std::lround(vp.zoom);
+    if (vp_scale < 1) vp_scale = 1;
+    ImVec2 vp_offset(0.0f, 0.0f);
+
+    if (use_region) {
+        float nx = (float)sim->nx;
+        float ny = (float)sim->ny;
+        float rx0 = std::clamp(region_norm.x, 0.0f, 1.0f);
+        float ry0 = std::clamp(region_norm.y, 0.0f, 1.0f);
+        float rx1 = std::clamp(region_norm.z, 0.0f, 1.0f);
+        float ry1 = std::clamp(region_norm.w, 0.0f, 1.0f);
+        if (rx1 < rx0 + 0.001f) rx1 = rx0 + 0.001f;
+        if (ry1 < ry0 + 0.001f) ry1 = ry0 + 0.001f;
+        float reg_w_cells = (rx1 - rx0) * nx;
+        float reg_h_cells = (ry1 - ry0) * ny;
+        float scale_x = (float)target_w / std::max(1.0f, reg_w_cells);
+        float scale_y = (float)target_h / std::max(1.0f, reg_h_cells);
+        float scale_f = std::min(scale_x, scale_y);
+        vp_scale = (int)std::lround(scale_f);
+        if (vp_scale < 1) vp_scale = 1;
+        render->scale = vp_scale;
+        float region_px_w = reg_w_cells * (float)vp_scale;
+        float region_px_h = reg_h_cells * (float)vp_scale;
+        float center_x = ((float)target_w - region_px_w) * 0.5f;
+        float center_y = ((float)target_h - region_px_h) * 0.5f;
+        vp_offset.x = center_x - rx0 * nx * (float)vp_scale;
+        vp_offset.y = center_y - ry0 * ny * (float)vp_scale;
+        render->offset_x = vp_offset.x;
+        render->offset_y = vp_offset.y;
+    } else {
+        render->scale = vp_scale;
+        vp_offset = compute_viewport_offset(vp, sim, vp_scale);
+        render->offset_x = vp_offset.x;
+        render->offset_y = vp_offset.y;
+    }
+
+    double vmax = sim->step_Ez_absmax;
+    if (vmax <= 0.0) vmax = 1.0;
+    bool channel_na = false;
+    switch (vp.viz_mode) {
+        case VIEWPORT_VIZ_EZ:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_EZ_ABS:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EZ_ABS, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_HX:
+            render_field_channel_heatmap(render, sim, FIELD_CH_HX, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_HY:
+            render_field_channel_heatmap(render, sim, FIELD_CH_HY, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_HMAG:
+            render_field_channel_heatmap(render, sim, FIELD_CH_H_MAG, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_SX:
+            render_field_channel_heatmap(render, sim, FIELD_CH_SX, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_SY:
+            render_field_channel_heatmap(render, sim, FIELD_CH_SY, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_S_MAG:
+            render_field_channel_heatmap(render, sim, FIELD_CH_S_MAG, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_EX:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EX, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_EY:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EY, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_HZ:
+            render_field_channel_heatmap(render, sim, FIELD_CH_HZ, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_MATERIAL:
+            // Skip material-only view for exports to avoid block overlays bleeding
+            render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
+            break;
+        case VIEWPORT_VIZ_OVERLAY:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
+            // Skip material overlay/outlines to keep exports clean
+            break;
+        default:
+            render_field_channel_heatmap(render, sim, FIELD_CH_EZ, vmax, 1.0, &channel_na);
+            break;
+    }
+
+    if (app && app->show_material_outlines) {
+        SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+        render_material_outlines(render, sim, vp_scale);
+        SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_NONE);
+    }
+    // Suppress grid, sources, vectors for clean exports
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_SetRenderTarget(rr, prev_target);
+        SDL_RenderSetViewport(rr, &prev_viewport);
+        render->scale = prev_scale;
+        render->offset_x = prev_off_x;
+        render->offset_y = prev_off_y;
+        SDL_SetRenderDrawBlendMode(rr, prev_blend);
+        SDL_DestroyTexture(tex);
+        return nullptr;
+    }
+
+    if (SDL_RenderReadPixels(rr, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        surf = nullptr;
+    }
+
+    SDL_SetRenderTarget(rr, prev_target);
+    SDL_RenderSetViewport(rr, &prev_viewport);
+    render->scale = prev_scale;
+    render->offset_x = prev_off_x;
+    render->offset_y = prev_off_y;
+    SDL_SetRenderDrawBlendMode(rr, prev_blend);
+    SDL_DestroyTexture(tex);
+    return surf;
+}
+
+static bool export_composer_page_stub(AppState* app, SDL_Renderer* renderer, int page_idx) {
+    if (!app || !renderer) return false;
+    ensure_composer_initialized(app);
+    if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return false;
+    const ComposerPage& page = app->composer_pages[page_idx];
+    SDL_Texture* old_target = SDL_GetRenderTarget(renderer);
+    SDL_Texture* tex = SDL_CreateTexture(renderer,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         page.res_w,
+                                         page.res_h);
+    if (!tex) return false;
+    SDL_SetRenderTarget(renderer, tex);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer,
+                           (Uint8)(page.bg.x * 255),
+                           (Uint8)(page.bg.y * 255),
+                           (Uint8)(page.bg.z * 255),
+                           (Uint8)(page.bg.w * 255));
+    SDL_RenderClear(renderer);
+    for (const auto& item : page.items) {
+        SDL_Rect r;
+        r.x = (int)std::lround(item.pos.x);
+        r.y = (int)std::lround(item.pos.y);
+        r.w = (int)std::lround(item.size.x);
+        r.h = (int)std::lround(item.size.y);
+        ImU32 col = composer_item_color(item);
+        SDL_SetRenderDrawColor(renderer,
+                               (Uint8)((col >> IM_COL32_R_SHIFT) & 0xFF),
+                               (Uint8)((col >> IM_COL32_G_SHIFT) & 0xFF),
+                               (Uint8)((col >> IM_COL32_B_SHIFT) & 0xFF),
+                               220);
+        SDL_RenderFillRect(renderer, &r);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderDrawRect(renderer, &r);
+    }
+    SDL_SetRenderTarget(renderer, old_target);
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, page.res_w, page.res_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_DestroyTexture(tex);
+        return false;
+    }
+    if (SDL_RenderReadPixels(renderer, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        SDL_DestroyTexture(tex);
+        return false;
+    }
+
+#ifdef _WIN32
+    _mkdir("recordings");
+#else
+    mkdir("recordings", 0755);
+#endif
+    char out_path[260];
+    std::snprintf(out_path, sizeof(out_path), "recordings/composer_page_%d.png", page_idx + 1);
+    SDL_SaveBMP(surf, out_path);
+    SDL_FreeSurface(surf);
+    SDL_DestroyTexture(tex);
+    std::snprintf(app->composer_status, sizeof(app->composer_status), "Exported %s", out_path);
+    ui_log_add(app, "Composer exported: %s", out_path);
+    return true;
+}
+
+static SDL_Surface* capture_screen_surface(SDL_Renderer* renderer, int* out_w, int* out_h) {
+    if (!renderer) return nullptr;
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(renderer, &w, &h);
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) return nullptr;
+    if (SDL_RenderReadPixels(renderer, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        return nullptr;
+    }
+    return surf;
+}
+
+static double composer_scope_absmax(const Scope* scope) {
+    if (!scope || !scope->y || scope->n <= 0) return 1.0;
+    double m = 0.0;
+    for (int i = 0; i < scope->n; ++i) {
+        double v = std::fabs(scope->y[i]);
+        if (v > m) m = v;
+    }
+    if (m <= 1e-9) m = 1.0;
+    return m;
+}
+
+static SDL_Surface* composer_render_scope_surface(AppState* app,
+                                                  RenderContext* render,
+                                                  const Scope* scope,
+                                                  int target_w,
+                                                  int target_h) {
+    if (!render || !render->renderer || !scope) return nullptr;
+    if (target_w <= 1 || target_h <= 1) return nullptr;
+    SDL_Renderer* rr = render->renderer;
+    SDL_Texture* tex = SDL_CreateTexture(rr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         target_w,
+                                         target_h);
+    if (!tex) return nullptr;
+
+    SDL_Texture* prev_target = SDL_GetRenderTarget(rr);
+    SDL_Rect prev_viewport;
+    SDL_RenderGetViewport(rr, &prev_viewport);
+    int prev_scale = render->scale;
+    float prev_off_x = render->offset_x;
+    float prev_off_y = render->offset_y;
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(rr, &prev_blend);
+
+    SDL_Rect full = {0, 0, target_w, target_h};
+    SDL_SetRenderTarget(rr, tex);
+    SDL_RenderSetViewport(rr, &full);
+    SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+    double yscale = composer_scope_absmax(scope);
+    render_scope(render, scope, 0, 0, target_w, target_h, yscale);
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_SetRenderTarget(rr, prev_target);
+        SDL_RenderSetViewport(rr, &prev_viewport);
+        render->scale = prev_scale;
+        render->offset_x = prev_off_x;
+        render->offset_y = prev_off_y;
+        SDL_SetRenderDrawBlendMode(rr, prev_blend);
+        SDL_DestroyTexture(tex);
+        return nullptr;
+    }
+    if (SDL_RenderReadPixels(rr, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        surf = nullptr;
+    }
+
+    SDL_SetRenderTarget(rr, prev_target);
+    SDL_RenderSetViewport(rr, &prev_viewport);
+    render->scale = prev_scale;
+    render->offset_x = prev_off_x;
+    render->offset_y = prev_off_y;
+    SDL_SetRenderDrawBlendMode(rr, prev_blend);
+    SDL_DestroyTexture(tex);
+    return surf;
+}
+
+static SDL_Surface* composer_render_fft_surface(AppState* app,
+                                                RenderContext* render,
+                                                const SimulationState* sim,
+                                                const Scope* scope,
+                                                int target_w,
+                                                int target_h) {
+    if (!render || !render->renderer || !sim || !scope) return nullptr;
+    if (target_w <= 1 || target_h <= 1) return nullptr;
+
+    static double fft_freq[1024];
+    static double fft_mag[1024];
+    static double fft_phase[1024];
+    static double fft_mag_db[1024];
+    int fft_points = compute_scope_fft(scope, sim->dt, fft_freq, fft_mag, fft_phase, IM_ARRAYSIZE(fft_freq));
+    if (fft_points < 4) return nullptr;
+
+    const int start_idx = 1;  // skip DC
+    int plot_count = fft_points - start_idx;
+    double max_db = -1e9;
+    const double eps = 1e-9;
+    for (int i = 0; i < fft_points; ++i) {
+        fft_mag_db[i] = 20.0 * std::log10(fft_mag[i] + eps);
+        if (i >= start_idx && fft_mag_db[i] > max_db) max_db = fft_mag_db[i];
+    }
+    if (max_db < -120.0) max_db = -120.0;
+    double min_db = max_db - 80.0;  // 80 dB span
+
+    SDL_Renderer* rr = render->renderer;
+    SDL_Texture* tex = SDL_CreateTexture(rr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         target_w,
+                                         target_h);
+    if (!tex) return nullptr;
+
+    SDL_Texture* prev_target = SDL_GetRenderTarget(rr);
+    SDL_Rect prev_viewport;
+    SDL_RenderGetViewport(rr, &prev_viewport);
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(rr, &prev_blend);
+
+    SDL_Rect full = {0, 0, target_w, target_h};
+    SDL_SetRenderTarget(rr, tex);
+    SDL_RenderSetViewport(rr, &full);
+    SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+
+    SDL_Color bg, border, accent;
+    composer_theme(&bg, &border, &accent);
+    SDL_SetRenderDrawColor(rr, bg.r, bg.g, bg.b, 255);
+    SDL_RenderClear(rr);
+    SDL_SetRenderDrawColor(rr, border.r, border.g, border.b, 255);
+    SDL_RenderDrawRect(rr, &full);
+
+    SDL_SetRenderDrawColor(rr, accent.r, accent.g, accent.b, accent.a);
+    for (int k = start_idx + 1; k < fft_points; ++k) {
+        double t0 = (double)(k - 1 - start_idx) / (double)(plot_count - 1);
+        double t1 = (double)(k - start_idx) / (double)(plot_count - 1);
+        double v0 = fft_mag_db[k - 1];
+        double v1 = fft_mag_db[k];
+        double y0n = (v0 - min_db) / (max_db - min_db);
+        double y1n = (v1 - min_db) / (max_db - min_db);
+        if (y0n < 0.0) y0n = 0.0;
+        if (y0n > 1.0) y0n = 1.0;
+        if (y1n < 0.0) y1n = 0.0;
+        if (y1n > 1.0) y1n = 1.0;
+        int x0 = (int)std::lround(t0 * (double)(target_w - 1));
+        int x1 = (int)std::lround(t1 * (double)(target_w - 1));
+        int y0 = target_h - 1 - (int)std::lround(y0n * (double)(target_h - 1));
+        int y1 = target_h - 1 - (int)std::lround(y1n * (double)(target_h - 1));
+        SDL_RenderDrawLine(rr, x0, y0, x1, y1);
+    }
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_SetRenderTarget(rr, prev_target);
+        SDL_RenderSetViewport(rr, &prev_viewport);
+        SDL_SetRenderDrawBlendMode(rr, prev_blend);
+        SDL_DestroyTexture(tex);
+        return nullptr;
+    }
+    if (SDL_RenderReadPixels(rr, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        surf = nullptr;
+    }
+
+    SDL_SetRenderTarget(rr, prev_target);
+    SDL_RenderSetViewport(rr, &prev_viewport);
+    SDL_SetRenderDrawBlendMode(rr, prev_blend);
+    SDL_DestroyTexture(tex);
+    return surf;
+}
+
+static SDL_Surface* composer_render_legend_surface(RenderContext* render,
+                                                   int target_w,
+                                                   int target_h) {
+    if (!render || !render->renderer) return nullptr;
+    if (target_w <= 1 || target_h <= 1) return nullptr;
+    SDL_Renderer* rr = render->renderer;
+    SDL_Texture* tex = SDL_CreateTexture(rr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         target_w,
+                                         target_h);
+    if (!tex) return nullptr;
+
+    SDL_Texture* prev_target = SDL_GetRenderTarget(rr);
+    SDL_Rect prev_viewport;
+    SDL_RenderGetViewport(rr, &prev_viewport);
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(rr, &prev_blend);
+
+    SDL_Rect full = {0, 0, target_w, target_h};
+    SDL_SetRenderTarget(rr, tex);
+    SDL_RenderSetViewport(rr, &full);
+    SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+    SDL_Color bg, border, accent;
+    composer_theme(&bg, &border, &accent);
+    SDL_SetRenderDrawColor(rr, bg.r, bg.g, bg.b, 255);
+    SDL_RenderClear(rr);
+    SDL_SetRenderDrawColor(rr, border.r, border.g, border.b, 255);
+    SDL_RenderDrawRect(rr, &full);
+    render_legend(render, 4, 4, target_w - 8);
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_SetRenderTarget(rr, prev_target);
+        SDL_RenderSetViewport(rr, &prev_viewport);
+        SDL_SetRenderDrawBlendMode(rr, prev_blend);
+        SDL_DestroyTexture(tex);
+        return nullptr;
+    }
+    if (SDL_RenderReadPixels(rr, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        surf = nullptr;
+    }
+
+    SDL_SetRenderTarget(rr, prev_target);
+    SDL_RenderSetViewport(rr, &prev_viewport);
+    SDL_SetRenderDrawBlendMode(rr, prev_blend);
+    SDL_DestroyTexture(tex);
+    return surf;
+}
+
+static SDL_Surface* composer_render_measurements_surface(RenderContext* render,
+                                                         const AppState* app,
+                                                         int target_w,
+                                                         int target_h) {
+    if (!render || !render->renderer || !app) return nullptr;
+    if (target_w <= 1 || target_h <= 1) return nullptr;
+    SDL_Renderer* rr = render->renderer;
+    SDL_Texture* tex = SDL_CreateTexture(rr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         SDL_TEXTUREACCESS_TARGET,
+                                         target_w,
+                                         target_h);
+    if (!tex) return nullptr;
+
+    SDL_Texture* prev_target = SDL_GetRenderTarget(rr);
+    SDL_Rect prev_viewport;
+    SDL_RenderGetViewport(rr, &prev_viewport);
+    SDL_BlendMode prev_blend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(rr, &prev_blend);
+
+    SDL_Rect full = {0, 0, target_w, target_h};
+    SDL_SetRenderTarget(rr, tex);
+    SDL_RenderSetViewport(rr, &full);
+    SDL_SetRenderDrawBlendMode(rr, SDL_BLENDMODE_BLEND);
+    SDL_Color bg, border, accent;
+    composer_theme(&bg, &border, &accent);
+    SDL_SetRenderDrawColor(rr, bg.r, bg.g, bg.b, 255);
+    SDL_RenderClear(rr);
+    SDL_SetRenderDrawColor(rr, border.r, border.g, border.b, 255);
+    SDL_RenderDrawRect(rr, &full);
+
+    char line0[128];
+    char line1[128];
+    char line2[128];
+    std::snprintf(line0, sizeof(line0), "Distances: %zu", app->measurements.distances.size());
+    std::snprintf(line1, sizeof(line1), "Areas: %zu", app->measurements.areas.size());
+    std::snprintf(line2, sizeof(line2), "Annotations: %zu", app->measurements.annotations.size());
+
+    SDL_Color text_col = border;
+    int tw, th;
+    int cursor_y = 8;
+    const int gap = 6;
+
+    auto blit_line = [&](const char* text) {
+        SDL_Texture* t = render_text(render, text, text_col, &tw, &th);
+        if (!t) return;
+        SDL_Rect dst = {8, cursor_y, tw, th};
+        SDL_RenderCopy(rr, t, NULL, &dst);
+        SDL_DestroyTexture(t);
+        cursor_y += th + gap;
+    };
+
+    blit_line(line0);
+    blit_line(line1);
+    blit_line(line2);
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, target_w, target_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        SDL_SetRenderTarget(rr, prev_target);
+        SDL_RenderSetViewport(rr, &prev_viewport);
+        SDL_SetRenderDrawBlendMode(rr, prev_blend);
+        SDL_DestroyTexture(tex);
+        return nullptr;
+    }
+    if (SDL_RenderReadPixels(rr, NULL, surf->format->format, surf->pixels, surf->pitch) != 0) {
+        SDL_FreeSurface(surf);
+        surf = nullptr;
+    }
+
+    SDL_SetRenderTarget(rr, prev_target);
+    SDL_RenderSetViewport(rr, &prev_viewport);
+    SDL_SetRenderDrawBlendMode(rr, prev_blend);
+    SDL_DestroyTexture(tex);
+    return surf;
+}
+
+static SDL_Surface* render_composer_page_surface(AppState* app,
+                                                 RenderContext* render,
+                                                 SimulationState* sim,
+                                                 const Scope* scope,
+                                                 int page_idx,
+                                                 bool* out_any_field,
+                                                 bool* out_any_field_blitted) {
+    if (out_any_field) *out_any_field = false;
+    if (out_any_field_blitted) *out_any_field_blitted = false;
+    if (!app || !render || !render->renderer || !sim) return nullptr;
+    ensure_composer_initialized(app);
+    if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return nullptr;
+    const ComposerPage& page = app->composer_pages[page_idx];
+
+    SDL_Surface* out = SDL_CreateRGBSurfaceWithFormat(0, page.res_w, page.res_h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!out) return nullptr;
+    Uint8 alpha = page.transparent_bg ? 0 : (Uint8)(page.bg.w * 255);
+    SDL_FillRect(out, nullptr,
+                 SDL_MapRGBA(out->format,
+                             (Uint8)(page.bg.x * 255),
+                             (Uint8)(page.bg.y * 255),
+                             (Uint8)(page.bg.z * 255),
+                             alpha));
+    bool any_field = false;
+    bool any_field_blitted = false;
+
+    for (const auto& item : page.items) {
+        SDL_Rect dst;
+        dst.x = (int)std::lround(item.pos.x);
+        dst.y = (int)std::lround(item.pos.y);
+        dst.w = (int)std::lround(item.size.x);
+        dst.h = (int)std::lround(item.size.y);
+
+        bool blitted = false;
+        if (item.type == COMPOSER_FIELD_VIEW || item.type == COMPOSER_REGION) {
+            if (item.viewport_idx >= 0 && item.viewport_idx < 4) {
+                any_field = true;
+                const ViewportInstance& vp = app->viewports[item.viewport_idx];
+                if (vp.valid) {
+                    bool use_region = (item.type == COMPOSER_REGION);
+                    bool prev_outlines = app->show_material_outlines;
+                    app->show_material_outlines = false;
+                    ViewportInstance vp_clean = vp;
+                    vp_clean.show_grid = false;
+                    vp_clean.show_sources = false;
+                    vp_clean.show_vectors = false;
+                    SDL_Surface* src = composer_render_field_surface(app,
+                                                                     render,
+                                                                     sim,
+                                                                     vp_clean,
+                                                                     dst.w,
+                                                                     dst.h,
+                                                                     use_region,
+                                                                     item.region_norm);
+                    app->show_material_outlines = prev_outlines;
+                    if (src) {
+                        SDL_Rect dest = {dst.x, dst.y, src->w, src->h};
+                        SDL_BlitSurface(src, nullptr, out, &dest);
+                        SDL_FreeSurface(src);
+                        blitted = true;
+                        any_field_blitted = true;
+                    }
+                }
+            }
+        }
+
+        if (!blitted && item.type == COMPOSER_SCOPE) {
+            SDL_Surface* src = composer_render_scope_surface(app, render, scope, dst.w, dst.h);
+            if (src) {
+                SDL_Rect dest = {dst.x, dst.y, src->w, src->h};
+                SDL_BlitSurface(src, nullptr, out, &dest);
+                SDL_FreeSurface(src);
+                blitted = true;
+            }
+        }
+
+        if (!blitted && item.type == COMPOSER_FFT) {
+            SDL_Surface* src = composer_render_fft_surface(app, render, sim, scope, dst.w, dst.h);
+            if (src) {
+                SDL_Rect dest = {dst.x, dst.y, src->w, src->h};
+                SDL_BlitSurface(src, nullptr, out, &dest);
+                SDL_FreeSurface(src);
+                blitted = true;
+            }
+        }
+
+        if (!blitted && item.type == COMPOSER_LEGEND) {
+            SDL_Surface* src = composer_render_legend_surface(render, dst.w, dst.h);
+            if (src) {
+                SDL_Rect dest = {dst.x, dst.y, src->w, src->h};
+                SDL_BlitSurface(src, nullptr, out, &dest);
+                SDL_FreeSurface(src);
+                blitted = true;
+            }
+        }
+
+        if (!blitted && item.type == COMPOSER_MEAS) {
+            SDL_Surface* src = composer_render_measurements_surface(render, app, dst.w, dst.h);
+            if (src) {
+                SDL_Rect dest = {dst.x, dst.y, src->w, src->h};
+                SDL_BlitSurface(src, nullptr, out, &dest);
+                SDL_FreeSurface(src);
+                blitted = true;
+            }
+        }
+
+        if (!blitted) {
+            Uint32 col = composer_item_color(item);
+            SDL_Rect fill = dst;
+            SDL_FillRect(out, &fill, SDL_MapRGBA(out->format,
+                                                 (col >> IM_COL32_R_SHIFT) & 0xFF,
+                                                 (col >> IM_COL32_G_SHIFT) & 0xFF,
+                                                 (col >> IM_COL32_B_SHIFT) & 0xFF,
+                                                 255));
+        }
+    }
+
+    if (out_any_field) *out_any_field = any_field;
+    if (out_any_field_blitted) *out_any_field_blitted = any_field_blitted;
+    return out;
+}
+
+static bool export_composer_page(AppState* app,
+                                 RenderContext* render,
+                                 SimulationState* sim,
+                                 const Scope* scope,
+                                 int page_idx) {
+    bool any_field = false;
+    bool any_field_blitted = false;
+    SDL_Surface* out = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
+    if (!out) return false;
+    const ComposerPage& page = app->composer_pages[page_idx];
+
+#ifdef _WIN32
+    _mkdir("recordings");
+#else
+    mkdir("recordings", 0755);
+#endif
+    char out_path[260];
+    const char* base = page.output_name[0] ? page.output_name : "composer_page";
+    const char* ext = "bmp";
+    bool saved = false;
+    std::string ffmpeg_cmd = ffmpeg_command();
+    bool ffmpeg_ok = !ffmpeg_cmd.empty();
+
+    if (page.output_format == 0) {
+        ext = "bmp";
+        std::snprintf(out_path, sizeof(out_path), "recordings/%s.%s", base, ext);
+        saved = (SDL_SaveBMP(out, out_path) == 0);
+    } else if (page.output_format == 1) {
+        ext = "png";
+        std::snprintf(out_path, sizeof(out_path), "recordings/%s.%s", base, ext);
+        SDL_Surface* conv = SDL_ConvertSurfaceFormat(out, SDL_PIXELFORMAT_RGBA32, 0);
+        if (conv) {
+            saved = stbi_write_png(out_path,
+                                   conv->w,
+                                   conv->h,
+                                   4,
+                                   conv->pixels,
+                                   conv->pitch) == 1;
+            SDL_FreeSurface(conv);
+        } else {
+            saved = false;
+        }
+    } else if (page.output_format == 2 || page.output_format == 3) {
+        // MP4 or GIF via ffmpeg; if ffmpeg missing/fails, fall back to PNG
+        ext = (page.output_format == 2) ? "mp4" : "gif";
+        std::snprintf(out_path, sizeof(out_path), "recordings/%s.%s", base, ext);
+        if (ffmpeg_ok) {
+            // Write a single-frame raw stream to ffmpeg
+            std::filesystem::create_directories("recordings");
+            std::vector<std::string> args;
+            args.push_back(ffmpeg_cmd);
+            args.push_back("-y");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
+            args.push_back("-s");
+            char sizebuf[32];
+            std::snprintf(sizebuf, sizeof(sizebuf), "%dx%d", page.res_w, page.res_h);
+            args.push_back(sizebuf);
+            args.push_back("-i");
+            args.push_back("-");
+            if (page.output_format == 2) {
+                int kbps = page.video_kbps > 0 ? page.video_kbps : 4000;
+                kbps = std::clamp(kbps, 500, 50000);
+                args.push_back("-c:v");
+                args.push_back("mpeg4");
+                args.push_back("-b:v");
+                args.push_back(std::to_string(kbps * 1000));
+                args.push_back("-maxrate");
+                args.push_back(std::to_string(kbps * 1000));
+                args.push_back("-bufsize");
+                args.push_back(std::to_string(kbps * 2000));
+                args.push_back("-pix_fmt");
+                args.push_back("yuv420p");
+            } else {
+                args.push_back("-filter_complex");
+                args.push_back("fps=15,scale=iw:ih:flags=lanczos");
+            }
+            args.push_back(out_path);
+
+            // Launch ffmpeg with stdin pipe
+#ifdef _WIN32
+            // Use _popen for simplicity
+            std::string cmdline = "\"" + ffmpeg_cmd + "\"";
+            for (size_t i = 1; i < args.size(); ++i) {
+                cmdline += " " + args[i];
+            }
+            FILE* pipe = _popen(cmdline.c_str(), "wb");
+#else
+            std::string cmdline = ffmpeg_cmd;
+            for (size_t i = 1; i < args.size(); ++i) {
+                cmdline += " " + args[i];
+            }
+            FILE* pipe = popen(cmdline.c_str(), "w");
+#endif
+            if (pipe) {
+                SDL_Surface* conv = SDL_ConvertSurfaceFormat(out, SDL_PIXELFORMAT_RGBA32, 0);
+                if (conv) {
+                    size_t bytes = conv->pitch * conv->h;
+                    size_t written = fwrite(conv->pixels, 1, bytes, pipe);
+                    saved = (written == bytes);
+                    SDL_FreeSurface(conv);
+                }
+#ifdef _WIN32
+                _pclose(pipe);
+#else
+                pclose(pipe);
+#endif
+            } else {
+                saved = false;
+            }
+            log_ffmpeg_attempt(cmdline.c_str(), saved ? 0 : -1);
+        }
+        if (!saved) {
+            // fallback to PNG
+            std::snprintf(out_path, sizeof(out_path), "recordings/%s.png", base);
+            SDL_Surface* conv = SDL_ConvertSurfaceFormat(out, SDL_PIXELFORMAT_RGBA32, 0);
+            if (conv) {
+                saved = stbi_write_png(out_path,
+                                       conv->w,
+                                       conv->h,
+                                       4,
+                                       conv->pixels,
+                                       conv->pitch) == 1;
+                SDL_FreeSurface(conv);
+            }
+            if (ffmpeg_ok) {
+                ui_log_add(app, "FFmpeg export failed, saved PNG instead: %s", out_path);
+            } else {
+                ui_log_add(app, "FFmpeg not found, saved PNG instead: %s", out_path);
+            }
+        }
+    }
+    SDL_FreeSurface(out);
+    if (saved) {
+        if (any_field && !any_field_blitted) {
+            std::snprintf(app->composer_status, sizeof(app->composer_status), "Exported %s (placeholders used)", out_path);
+            ui_log_add(app, "Composer exported with placeholders (viewport not visible): %s", out_path);
+        } else {
+            std::snprintf(app->composer_status, sizeof(app->composer_status), "Exported %s", out_path);
+            ui_log_add(app, "Composer exported: %s", out_path);
+        }
+    } else {
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Export failed: %s", out_path);
+        ui_log_add(app, "Composer export failed: %s", out_path);
+    }
+    return true;
+}
+
+static bool export_composer_animation(AppState* app,
+                                      RenderContext* render,
+                                      SimulationState* sim,
+                                      const Scope* scope,
+                                      int page_idx) {
+    if (!app || !render || !render->renderer || !sim) return false;
+    ensure_composer_initialized(app);
+    if (page_idx < 0 || page_idx >= (int)app->composer_pages.size()) return false;
+    const ComposerPage& page = app->composer_pages[page_idx];
+    int frames = std::max(1, page.frames);
+    int fps = std::clamp(page.fps, 5, 60);
+    bool any_field = false;
+    bool any_field_blitted = false;
+    int steps_per_frame = std::max(1, app->composer_animation_steps_per_frame);
+    // We'll render each frame after stepping sim (mutating sim in-place)
+    SDL_Surface* surface = nullptr;
+
+#ifdef _WIN32
+    _mkdir("recordings");
+#else
+    mkdir("recordings", 0755);
+#endif
+    const char* base = page.output_name[0] ? page.output_name : "composer_page";
+    bool saved = false;
+    char out_path[260];
+    std::string ffmpeg_cmd = ffmpeg_command();
+    bool ffmpeg_ok = !ffmpeg_cmd.empty();
+    std::error_code ec;
+
+    if (page.output_format == 0 || page.output_format == 1) {
+        // PNG sequence
+        std::filesystem::path dir = std::filesystem::path("recordings") / (std::string(base) + "_frames");
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        saved = true;
+        for (int i = 0; i < frames; ++i) {
+            for (int s = 0; s < steps_per_frame; ++s) {
+                fdtd_step(sim);
+            }
+            SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
+            if (!frame_surface) { saved = false; break; }
+            SDL_Surface* conv = SDL_ConvertSurfaceFormat(frame_surface, SDL_PIXELFORMAT_RGBA32, 0);
+            SDL_FreeSurface(frame_surface);
+            if (!conv) { saved = false; break; }
+            char frame_path[512];
+            std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04d.png", dir.string().c_str(), i);
+            int ok = stbi_write_png(frame_path,
+                                    conv->w,
+                                    conv->h,
+                                    4,
+                                    conv->pixels,
+                                    conv->pitch);
+            SDL_FreeSurface(conv);
+            if (ok != 1) {
+                saved = false;
+                break;
+            }
+        }
+        std::snprintf(out_path, sizeof(out_path), "%s", dir.string().c_str());
+    } else {
+        // MP4 or GIF via ffmpeg rawvideo pipe (no PNG decode)
+        const char* ext = (page.output_format == 2) ? "mp4" : "gif";
+        std::filesystem::path video_path = std::filesystem::path("recordings") / (std::string(base) + "." + ext);
+        std::snprintf(out_path, sizeof(out_path), "%s", video_path.string().c_str());
+        saved = false;
+
+        if (ffmpeg_ok) {
+            std::vector<std::string> args;
+            args.push_back(ffmpeg_cmd);
+            args.push_back("-y");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
+            args.push_back("-s");
+            char sizebuf[32];
+            std::snprintf(sizebuf, sizeof(sizebuf), "%dx%d", page.res_w, page.res_h);
+            args.push_back(sizebuf);
+            args.push_back("-r");
+            args.push_back(std::to_string(fps));
+            args.push_back("-i");
+            args.push_back("-");
+            if (page.output_format == 2) {
+                int kbps = page.video_kbps > 0 ? page.video_kbps : 4000;
+                kbps = std::clamp(kbps, 500, 50000);
+                args.push_back("-c:v");
+                args.push_back("mpeg4");
+                args.push_back("-b:v");
+                args.push_back(std::to_string(kbps * 1000));
+                args.push_back("-maxrate");
+                args.push_back(std::to_string(kbps * 1000));
+                args.push_back("-bufsize");
+                args.push_back(std::to_string(kbps * 2000));
+                args.push_back("-pix_fmt");
+                args.push_back("yuv420p");
+            } else {
+                args.push_back("-vf");
+                args.push_back("fps=" + std::to_string(fps) + ",scale=iw:ih:flags=lanczos");
+            }
+            args.push_back(video_path.string());
+
+#ifdef _WIN32
+            std::string cmdline = "\"" + ffmpeg_cmd + "\"";
+            for (size_t i = 1; i < args.size(); ++i) {
+                cmdline += " " + args[i];
+            }
+            FILE* pipe = _popen(cmdline.c_str(), "wb");
+#else
+            std::string cmdline = join_args(args);
+            FILE* pipe = popen(cmdline.c_str(), "w");
+#endif
+            if (pipe) {
+                bool ok = true;
+                for (int i = 0; i < frames && ok; ++i) {
+                    if (i > 0) {
+                        for (int s = 0; s < steps_per_frame; ++s) {
+                            fdtd_step(sim);
+                        }
+                    }
+                    SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
+                    SDL_Surface* conv = frame_surface ? SDL_ConvertSurfaceFormat(frame_surface, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
+                    if (frame_surface) SDL_FreeSurface(frame_surface);
+                    if (!conv) {
+                        ok = false;
+                        break;
+                    }
+                    size_t bytes = (size_t)conv->pitch * (size_t)conv->h;
+                    size_t written = fwrite(conv->pixels, 1, bytes, pipe);
+                    SDL_FreeSurface(conv);
+                    if (written != bytes) {
+                        ok = false;
+                        break;
+                    }
+                }
+#ifdef _WIN32
+                int rc = _pclose(pipe);
+#else
+                int rc = pclose(pipe);
+#endif
+                saved = ok && (rc == 0);
+                log_ffmpeg_attempt(cmdline.c_str(), rc);
+            } else {
+                log_ffmpeg_attempt(ffmpeg_cmd.c_str(), -1);
+                saved = false;
+            }
+        }
+    }
+
+    if (saved) {
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Animation exported: %s", out_path);
+        ui_log_add(app, "Composer animation exported: %s (%d frames @ %d fps)", out_path, frames, fps);
+    } else {
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Animation export failed");
+        ui_log_add(app, "Composer animation export failed");
+    }
+    return saved;
+}
+
+static void draw_print_composer(AppState* app, SDL_Renderer* renderer) {
+    if (!app || !app->show_print_composer) return;
+    ensure_composer_initialized(app);
+    if (!ImGui::Begin("Print Composer", &app->show_print_composer)) {
+        ImGui::End();
+        return;
+    }
+
+    if (app->composer_pages.empty()) {
+        ImGui::TextUnformatted("No pages defined.");
+        ImGui::End();
+        return;
+    }
+    if (app->composer_active_page >= (int)app->composer_pages.size()) {
+        app->composer_active_page = (int)app->composer_pages.size() - 1;
+    }
+
+    ImGui::TextUnformatted("Pages:");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Add Page")) {
+        ComposerPage p{};
+        int clone_idx = app->composer_active_page;
+        if (clone_idx < 0 || clone_idx >= (int)app->composer_pages.size()) clone_idx = 0;
+        const ComposerPage& cur = app->composer_pages[clone_idx];
+        std::snprintf(p.name, sizeof(p.name), "Page %zu", app->composer_pages.size() + 1);
+        p.res_w = cur.res_w;
+        p.res_h = cur.res_h;
+        p.bg = cur.bg;
+        p.transparent_bg = cur.transparent_bg;
+        std::snprintf(p.output_name, sizeof(p.output_name), "composer_page_%zu", app->composer_pages.size() + 1);
+        p.output_format = cur.output_format;
+        p.fps = cur.fps;
+        p.frames = cur.frames;
+        p.video_kbps = cur.video_kbps;
+        app->composer_pages.push_back(p);
+        app->composer_active_page = (int)app->composer_pages.size() - 1;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Duplicate")) {
+        if (!app->composer_pages.empty() && app->composer_active_page >= 0 && app->composer_active_page < (int)app->composer_pages.size()) {
+            ComposerPage dup = app->composer_pages[app->composer_active_page];
+            std::snprintf(dup.name, sizeof(dup.name), "Page %zu", app->composer_pages.size() + 1);
+            std::snprintf(dup.output_name, sizeof(dup.output_name), "composer_page_%zu", app->composer_pages.size() + 1);
+            app->composer_pages.push_back(dup);
+            app->composer_active_page = (int)app->composer_pages.size() - 1;
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Delete")) {
+        if (app->composer_pages.size() > 1 &&
+            app->composer_active_page >= 0 &&
+            app->composer_active_page < (int)app->composer_pages.size()) {
+            app->composer_pages.erase(app->composer_pages.begin() + app->composer_active_page);
+            if (app->composer_active_page >= (int)app->composer_pages.size()) {
+                app->composer_active_page = (int)app->composer_pages.size() - 1;
+            }
+        }
+    }
+
+    static int tmpl_choice = 0;
+    const char* tmpl_labels[] = {"Blank", "Field+Legend", "Field+Scope", "Field+FFT+Legend"};
+    ImGui::PushItemWidth(180.0f);
+    ImGui::Combo("Template", &tmpl_choice, tmpl_labels, IM_ARRAYSIZE(tmpl_labels));
+    ImGui::PopItemWidth();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Apply Template")) {
+        if (app->composer_active_page >= 0 && app->composer_active_page < (int)app->composer_pages.size()) {
+            composer_apply_template(app, app->composer_pages[app->composer_active_page], tmpl_choice);
+        }
+    }
+
+    for (size_t i = 0; i < app->composer_pages.size(); ++i) {
+        ImGui::PushID((int)i);
+        bool sel = (int)i == app->composer_active_page;
+        if (ImGui::Selectable(app->composer_pages[i].name, sel)) {
+            app->composer_active_page = (int)i;
+        }
+        ImGui::PopID();
+    }
+
+    if (app->composer_active_page < 0) app->composer_active_page = 0;
+    ComposerPage& page = app->composer_pages[app->composer_active_page];
+    if (app->composer_drag_item >= (int)page.items.size()) {
+        app->composer_drag_item = -1;
+        app->composer_dragging = false;
+    }
+    if (app->composer_resize_item >= (int)page.items.size()) {
+        app->composer_resize_item = -1;
+        app->composer_resizing = false;
+        app->composer_resize_corner = -1;
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Sources:");
+    if (ImGui::Button("Add Field A")) composer_add_item(app, page, COMPOSER_FIELD_VIEW, 0, ImVec2(80, 80), ImVec2(400, 260));
+    ImGui::SameLine();
+    if (ImGui::Button("Add Field B")) composer_add_item(app, page, COMPOSER_FIELD_VIEW, 1, ImVec2(520, 80), ImVec2(400, 260));
+    ImGui::SameLine();
+    if (ImGui::Button("Add Legend")) composer_add_item(app, page, COMPOSER_LEGEND, 0, ImVec2(80, 360), ImVec2(280, 180));
+    ImGui::SameLine();
+    if (ImGui::Button("Add Scope")) composer_add_item(app, page, COMPOSER_SCOPE, 0, ImVec2(380, 360), ImVec2(420, 220));
+    if (ImGui::Button("Add FFT")) composer_add_item(app, page, COMPOSER_FFT, 0, ImVec2(820, 360), ImVec2(420, 220));
+    ImGui::SameLine();
+    if (ImGui::Button("Add Measurements")) composer_add_item(app, page, COMPOSER_MEAS, 0, ImVec2(840, 80), ImVec2(300, 200));
+    ImGui::SameLine();
+    if (ImGui::Button("Pick Region")) {
+        app->composer_pick_region_active = true;
+        app->composer_pick_region_dragging = false;
+        app->composer_pick_region_viewport = std::clamp(app->composer_pick_region_viewport, 0, 3);
+        app->composer_pick_region_page = app->composer_active_page;
+        app->composer_pick_region_target_item = -1;
+        std::snprintf(app->composer_status, sizeof(app->composer_status), "Pick a region on viewport %d", app->composer_pick_region_viewport + 1);
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::SliderInt("Viewport##pick", &app->composer_pick_region_viewport, 0, 3, "Viewport %d");
+    ImGui::SameLine();
+    ImGui::Checkbox("Snap cells", &app->composer_pick_region_snap);
+    ImGui::SameLine();
+    if (ImGui::Button("Add Region")) composer_add_item(app, page, COMPOSER_REGION, 0, ImVec2(120, 140), ImVec2(360, 240));
+
+    ImGui::Separator();
+    ImGui::Text("Page %s", page.name);
+    ImGui::InputInt("Resolution W", &page.res_w);
+    ImGui::InputInt("Resolution H", &page.res_h);
+    page.res_w = std::max(page.res_w, 320);
+    page.res_h = std::max(page.res_h, 240);
+    ImGui::InputText("Output name", page.output_name, IM_ARRAYSIZE(page.output_name));
+    const char* fmt_labels[] = {"BMP", "PNG", "MP4", "GIF"};
+    ImGui::Combo("Format", &page.output_format, fmt_labels, IM_ARRAYSIZE(fmt_labels));
+    bool ffmpeg_ok = has_ffmpeg();
+    ImGui::TextDisabled("FFmpeg: %s", ffmpeg_ok ? "found" : "missing (MP4/GIF will fall back to PNG)");
+    ImGui::SliderInt("FPS (for video)", &page.fps, 5, 60);
+    ImGui::InputInt("Frames (animation)", &page.frames);
+    if (page.frames < 1) page.frames = 1;
+    if (page.output_format == 2) {
+        ImGui::BeginDisabled(!ffmpeg_ok);
+        ImGui::SliderInt("Video bitrate (kbps, MP4)", &page.video_kbps, 500, 50000);
+        ImGui::EndDisabled();
+        if (page.video_kbps < 500) page.video_kbps = 500;
+        if (page.video_kbps > 50000) page.video_kbps = 50000;
+    }
+    ImGui::Checkbox("Transparent BG (PNG/GIF)", &page.transparent_bg);
+    ImGui::ColorEdit4("Background", (float*)&page.bg, ImGuiColorEditFlags_NoInputs);
+    ImGui::Checkbox("Snap to grid", &app->composer_snap);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputFloat("Step", &app->composer_snap_step, 1.0f, 4.0f, "%.1f");
+    if (app->composer_snap_step < 1.0f) app->composer_snap_step = 1.0f;
+    ImGui::Checkbox("Canvas grid", &app->composer_canvas_grid);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt("Grid px", &app->composer_canvas_grid_step);
+    if (app->composer_canvas_grid_step < 2) app->composer_canvas_grid_step = 2;
+    ImGui::Separator();
+    ImGui::InputInt("Anim steps/frame", &app->composer_animation_steps_per_frame);
+    if (app->composer_animation_steps_per_frame < 1) app->composer_animation_steps_per_frame = 1;
+    ImGui::TextDisabled("Frames: %d @ %d fps -> %.2f sec",
+                        page.frames,
+                        page.fps,
+                        (float)page.frames / (float)page.fps);
+    ImGui::Separator();
+    int sel_count = 0;
+    for (const auto& it : page.items) if (it.selected) sel_count++;
+    ImGui::Text("Selected: %d", sel_count);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Select All")) composer_select_all(page, true);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear Sel")) composer_select_all(page, false);
+    bool can_align = sel_count >= 1;
+    bool can_distribute = sel_count >= 2;
+    ImGui::BeginDisabled(!can_align);
+    if (ImGui::Button("Align Left")) composer_align_selected(page, page.res_w, page.res_h, "left", app->composer_snap, app->composer_snap_step);
+    ImGui::SameLine();
+    if (ImGui::Button("Align Right")) composer_align_selected(page, page.res_w, page.res_h, "right", app->composer_snap, app->composer_snap_step);
+    ImGui::SameLine();
+    if (ImGui::Button("Align Top")) composer_align_selected(page, page.res_w, page.res_h, "top", app->composer_snap, app->composer_snap_step);
+    ImGui::SameLine();
+    if (ImGui::Button("Align Bottom")) composer_align_selected(page, page.res_w, page.res_h, "bottom", app->composer_snap, app->composer_snap_step);
+    if (ImGui::Button("Align Center X")) composer_align_selected(page, page.res_w, page.res_h, "center_x", app->composer_snap, app->composer_snap_step);
+    ImGui::SameLine();
+    if (ImGui::Button("Align Center Y")) composer_align_selected(page, page.res_w, page.res_h, "center_y", app->composer_snap, app->composer_snap_step);
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!can_distribute);
+    if (ImGui::Button("Distribute X")) composer_align_selected(page, page.res_w, page.res_h, "distribute_x", app->composer_snap, app->composer_snap_step);
+    ImGui::SameLine();
+    if (ImGui::Button("Distribute Y")) composer_align_selected(page, page.res_w, page.res_h, "distribute_y", app->composer_snap, app->composer_snap_step);
+    ImGui::EndDisabled();
+    if (ImGui::Button("Export Page (BMP)")) {
+        app->composer_request_export = true;
+        app->composer_request_page = app->composer_active_page;
+        std::snprintf(app->composer_status,
+                      sizeof(app->composer_status),
+                      "Queued export for %s",
+                      page.name);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export All Pages (BMP)")) {
+        app->composer_request_export_all = true;
+        std::snprintf(app->composer_status,
+                      sizeof(app->composer_status),
+                      "Queued export for all pages (%zu)",
+                      app->composer_pages.size());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export Animation (ffmpeg/PNG)")) {
+        app->composer_request_export_all = false;
+        app->composer_request_animation = true;
+        app->composer_request_page = app->composer_active_page;
+        std::snprintf(app->composer_status,
+                      sizeof(app->composer_status),
+                      "Queued animation export for %s",
+                      page.name);
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted(app->composer_status);
+
+    ImGui::Separator();
+    ImVec2 canvas_size = ImVec2(ImGui::GetContentRegionAvail().x, 480.0f);
+    if (canvas_size.x < 200.0f) canvas_size.x = 200.0f;
+    if (canvas_size.y < 200.0f) canvas_size.y = 200.0f;
+    ImGui::BeginChild("ComposerCanvas", canvas_size, true, ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoScrollbar);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+    float scale = std::min(canvas_size.x / (float)page.res_w, canvas_size.y / (float)page.res_h);
+    ImVec2 page_px(page.res_w * scale, page.res_h * scale);
+    ImVec2 page_origin = ImVec2(canvas_pos.x + (canvas_size.x - page_px.x) * 0.5f,
+                                canvas_pos.y + (canvas_size.y - page_px.y) * 0.5f);
+    ImVec2 page_min = page_origin;
+    ImVec2 page_max = ImVec2(page_origin.x + page_px.x, page_origin.y + page_px.y);
+    dl->AddRectFilled(page_min, page_max, IM_COL32((int)(page.bg.x * 255), (int)(page.bg.y * 255), (int)(page.bg.z * 255), 255));
+    dl->AddRect(page_min, page_max, IM_COL32(255, 255, 255, 200), 4.0f, 0, 2.0f);
+    if (app->composer_canvas_grid && app->composer_canvas_grid_step > 1) {
+        int step = std::max(4, app->composer_canvas_grid_step);
+        float step_px = step * scale;
+        for (float x = page_min.x; x <= page_max.x + 1.0f; x += step_px) {
+            dl->AddLine(ImVec2(x, page_min.y), ImVec2(x, page_max.y), IM_COL32(255, 255, 255, 40));
+        }
+        for (float y = page_min.y; y <= page_max.y + 1.0f; y += step_px) {
+            dl->AddLine(ImVec2(page_min.x, y), ImVec2(page_max.x, y), IM_COL32(255, 255, 255, 40));
+        }
+    }
+
+    ImGui::InvisibleButton("canvas_btn", canvas_size, ImGuiButtonFlags_MouseButtonLeft);
+    bool canvas_hovered = ImGui::IsItemHovered();
+    ImVec2 mouse = ImGui::GetIO().MousePos;
+    ImVec2 mouse_page = ImVec2((mouse.x - page_origin.x) / scale, (mouse.y - page_origin.y) / scale);
+
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        page.items.erase(std::remove_if(page.items.begin(), page.items.end(),
+                                        [](const ComposerItem& it) { return it.selected; }),
+                         page.items.end());
+    }
+
+    for (size_t i = 0; i < page.items.size(); ++i) {
+        ComposerItem& it = page.items[i];
+        ImVec2 minp = ImVec2(page_origin.x + it.pos.x * scale,
+                             page_origin.y + it.pos.y * scale);
+        ImVec2 maxp = ImVec2(minp.x + it.size.x * scale,
+                             minp.y + it.size.y * scale);
+        ImU32 col = composer_item_color(it);
+        dl->AddRectFilled(minp, maxp, col);
+        dl->AddRect(minp, maxp, IM_COL32(255, 255, 255, it.selected ? 255 : 140), 2.0f, 0, it.selected ? 3.0f : 1.5f);
+        char label[64];
+        const char* type_name = "Item";
+        switch (it.type) {
+            case COMPOSER_FIELD_VIEW: type_name = "Field"; break;
+            case COMPOSER_REGION: type_name = "Region"; break;
+            case COMPOSER_SCOPE: type_name = "Scope"; break;
+            case COMPOSER_FFT: type_name = "FFT"; break;
+            case COMPOSER_LEGEND: type_name = "Legend"; break;
+            case COMPOSER_MEAS: type_name = "Measurements"; break;
+            case COMPOSER_SMITH: type_name = "Smith"; break;
+        }
+        std::snprintf(label, sizeof(label), "%s #%d", type_name, it.id);
+        dl->AddText(ImVec2(minp.x + 6, minp.y + 6), IM_COL32(20, 20, 20, 255), label);
+
+        if (it.selected) {
+            const float handle_sz = 10.0f;
+            ImVec2 corners[4] = {minp,
+                                 ImVec2(maxp.x, minp.y),
+                                 ImVec2(minp.x, maxp.y),
+                                 maxp};
+            for (int h = 0; h < 4; ++h) {
+                ImVec2 hc = corners[h];
+                ImVec2 hmin = ImVec2(hc.x - handle_sz * 0.5f, hc.y - handle_sz * 0.5f);
+                ImVec2 hmax = ImVec2(hc.x + handle_sz * 0.5f, hc.y + handle_sz * 0.5f);
+                bool hhover = mouse.x >= hmin.x && mouse.x <= hmax.x &&
+                              mouse.y >= hmin.y && mouse.y <= hmax.y;
+                ImU32 hcol = hhover ? IM_COL32(255, 200, 80, 255) : IM_COL32(240, 240, 240, 230);
+                if (hhover) {
+                    ImGuiMouseCursor cur = (h == 0 || h == 3) ? ImGuiMouseCursor_ResizeNWSE : ImGuiMouseCursor_ResizeNESW;
+                    ImGui::SetMouseCursor(cur);
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        for (auto& other : page.items) other.selected = false;
+                        it.selected = true;
+                        app->composer_resizing = true;
+                        app->composer_resize_item = (int)i;
+                        app->composer_resize_corner = h;
+                        app->composer_resize_start_pos = it.pos;
+                        app->composer_resize_start_size = it.size;
+                        app->composer_resize_start_mouse = mouse_page;
+                        app->composer_dragging = false;
+                        app->composer_drag_item = -1;
+                    }
+                }
+                dl->AddRectFilled(hmin, hmax, hcol, 2.0f);
+                dl->AddRect(hmin, hmax, IM_COL32(30, 30, 30, 230), 2.0f);
+            }
+        }
+
+        bool hovered = canvas_hovered &&
+                       mouse.x >= minp.x && mouse.x <= maxp.x &&
+                       mouse.y >= minp.y && mouse.y <= maxp.y;
+        if (!app->composer_resizing && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            bool ctrl = ImGui::GetIO().KeyCtrl;
+            if (!ctrl) {
+                for (auto& other : page.items) other.selected = false;
+                it.selected = true;
+            } else {
+                it.selected = !it.selected;
+            }
+            app->composer_dragging = true;
+            app->composer_drag_item = (int)i;
+            app->composer_drag_offset = ImVec2(mouse_page.x - it.pos.x, mouse_page.y - it.pos.y);
+        }
+    }
+
+    if (app->composer_resizing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (app->composer_resize_item >= 0 && app->composer_resize_item < (int)page.items.size()) {
+            ComposerItem& it = page.items[app->composer_resize_item];
+            ImVec2 delta = ImVec2(mouse_page.x - app->composer_resize_start_mouse.x,
+                                  mouse_page.y - app->composer_resize_start_mouse.y);
+            float left = app->composer_resize_start_pos.x;
+            float right = left + app->composer_resize_start_size.x;
+            float top = app->composer_resize_start_pos.y;
+            float bottom = top + app->composer_resize_start_size.y;
+            switch (app->composer_resize_corner) {
+                case 0: left += delta.x; top += delta.y; break;
+                case 1: right += delta.x; top += delta.y; break;
+                case 2: left += delta.x; bottom += delta.y; break;
+                case 3: right += delta.x; bottom += delta.y; break;
+                default: break;
+            }
+            const float kMin = 24.0f;
+            if (right - left < kMin) {
+                if (app->composer_resize_corner == 0 || app->composer_resize_corner == 2) {
+                    left = right - kMin;
+                } else {
+                    right = left + kMin;
+                }
+            }
+            if (bottom - top < kMin) {
+                if (app->composer_resize_corner == 0 || app->composer_resize_corner == 1) {
+                    top = bottom - kMin;
+                } else {
+                    bottom = top + kMin;
+                }
+            }
+            if (app->composer_snap) {
+                float step = std::max(1.0f, app->composer_snap_step);
+                left = std::round(left / step) * step;
+                right = std::round(right / step) * step;
+                top = std::round(top / step) * step;
+                bottom = std::round(bottom / step) * step;
+            }
+            left = std::max(left, 0.0f);
+            top = std::max(top, 0.0f);
+            right = std::min(right, (float)page.res_w);
+            bottom = std::min(bottom, (float)page.res_h);
+            if (right - left < kMin) right = left + kMin;
+            if (bottom - top < kMin) bottom = top + kMin;
+            it.pos = ImVec2(left, top);
+            it.size = ImVec2(right - left, bottom - top);
+        }
+    } else if (app->composer_resizing && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        app->composer_resizing = false;
+        app->composer_resize_item = -1;
+        app->composer_resize_corner = -1;
+    } else if (app->composer_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (app->composer_drag_item >= 0 && app->composer_drag_item < (int)page.items.size()) {
+            ComposerItem& drag = page.items[app->composer_drag_item];
+            drag.pos = ImVec2(mouse_page.x - app->composer_drag_offset.x,
+                              mouse_page.y - app->composer_drag_offset.y);
+            if (app->composer_snap) {
+                float step = std::max(1.0f, app->composer_snap_step);
+                drag.pos.x = std::round(drag.pos.x / step) * step;
+                drag.pos.y = std::round(drag.pos.y / step) * step;
+            }
+            if (drag.pos.x < 0) drag.pos.x = 0;
+            if (drag.pos.y < 0) drag.pos.y = 0;
+            if (drag.pos.x + drag.size.x > page.res_w) drag.pos.x = page.res_w - drag.size.x;
+            if (drag.pos.y + drag.size.y > page.res_h) drag.pos.y = page.res_h - drag.size.y;
+        }
+    }
+    if ((app->composer_dragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) ||
+        (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && app->composer_dragging)) {
+        app->composer_dragging = false;
+        app->composer_drag_item = -1;
+    }
+
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    // Item properties
+    ComposerItem* sel = nullptr;
+    for (auto& it : page.items) {
+        if (it.selected) { sel = &it; break; }
+    }
+        if (sel) {
+            ImGui::Text("Selected: #%d", sel->id);
+            ImGui::TextUnformatted("Type:");
+            ImGui::SameLine();
+            const char* type_name = "Item";
+            switch (sel->type) {
+                case COMPOSER_FIELD_VIEW: type_name = "Field"; break;
+                case COMPOSER_REGION: type_name = "Region"; break;
+                case COMPOSER_SCOPE: type_name = "Scope"; break;
+                case COMPOSER_FFT: type_name = "FFT"; break;
+                case COMPOSER_LEGEND: type_name = "Legend"; break;
+                case COMPOSER_MEAS: type_name = "Measurements"; break;
+                case COMPOSER_SMITH: type_name = "Smith"; break;
+            }
+            ImGui::TextUnformatted(type_name);
+            ImGui::InputFloat2("Pos", (float*)&sel->pos);
+            ImGui::InputFloat2("Size", (float*)&sel->size);
+        if (sel->type == COMPOSER_FIELD_VIEW) {
+            ImGui::InputInt("Viewport", &sel->viewport_idx);
+            if (sel->viewport_idx < 0) sel->viewport_idx = 0;
+            if (sel->viewport_idx > 3) sel->viewport_idx = 3;
+        } else if (sel->type == COMPOSER_REGION) {
+                ImGui::InputInt("Viewport", &sel->viewport_idx);
+                if (sel->viewport_idx < 0) sel->viewport_idx = 0;
+                if (sel->viewport_idx > 3) sel->viewport_idx = 3;
+                float r[4] = {sel->region_norm.x, sel->region_norm.y, sel->region_norm.z, sel->region_norm.w};
+                if (ImGui::InputFloat4("Region (x0,y0,x1,y1)", r)) {
+                    sel->region_norm = ImVec4(r[0], r[1], r[2], r[3]);
+                    if (sel->region_norm.x < 0.0f) sel->region_norm.x = 0.0f;
+                    if (sel->region_norm.y < 0.0f) sel->region_norm.y = 0.0f;
+                    if (sel->region_norm.z > 1.0f) sel->region_norm.z = 1.0f;
+                    if (sel->region_norm.w > 1.0f) sel->region_norm.w = 1.0f;
+                    if (sel->region_norm.z < sel->region_norm.x + 0.001f) sel->region_norm.z = sel->region_norm.x + 0.001f;
+                    if (sel->region_norm.w < sel->region_norm.y + 0.001f) sel->region_norm.w = sel->region_norm.y + 0.001f;
+                }
+                if (ImGui::SmallButton("Re-pick region")) {
+                    app->composer_pick_region_active = true;
+                    app->composer_pick_region_dragging = false;
+                    app->composer_pick_region_viewport = sel->viewport_idx;
+                    app->composer_pick_region_page = app->composer_active_page;
+                    app->composer_pick_region_target_item = sel->id;
+                    app->composer_pick_region_start_norm = ImVec2(sel->region_norm.x, sel->region_norm.y);
+                    app->composer_pick_region_end_norm = ImVec2(sel->region_norm.z, sel->region_norm.w);
+                    std::snprintf(app->composer_status, sizeof(app->composer_status), "Pick region for item #%d", sel->id);
+                }
+            }
+            if (ImGui::Button("Delete Item")) {
+                page.items.erase(std::remove_if(page.items.begin(), page.items.end(),
+                                                [&](const ComposerItem& it) { return it.id == sel->id; }),
+                                 page.items.end());
+            sel = nullptr;
+        }
+    } else {
+        ImGui::TextUnformatted("Select an item to edit properties.");
     }
 
     ImGui::End();
@@ -1207,11 +3147,15 @@ static void stop_recording(AppState* app) {
     }
 
     if (success) {
-        rec.state = RECORDING_IDLE;
+        rec.state = rec.composer_preview_mode ? RECORDING_IDLE : RECORDING_IDLE;
         std::snprintf(rec.status_message,
                       sizeof(rec.status_message),
                       "Saved: %s", rec.output_path);
         ui_log_add(app, "Animation saved: %s", rec.output_path);
+        if (rec.composer_preview_mode) {
+            rec.composer_preview_done = true;
+            rec.composer_preview_mode = false;
+        }
         if (rec.auto_play) {
 #ifdef _WIN32
             ShellExecuteA(NULL, "open", rec.output_path, NULL, NULL, SW_SHOWNORMAL);
@@ -1238,7 +3182,8 @@ static void stop_recording(AppState* app) {
 
 static void capture_frame_if_recording(AppState* app,
                                        SDL_Renderer* renderer,
-                                       double now_seconds) {
+                                       double now_seconds,
+                                       SDL_Texture* override_texture) {
     if (!app || !renderer) return;
     AnimationRecorder& rec = app->recorder;
     if (rec.state != RECORDING_ACTIVE) return;
@@ -1246,10 +3191,30 @@ static void capture_frame_if_recording(AppState* app,
     if (now_seconds - g_record_last_capture_time + 1e-6 < frame_interval) return;
     g_record_last_capture_time = now_seconds;
 
-    SDL_Surface* frame = capture_frame(renderer,
-                                       rec.capture_width,
-                                       rec.capture_height,
-                                       rec.resolution_scale);
+    SDL_Surface* frame = nullptr;
+    if (override_texture) {
+        int tex_w = rec.capture_width;
+        int tex_h = rec.capture_height;
+        if (tex_w < 2) tex_w = 2;
+        if (tex_h < 2) tex_h = 2;
+        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, tex_w, tex_h, 32, SDL_PIXELFORMAT_RGBA32);
+        if (surf) {
+            SDL_Texture* old_target = SDL_GetRenderTarget(renderer);
+            SDL_SetRenderTarget(renderer, override_texture);
+            SDL_Rect src = {0, 0, tex_w, tex_h};
+            if (SDL_RenderReadPixels(renderer, &src, surf->format->format, surf->pixels, surf->pitch) == 0) {
+                frame = surf;
+            } else {
+                SDL_FreeSurface(surf);
+            }
+            SDL_SetRenderTarget(renderer, old_target);
+        }
+    } else {
+        frame = capture_frame(renderer,
+                              rec.capture_width,
+                              rec.capture_height,
+                              rec.resolution_scale);
+    }
     if (!frame) {
         rec.state = RECORDING_ERROR;
         std::snprintf(rec.status_message,
@@ -3410,6 +5375,24 @@ int main(int argc, char** argv) {
     app.show_distance_measurements = true;
     app.show_area_measurements = true;
     app.show_annotations = true;
+    app.show_print_composer = false;
+    app.composer_pages.clear();
+    app.composer_active_page = 0;
+    app.composer_next_item_id = 1;
+    app.composer_status[0] = '\0';
+    app.composer_dragging = false;
+    app.composer_drag_item = -1;
+    app.composer_drag_offset = ImVec2(0, 0);
+    app.composer_resizing = false;
+    app.composer_resize_item = -1;
+    app.composer_resize_corner = -1;
+    app.composer_resize_start_pos = ImVec2(0, 0);
+    app.composer_resize_start_size = ImVec2(0, 0);
+    app.composer_resize_start_mouse = ImVec2(0, 0);
+    app.composer_request_export = false;
+    app.composer_request_page = 0;
+    app.composer_request_export_all = false;
+    app.composer_request_animation = false;
     debug_logf("init: sim grid %dx%d", sim->nx, sim->ny);
     ui_log_add(&app, "Simulation started");
     app.viewports[0].viz_mode = VIEWPORT_VIZ_EZ;
@@ -4970,6 +6953,7 @@ int main(int argc, char** argv) {
 
             if (ImGui::BeginMenu("Tools")) {
                 ImGui::MenuItem("Animation Recording...", nullptr, &app.show_recording_panel);
+                ImGui::MenuItem("Print Composer...", nullptr, &app.show_print_composer);
                 ImGui::EndMenu();
             }
 
@@ -5344,6 +7328,10 @@ int main(int argc, char** argv) {
         draw_recording_panel(&app, render->renderer, rec_size);
     }
 
+    if (app.show_print_composer) {
+        draw_print_composer(&app, render->renderer);
+    }
+
         if (app.annotation_mode) {
             ImGui::OpenPopup("AddAnnotation");
             app.annotation_mode = false;
@@ -5528,124 +7516,10 @@ int main(int argc, char** argv) {
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(2);
     }
-        bool suppress_overlays = show_help_overlay;
-
         SDL_Texture* viewport_texture = NULL;
         static SDL_Texture* field_texture = NULL;
         static int field_tex_w = 0;
         static int field_tex_h = 0;
-
-
-        // Overlay: show source IDs and wizard blocks on top of the field
-        if (!suppress_overlays) {
-            ImDrawList* dl = ImGui::GetForegroundDrawList();
-            const ImU32 src_col = IM_COL32(255, 255, 255, 230);
-            const ImU32 block_col = IM_COL32(255, 255, 0, 160);
-            const ImU32 block_sel_col = IM_COL32(0, 255, 128, 200);
-
-            if (app.viewport_valid) {
-                for (int vp_idx = 0; vp_idx < 4; ++vp_idx) {
-                    const ViewportInstance& vp = app.viewports[vp_idx];
-                    if (!vp.valid) continue;
-                    ImVec2 vp_origin = ImVec2(app.viewport_pos.x + vp.pos.x,
-                                              app.viewport_pos.y + vp.pos.y);
-                    int vp_scale = (int)std::lround(vp.zoom);
-                    if (vp_scale < 1) vp_scale = 1;
-                    ImVec2 viewport_offset = compute_viewport_offset(vp, sim, vp_scale);
-
-                    for (int k = 0; k < MAX_SRC; ++k) {
-                        const Source& s = sim->sources[k];
-                        if (!s.active) continue;
-                        float sx = vp_origin.x + viewport_offset.x +
-                                   ((float)s.ix + 0.5f) * (float)vp_scale;
-                        float sy = vp_origin.y + viewport_offset.y +
-                                   ((float)s.iy + 0.5f) * (float)vp_scale;
-                        char label[16];
-                        std::snprintf(label, sizeof(label), "%d", k);
-                        dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
-
-                        // Highlight if being dragged
-                        if (dragging_source && k == dragged_source_idx) {
-                            float radius = 10.0f;
-                            dl->AddCircle(ImVec2(sx, sy),
-                                          radius,
-                                          IM_COL32(255, 200, 0, 200),
-                                          16,
-                                          3.0f);
-                        }
-                    }
-
-                    int rect_count = wizard.cfg.material_rect_count;
-                    if (rect_count < 0) rect_count = 0;
-                    if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
-                    const Material* overlay_sel_mat = nullptr;
-                    if (app.selected_material_id >= 0) {
-                        overlay_sel_mat = material_library_get_by_id(app.selected_material_id);
-                    }
-                    for (int i = 0; i < rect_count; ++i) {
-                        const MaterialRectSpec& r = wizard.cfg.material_rects[i];
-                        float x0 = vp_origin.x + viewport_offset.x +
-                                   (float)(r.x0 * (double)sim->nx * (double)vp_scale);
-                        float x1 = vp_origin.x + viewport_offset.x +
-                                   (float)(r.x1 * (double)sim->nx * (double)vp_scale);
-                        float y0 = vp_origin.y + viewport_offset.y +
-                                   (float)(r.y0 * (double)sim->ny * (double)vp_scale);
-                        float y1 = vp_origin.y + viewport_offset.y +
-                                   (float)(r.y1 * (double)sim->ny * (double)vp_scale);
-                        ImVec2 p0(x0, y0);
-                        ImVec2 p1(x1, y1);
-                        bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
-                        ImU32 col = block_col;
-                        if (i == app.selected_block) {
-                            col = block_sel_col;
-                        } else if (mat_match) {
-                            col = IM_COL32(0, 200, 255, 200);
-                        }
-                        dl->AddRect(p0, p1, col, 0.0f, 0, 1.5f);
-
-                        char blabel[16];
-                        std::snprintf(blabel, sizeof(blabel), "B%d", i);
-                        dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), col, blabel);
-                    }
-
-                    if (paint_mode && app.active_viewport_idx == vp_idx) {
-                        ImVec2 mouse_pos = io.MousePos;
-                        float local_x = mouse_pos.x - vp_origin.x;
-                        float local_y = mouse_pos.y - vp_origin.y;
-                        if (local_x >= 0.0f && local_y >= 0.0f &&
-                            local_x < vp.size.x && local_y < vp.size.y) {
-                            float field_x = local_x - viewport_offset.x;
-                            float field_y = local_y - viewport_offset.y;
-                            int ix = (int)(field_x / (float)vp_scale);
-                            int iy = (int)(field_y / (float)vp_scale);
-                            if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
-                                float cx = vp_origin.x + viewport_offset.x +
-                                           ((float)ix + 0.5f) * (float)vp_scale;
-                                float cy = vp_origin.y + viewport_offset.y +
-                                           ((float)iy + 0.5f) * (float)vp_scale;
-                                float radius = (float)paint_brush_size * (float)vp_scale;
-                                ImU32 col = IM_COL32(255, 255, 0, 180);
-                                if (paint_material_id >= 0) {
-                                    const Material* mat = material_library_get_by_id(paint_material_id);
-                                    if (mat) {
-                                        col = IM_COL32(mat->color_r, mat->color_g, mat->color_b, 200);
-                                    }
-                                } else {
-                                    if (paint_material_type == 0) {
-                                        col = IM_COL32(255, 80, 80, 200);
-                                    } else if (paint_material_type == 1) {
-                                        col = IM_COL32(80, 160, 255, 200);
-                                    } else {
-                                        col = IM_COL32(120, 255, 120, 200);
-                                    }
-                                }
-                                dl->AddCircle(ImVec2(cx, cy), radius, col, 32, 1.5f);
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         if (frame_counter <= 120) {
             debug_logf("frame %d: before step paused=%d", frame_counter, paused ? 1 : 0);
@@ -5939,6 +7813,7 @@ int main(int argc, char** argv) {
                 const char* labels[] = {"A", "B", "C", "D"};
                 const char* viz_labels[] = {"Ez", "|Ez|", "Hx", "Hy", "|H|", "Sx", "Sy", "|S|", "Ex", "Ey", "Hz", "Material", "Overlay"};
                 int hovered_idx = -1;
+                const ImGuiIO& io = ImGui::GetIO();
                 ImVec2 mp = ImGui::GetIO().MousePos;
                 bool over_toolbar = false;
                 if (app.toolbar_valid) {
@@ -5979,6 +7854,207 @@ int main(int argc, char** argv) {
                         overlay_dl->AddRectFilled(b0, b1, IM_COL32(30, 18, 18, 200), 4.0f);
                         overlay_dl->AddText(warn_pos, IM_COL32(255, 120, 120, 255), "Channel unavailable (2D model)");
                     }
+
+                    // Constrain overlays to the viewport rect to avoid UI bleed
+                    overlay_dl->PushClipRect(p0, p1, true);
+                    int vp_scale = (int)std::lround(vp.zoom);
+                    if (vp_scale < 1) vp_scale = 1;
+                    ImVec2 viewport_offset = compute_viewport_offset(vp, sim, vp_scale);
+
+                    if (app.composer_pick_region_active && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        app.composer_pick_region_active = false;
+                        app.composer_pick_region_dragging = false;
+                        std::snprintf(app.composer_status, sizeof(app.composer_status), "Region pick canceled");
+                    }
+
+                    if (!show_help_overlay) {
+                        // Region pick overlay (composer)
+                        bool picking_this_vp = app.composer_pick_region_active &&
+                                               (app.composer_pick_region_viewport == vp_idx);
+                        if (picking_this_vp) {
+                            float local_x = io.MousePos.x - p0.x;
+                            float local_y = io.MousePos.y - p0.y;
+                            bool inside = (local_x >= 0.0f && local_y >= 0.0f &&
+                                           local_x < vp.size.x && local_y < vp.size.y);
+                            auto to_norm = [&](float lx, float ly) {
+                                float fx = lx - viewport_offset.x;
+                                float fy = ly - viewport_offset.y;
+                                int ix = (int)std::floor(fx / (float)vp_scale);
+                                int iy = (int)std::floor(fy / (float)vp_scale);
+                                ix = std::clamp(ix, 0, sim->nx - 1);
+                                iy = std::clamp(iy, 0, sim->ny - 1);
+                                return ImVec2((float)ix / (float)sim->nx,
+                                              (float)iy / (float)sim->ny);
+                            };
+
+                            if (!app.composer_pick_region_dragging && inside && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                app.composer_pick_region_start_norm = to_norm(local_x, local_y);
+                                app.composer_pick_region_end_norm = app.composer_pick_region_start_norm;
+                                app.composer_pick_region_dragging = true;
+                            } else if (app.composer_pick_region_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                app.composer_pick_region_end_norm = to_norm(local_x, local_y);
+                            } else if (app.composer_pick_region_dragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                                app.composer_pick_region_dragging = false;
+                                ImVec2 a = app.composer_pick_region_start_norm;
+                                ImVec2 b = app.composer_pick_region_end_norm;
+                                float x0 = std::clamp(std::min(a.x, b.x), 0.0f, 1.0f);
+                                float y0 = std::clamp(std::min(a.y, b.y), 0.0f, 1.0f);
+                                float x1 = std::clamp(std::max(a.x, b.x), 0.0f, 1.0f);
+                                float y1 = std::clamp(std::max(a.y, b.y), 0.0f, 1.0f);
+                                const float min_delta = 1.0f / std::max(4.0f, (float)std::min(sim->nx, sim->ny));
+                                if (x1 - x0 < min_delta) x1 = x0 + min_delta;
+                                if (y1 - y0 < min_delta) y1 = y0 + min_delta;
+                                if (x1 > 1.0f) x1 = 1.0f;
+                                if (y1 > 1.0f) y1 = 1.0f;
+
+                                bool updated = false;
+                                if (app.composer_pick_region_page >= 0 &&
+                                    app.composer_pick_region_page < (int)app.composer_pages.size()) {
+                                    ComposerPage& pg = app.composer_pages[app.composer_pick_region_page];
+                                    if (app.composer_pick_region_target_item >= 0) {
+                                        for (auto& it : pg.items) {
+                                            if (it.id == app.composer_pick_region_target_item &&
+                                                it.type == COMPOSER_REGION) {
+                                                it.region_norm = ImVec4(x0, y0, x1, y1);
+                                                it.viewport_idx = app.composer_pick_region_viewport;
+                                                updated = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (!updated) {
+                                        float region_w = x1 - x0;
+                                        float region_h = y1 - y0;
+                                        float aspect = region_h > 1e-6f ? (region_w / region_h) : 1.0f;
+                                        float target_w = pg.res_w * 0.45f;
+                                        float target_h = target_w / aspect;
+                                        if (target_h > pg.res_h * 0.8f) {
+                                            target_h = pg.res_h * 0.8f;
+                                            target_w = target_h * aspect;
+                                        }
+                                        ImVec2 pos(pg.res_w * 0.05f, pg.res_h * 0.1f);
+                                        composer_add_item(&app,
+                                                          pg,
+                                                          COMPOSER_REGION,
+                                                          app.composer_pick_region_viewport,
+                                                          pos,
+                                                          ImVec2(target_w, target_h));
+                                        pg.items.back().region_norm = ImVec4(x0, y0, x1, y1);
+                                        updated = true;
+                                    }
+                                }
+                                app.composer_pick_region_active = false;
+                                std::snprintf(app.composer_status,
+                                              sizeof(app.composer_status),
+                                              updated ? "Region captured (viewport %d)" : "Region capture failed",
+                                              app.composer_pick_region_viewport + 1);
+                            }
+
+                            if (app.composer_pick_region_dragging || picking_this_vp) {
+                                ImVec2 a = app.composer_pick_region_dragging ? app.composer_pick_region_start_norm
+                                                                             : app.composer_pick_region_start_norm;
+                                ImVec2 b = app.composer_pick_region_dragging ? app.composer_pick_region_end_norm
+                                                                             : app.composer_pick_region_end_norm;
+                                float x0_px = p0.x + viewport_offset.x + a.x * (float)sim->nx * (float)vp_scale;
+                                float y0_px = p0.y + viewport_offset.y + a.y * (float)sim->ny * (float)vp_scale;
+                                float x1_px = p0.x + viewport_offset.x + b.x * (float)sim->nx * (float)vp_scale;
+                                float y1_px = p0.y + viewport_offset.y + b.y * (float)sim->ny * (float)vp_scale;
+                                ImVec2 rp0(std::min(x0_px, x1_px), std::min(y0_px, y1_px));
+                                ImVec2 rp1(std::max(x0_px, x1_px), std::max(y0_px, y1_px));
+                                overlay_dl->AddRect(rp0, rp1, IM_COL32(0, 200, 255, 255), 0.0f, 0, 2.0f);
+                                overlay_dl->AddRectFilled(rp0, rp1, IM_COL32(0, 200, 255, 50));
+                            }
+                        }
+
+                        const ImU32 src_col = IM_COL32(255, 255, 255, 230);
+                        for (int k = 0; k < MAX_SRC; ++k) {
+                            const Source& s = sim->sources[k];
+                            if (!s.active) continue;
+                            float sx = p0.x + viewport_offset.x + ((float)s.ix + 0.5f) * (float)vp_scale;
+                            float sy = p0.y + viewport_offset.y + ((float)s.iy + 0.5f) * (float)vp_scale;
+                            char label[16];
+                            std::snprintf(label, sizeof(label), "%d", k);
+                            overlay_dl->AddText(ImVec2(sx + 6.0f, sy - 6.0f), src_col, label);
+                            if (dragging_source && k == dragged_source_idx) {
+                                float radius = 10.0f;
+                                overlay_dl->AddCircle(ImVec2(sx, sy),
+                                                      radius,
+                                                      IM_COL32(255, 200, 0, 200),
+                                                      16,
+                                                      3.0f);
+                            }
+                        }
+
+                        const ImU32 block_col = IM_COL32(255, 255, 0, 160);
+                        const ImU32 block_sel_col = IM_COL32(0, 255, 128, 200);
+                        int rect_count = wizard.cfg.material_rect_count;
+                        if (rect_count < 0) rect_count = 0;
+                        if (rect_count > CONFIG_MAX_MATERIAL_RECTS) rect_count = CONFIG_MAX_MATERIAL_RECTS;
+                        const Material* overlay_sel_mat = nullptr;
+                        if (app.selected_material_id >= 0) {
+                            overlay_sel_mat = material_library_get_by_id(app.selected_material_id);
+                        }
+                        for (int i = 0; i < rect_count; ++i) {
+                            const MaterialRectSpec& r = wizard.cfg.material_rects[i];
+                            float x0 = p0.x + viewport_offset.x +
+                                       (float)(r.x0 * (double)sim->nx * (double)vp_scale);
+                            float x1 = p0.x + viewport_offset.x +
+                                       (float)(r.x1 * (double)sim->nx * (double)vp_scale);
+                            float y0 = p0.y + viewport_offset.y +
+                                       (float)(r.y0 * (double)sim->ny * (double)vp_scale);
+                            float y1 = p0.y + viewport_offset.y +
+                                       (float)(r.y1 * (double)sim->ny * (double)vp_scale);
+                            ImVec2 b0(x0, y0);
+                            ImVec2 b1(x1, y1);
+                            bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
+                            ImU32 bcol = block_col;
+                            if (i == app.selected_block) {
+                                bcol = block_sel_col;
+                            } else if (mat_match) {
+                                bcol = IM_COL32(0, 200, 255, 200);
+                            }
+                            overlay_dl->AddRect(b0, b1, bcol, 0.0f, 0, 1.5f);
+                            char blabel[16];
+                            std::snprintf(blabel, sizeof(blabel), "B%d", i);
+                            overlay_dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), bcol, blabel);
+                        }
+
+                        if (paint_mode && app.active_viewport_idx == vp_idx) {
+                            float local_x = io.MousePos.x - p0.x;
+                            float local_y = io.MousePos.y - p0.y;
+                            if (local_x >= 0.0f && local_y >= 0.0f &&
+                                local_x < vp.size.x && local_y < vp.size.y) {
+                                float field_x = local_x - viewport_offset.x;
+                                float field_y = local_y - viewport_offset.y;
+                                int ix = (int)(field_x / (float)vp_scale);
+                                int iy = (int)(field_y / (float)vp_scale);
+                                if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                                    float cx = p0.x + viewport_offset.x +
+                                               ((float)ix + 0.5f) * (float)vp_scale;
+                                    float cy = p0.y + viewport_offset.y +
+                                               ((float)iy + 0.5f) * (float)vp_scale;
+                                    float radius = (float)paint_brush_size * (float)vp_scale;
+                                    ImU32 col_p = IM_COL32(255, 255, 0, 180);
+                                    if (paint_material_id >= 0) {
+                                        const Material* mat = material_library_get_by_id(paint_material_id);
+                                        if (mat) {
+                                            col_p = IM_COL32(mat->color_r, mat->color_g, mat->color_b, 200);
+                                        }
+                                    } else {
+                                        if (paint_material_type == 0) {
+                                            col_p = IM_COL32(255, 80, 80, 200);
+                                        } else if (paint_material_type == 1) {
+                                            col_p = IM_COL32(80, 160, 255, 200);
+                                        } else {
+                                            col_p = IM_COL32(120, 255, 120, 200);
+                                        }
+                                    }
+                                    overlay_dl->AddCircle(ImVec2(cx, cy), radius, col_p, 32, 1.5f);
+                                }
+                            }
+                        }
+                    }
+                    overlay_dl->PopClipRect();
                 }
 
                 if (!over_toolbar &&
@@ -6663,7 +8739,41 @@ int main(int argc, char** argv) {
         }
         ImGui::Render();
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), render->renderer);
-        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0);
+        if (app.composer_request_animation) {
+            bool ok = export_composer_animation(&app, render, sim, &scope, app.composer_request_page);
+            if (!ok) {
+                std::snprintf(app.composer_status,
+                              sizeof(app.composer_status),
+                              "Animation export failed (page %d)",
+                              app.composer_request_page + 1);
+                ui_log_add(&app, "Composer animation export failed for page %d", app.composer_request_page + 1);
+            }
+            app.composer_request_animation = false;
+        } else if (app.composer_request_export) {
+            bool ok = export_composer_page(&app, render, sim, &scope, app.composer_request_page);
+            if (!ok) {
+                std::snprintf(app.composer_status,
+                              sizeof(app.composer_status),
+                              "Export failed (page %d)",
+                              app.composer_request_page + 1);
+                ui_log_add(&app, "Composer export failed for page %d", app.composer_request_page + 1);
+            }
+            app.composer_request_export = false;
+        }
+        if (app.composer_request_export_all) {
+            for (int pi = 0; pi < (int)app.composer_pages.size(); ++pi) {
+                bool ok = export_composer_page(&app, render, sim, &scope, pi);
+                if (!ok) {
+                    ui_log_add(&app, "Composer export failed for page %d", pi + 1);
+                }
+            }
+            std::snprintf(app.composer_status,
+                          sizeof(app.composer_status),
+                          "Exported all pages (%zu)",
+                          app.composer_pages.size());
+            app.composer_request_export_all = false;
+        }
+        capture_frame_if_recording(&app, render->renderer, SDL_GetTicks() / 1000.0, nullptr);
         SDL_RenderPresent(render->renderer);
 
         if (frame_counter <= 120) {
