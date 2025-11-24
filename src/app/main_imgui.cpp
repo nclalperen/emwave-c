@@ -327,6 +327,7 @@ struct ComposerPage {
 
 struct HeadlessComposerOpts {
     bool enabled;
+    bool verbose;
     int fmt;        // 0 bmp,1 png,2 mp4,3 gif
     int fps;
     int frames;
@@ -1500,6 +1501,10 @@ static SDL_Surface* render_composer_page_surface(AppState* app,
                              (Uint8)(page.bg.y * 255),
                              (Uint8)(page.bg.z * 255),
                              alpha));
+    {
+        Uint8* p = (Uint8*)out->pixels;
+        std::printf("  first pixel after bg fill: %u %u %u %u\n", p[0], p[1], p[2], p[3]);
+    }
     bool any_field = false;
     bool any_field_blitted = false;
 
@@ -1682,17 +1687,57 @@ static bool export_composer_page(AppState* app,
     } else if (page.output_format == 1) {
         ext = "png";
         std::snprintf(out_path, sizeof(out_path), "recordings/%s.%s", base, ext);
-        SDL_Surface* conv = SDL_ConvertSurfaceFormat(out, SDL_PIXELFORMAT_RGBA32, 0);
-        if (conv) {
-            saved = stbi_write_png(out_path,
-                                   conv->w,
-                                   conv->h,
-                                   4,
-                                   conv->pixels,
-                                   conv->pitch) == 1;
-            SDL_FreeSurface(conv);
-        } else {
-            saved = false;
+        if (ffmpeg_ok) {
+            // Use ffmpeg to encode a single-frame PNG from raw RGBA
+            std::vector<std::string> args;
+            args.push_back(ffmpeg_cmd);
+            args.push_back("-y");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
+            args.push_back("-s");
+            char sizebuf[32];
+            std::snprintf(sizebuf, sizeof(sizebuf), "%dx%d", page.res_w, page.res_h);
+            args.push_back(sizebuf);
+            args.push_back("-i");
+            args.push_back("-");
+            args.push_back("-frames:v");
+            args.push_back("1");
+            args.push_back("-update");
+            args.push_back("1");
+            args.push_back("-f");
+            args.push_back("image2");
+            args.push_back(out_path);
+#ifdef _WIN32
+            std::string cmdline = "\"" + ffmpeg_cmd + "\"";
+            for (size_t i = 1; i < args.size(); ++i) cmdline += " " + args[i];
+            FILE* pipe = _popen(cmdline.c_str(), "wb");
+#else
+            std::string cmdline = join_args(args);
+            FILE* pipe = popen(cmdline.c_str(), "w");
+#endif
+            if (pipe) {
+                SDL_Surface* conv = SDL_ConvertSurfaceFormat(out, SDL_PIXELFORMAT_RGBA32, 0);
+                if (conv) {
+                    size_t bytes = (size_t)conv->w * 4 * (size_t)conv->h;
+                    size_t written = fwrite(conv->pixels, 1, bytes, pipe);
+                    saved = (written == bytes);
+                    SDL_FreeSurface(conv);
+                }
+#ifdef _WIN32
+                _pclose(pipe);
+#else
+                pclose(pipe);
+#endif
+            }
+            log_ffmpeg_attempt(cmdline.c_str(), saved ? 0 : -1);
+        }
+        if (!saved) {
+            // Fallback: BMP
+            ext = "bmp";
+            std::snprintf(out_path, sizeof(out_path), "recordings/%s.%s", base, ext);
+            saved = (SDL_SaveBMP(out, out_path) == 0);
         }
     } else if (page.output_format == 2 || page.output_format == 3) {
         // MP4 or GIF via ffmpeg; if ffmpeg missing/fails, fall back to PNG
@@ -1843,32 +1888,72 @@ static bool export_composer_animation(AppState* app,
     }
 
     if (effective_format == 0 || effective_format == 1) {
-        // PNG sequence
+        // PNG sequence (prefer ffmpeg pipe for correctness; fallback to BMP)
         std::filesystem::path dir = std::filesystem::path("recordings") / (std::string(base) + "_frames");
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
-        saved = true;
-        for (int i = 0; i < frames; ++i) {
-            for (int s = 0; s < steps_per_frame; ++s) {
-                fdtd_step(sim);
+        if (ffmpeg_ok && !fallback_png) {
+            // Stream frames to ffmpeg to emit numbered PNGs
+            std::vector<std::string> args;
+            args.push_back(ffmpeg_cmd);
+            args.push_back("-y");
+            args.push_back("-f");
+            args.push_back("rawvideo");
+            args.push_back("-pix_fmt");
+            args.push_back("rgba");
+            args.push_back("-s");
+            char sizebuf[32];
+            std::snprintf(sizebuf, sizeof(sizebuf), "%dx%d", page.res_w, page.res_h);
+            args.push_back(sizebuf);
+            args.push_back("-r");
+            args.push_back(std::to_string(fps));
+            args.push_back("-i");
+            args.push_back("-");
+            args.push_back(std::string(dir.string()) + "/frame_%04d.png");
+#ifdef _WIN32
+            std::string cmdline = "\"" + ffmpeg_cmd + "\"";
+            for (size_t i = 1; i < args.size(); ++i) cmdline += " " + args[i];
+            FILE* pipe = _popen(cmdline.c_str(), "wb");
+#else
+            std::string cmdline = join_args(args);
+            FILE* pipe = popen(cmdline.c_str(), "w");
+#endif
+            if (pipe) {
+                bool ok = true;
+                for (int i = 0; i < frames && ok; ++i) {
+                    if (i > 0) {
+                        for (int s = 0; s < steps_per_frame; ++s) fdtd_step(sim);
+                    }
+                    SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
+                    SDL_Surface* conv = frame_surface ? SDL_ConvertSurfaceFormat(frame_surface, SDL_PIXELFORMAT_RGBA32, 0) : nullptr;
+                    if (frame_surface) SDL_FreeSurface(frame_surface);
+                    if (!conv) { ok = false; break; }
+                    size_t bytes = (size_t)conv->w * 4 * (size_t)conv->h;
+                    size_t written = fwrite(conv->pixels, 1, bytes, pipe);
+                    SDL_FreeSurface(conv);
+                    if (written != bytes) { ok = false; break; }
+                }
+#ifdef _WIN32
+                int rc = _pclose(pipe);
+#else
+                int rc = pclose(pipe);
+#endif
+                saved = ok && (rc == 0);
+                log_ffmpeg_attempt(cmdline.c_str(), saved ? 0 : -1);
             }
-            SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
-            if (!frame_surface) { saved = false; break; }
-            SDL_Surface* conv = SDL_ConvertSurfaceFormat(frame_surface, SDL_PIXELFORMAT_RGBA32, 0);
-            SDL_FreeSurface(frame_surface);
-            if (!conv) { saved = false; break; }
-            char frame_path[512];
-            std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04d.png", dir.string().c_str(), i);
-            int ok = stbi_write_png(frame_path,
-                                    conv->w,
-                                    conv->h,
-                                    4,
-                                    conv->pixels,
-                                    conv->pitch);
-            SDL_FreeSurface(conv);
-            if (ok != 1) {
-                saved = false;
-                break;
+        }
+        if (!saved) {
+            // Fallback: BMP sequence
+            saved = true;
+            for (int i = 0; i < frames; ++i) {
+                for (int s = 0; s < steps_per_frame; ++s) fdtd_step(sim);
+                SDL_Surface* frame_surface = render_composer_page_surface(app, render, sim, scope, page_idx, &any_field, &any_field_blitted);
+                if (!frame_surface) { saved = false; break; }
+                char frame_path[512];
+                std::snprintf(frame_path, sizeof(frame_path), "%s/frame_%04d.bmp", dir.string().c_str(), i);
+                int ok = SDL_SaveBMP(frame_surface, frame_path);
+                SDL_FreeSurface(frame_surface);
+                if (ok != 0) { saved = false; break; }
             }
         }
         std::snprintf(out_path, sizeof(out_path), "%s", dir.string().c_str());
@@ -5453,6 +5538,8 @@ int main(int argc, char** argv) {
             std::snprintf(headless.layout_path, sizeof(headless.layout_path), "%s", a + 12);
             headless.enabled = true;
             headless.tmpl_idx = -2; // signal external layout load
+        } else if (std::strcmp(a, "--ch-verbose") == 0) {
+            headless.verbose = true;
         }
     }
     if (headless.fmt < 0 || headless.fmt > 3) headless.fmt = 1;
@@ -5723,14 +5810,16 @@ int main(int argc, char** argv) {
         // Log summary for headless runs
         int total_items = 0;
         for (const auto& p : app.composer_pages) total_items += (int)p.items.size();
-        std::printf("Headless composer: pages=%zu items=%d fmt=%d fps=%d frames=%d res=%dx%d\n",
-                    app.composer_pages.size(),
-                    total_items,
-                    hp.output_format,
-                    hp.fps,
-                    hp.frames,
-                    hp.res_w,
-                    hp.res_h);
+        if (headless.verbose) {
+            std::printf("Headless composer: pages=%zu items=%d fmt=%d fps=%d frames=%d res=%dx%d\n",
+                        app.composer_pages.size(),
+                        total_items,
+                        hp.output_format,
+                        hp.fps,
+                        hp.frames,
+                        hp.res_w,
+                        hp.res_h);
+        }
         bool ok = true;
         if (hp.frames > 1) {
             ok = export_composer_animation(&app, render, sim, &scope, 0, false);
