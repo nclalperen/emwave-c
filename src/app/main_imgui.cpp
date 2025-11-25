@@ -5472,6 +5472,7 @@ static void draw_blocks_panel(WizardState& wizard,
             ui_log_add(app, "Added block #%d (default material)", count);
         }
     }
+    if (!can_add) ImGui::EndDisabled();
     ImGui::SameLine();
     if (!can_add) ImGui::BeginDisabled();
     if (ImGui::Button("+ Add Block from Material")) {
