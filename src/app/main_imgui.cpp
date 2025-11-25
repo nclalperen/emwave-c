@@ -7280,201 +7280,7 @@ int main(int argc, char** argv) {
         ImVec2 host_size = ImVec2(main_viewport->Size.x, main_viewport->Size.y - status_bar_h);
         if (host_size.y < 0.0f) host_size.y = 0.0f;
 
-        // -----------------------------------------------------------------
-        // Toolbar: New Source modal (opened from source tool)
-        // Placed early to avoid disabled scopes elsewhere freezing the popup.
-        // -----------------------------------------------------------------
-        if (app.new_source_request_open) {
-            ImGui::OpenPopup("New Source");
-            app.new_source_modal_open = true;
-            app.new_source_request_open = false;
-        }
-        bool new_source_popup_open = ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId);
-        if (new_source_popup_open) {
-            ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowPos(ImVec2(main_viewport->Pos.x + main_viewport->Size.x * 0.5f,
-                                           main_viewport->Pos.y + main_viewport->Size.y * 0.5f),
-                                    ImGuiCond_FirstUseEver,
-                                    ImVec2(0.5f, 0.5f));
-        }
-        bool popup_open_flag = true;
-        if (ImGui::BeginPopupModal("New Source",
-                                   &popup_open_flag,
-                                   ImGuiWindowFlags_AlwaysAutoResize |
-                                   ImGuiWindowFlags_NoSavedSettings)) {
-            ImGui::Text("Place new source");
-            ImGui::Separator();
-            ImGui::Text("Cell: (%d, %d)",
-                        app.new_source_cell_i,
-                        app.new_source_cell_j);
-
-            int field_idx = app.new_source_field;
-            ImGui::Separator();
-            ImGui::Text("Field:");
-            ImGui::SameLine();
-            ImGui::RadioButton("Ez", &field_idx, 0);
-            ImGui::SameLine();
-            ImGui::RadioButton("Hx", &field_idx, 1);
-            ImGui::SameLine();
-            ImGui::RadioButton("Hy", &field_idx, 2);
-            if (field_idx < 0 || field_idx > 2) field_idx = 0;
-            app.new_source_field = field_idx;
-
-            if (ImGui::BeginTabBar("NewSourceTabs")) {
-                if (ImGui::BeginTabItem("Basic")) {
-                    app.new_source_tab = 0;
-                    const char* type_names[] = {"Continuous wave", "Gaussian pulse", "Ricker wavelet"};
-                    int type_idx = app.new_source_type;
-                    if (type_idx < 0 || type_idx > 2) type_idx = 0;
-                    ImGui::Combo("Type", &type_idx, type_names, IM_ARRAYSIZE(type_names));
-                    app.new_source_type = type_idx;
-
-                    ImGui::SliderFloat("Amplitude A", &app.new_source_amp, 0.0f, 10.0f, "%.3f");
-                    float f_ghz = app.new_source_freq_ghz;
-                    if (f_ghz <= 0.0f) f_ghz = 1.0f;
-                    if (ImGui::SliderFloat("Frequency f (GHz)", &f_ghz, 0.001f, 20.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
-                        if (f_ghz <= 0.0f) f_ghz = 0.001f;
-                        app.new_source_freq_ghz = f_ghz;
-                    }
-                    ImGui::SliderFloat("Phase (deg)", &app.new_source_phase_deg, -180.0f, 180.0f, "%.1f");
-                    ImGui::SliderFloat("Sigma^2 (footprint)", &app.new_source_sigma2, 0.1f, 10.0f, "%.2f");
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Basic parameters feed both classic CW/pulse types and the\n"
-                                        "A, f parameters in expression mode.");
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Expression")) {
-                    app.new_source_tab = 1;
-                    const char* tmpl_names[] = {
-                        "A * sin(2*pi*f*t)",
-                        "A * sin(omega*t)",
-                        "Gaussian envelope",
-                        "Ricker wavelet",
-                        "Custom (blank)"
-                    };
-                    int tmpl = app.new_source_template;
-                    if (tmpl < 0 || tmpl >= 5) tmpl = 0;
-                    if (ImGui::Combo("Template", &tmpl, tmpl_names, IM_ARRAYSIZE(tmpl_names))) {
-                        app.new_source_template = tmpl;
-                        switch (tmpl) {
-                            case 0:
-                                std::snprintf(app.new_source_expr,
-                                              sizeof(app.new_source_expr),
-                                              "A * sin(2*pi*f*t)");
-                                break;
-                            case 1:
-                                std::snprintf(app.new_source_expr,
-                                              sizeof(app.new_source_expr),
-                                              "A * sin(omega*t)");
-                                break;
-                            case 2:
-                                std::snprintf(app.new_source_expr,
-                                              sizeof(app.new_source_expr),
-                                              "A * exp(-((t - t0)/tau)^2) * sin(2*pi*f*(t - t0))");
-                                break;
-                            case 3:
-                                std::snprintf(app.new_source_expr,
-                                              sizeof(app.new_source_expr),
-                                              "A * (1 - 2*(pi*f*(t - t0))^2) * exp(-(pi*f*(t - t0))^2)");
-                                break;
-                            default:
-                                app.new_source_expr[0] = '\0';
-                                break;
-                        }
-                    }
-                    ImGui::TextDisabled("Variables: t (s), A (amplitude), f (Hz), omega = 2*pi*f.\n"
-                                        "Optional t0 and tau may be used in templates.");
-                    ImGui::InputTextMultiline("##src_expr",
-                                              app.new_source_expr,
-                                              sizeof(app.new_source_expr),
-                                              ImVec2(480.0f, 140.0f));
-                    ImGui::EndTabItem();
-                }
-                ImGui::EndTabBar();
-            }
-
-            ImGui::Separator();
-            bool want_add = false;
-            bool want_cancel = false;
-            if (ImGui::Button("Add", ImVec2(120.0f, 0.0f))) {
-                want_add = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
-                want_cancel = true;
-            }
-
-            if (want_add) {
-                if (sim && wizard.cfg.source_count < MAX_SRC) {
-                    int idx = wizard.cfg.source_count;
-                    SourceConfigSpec* spec = &wizard.cfg.source_configs[idx];
-                    spec->active = 1;
-                    spec->amp = (double)app.new_source_amp;
-                    spec->freq = (double)app.new_source_freq_ghz * 1e9;
-                    spec->sigma2 = (double)app.new_source_sigma2;
-                    int fidx = app.new_source_field;
-                    if (fidx < 0 || fidx > 2) fidx = 0;
-                    spec->field = (SourceFieldType)fidx;
-
-                    int ix = app.new_source_cell_i;
-                    int iy = app.new_source_cell_j;
-                    if (ix < 0) ix = 0;
-                    if (iy < 0) iy = 0;
-                    if (ix >= sim->nx) ix = sim->nx - 1;
-                    if (iy >= sim->ny) iy = sim->ny - 1;
-                    double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
-                    double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
-                    spec->x = (double)ix / nx1;
-                    spec->y = (double)iy / ny1;
-
-                    if (app.new_source_expr[0] != '\0') {
-                        spec->type = SRC_EXPR;
-                        std::strncpy(spec->expr, app.new_source_expr, SOURCE_EXPR_MAX_LEN - 1);
-                        spec->expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
-                    } else {
-                        int t = app.new_source_type;
-                        if (t < 0 || t > (int)SRC_RICKER) t = (int)SRC_CW;
-                        spec->type = (SourceType)t;
-                        spec->expr[0] = '\0';
-                    }
-
-                    wizard.cfg.source_count = idx + 1;
-                    apply_source_spec_to_runtime(sim, idx, spec);
-                    sim->sources[idx].active = 1;
-                    source_reparam(&sim->sources[idx]);
-                    app.selected_source = idx;
-                    app.show_sources_panel = true;
-                    ui_log_add(&app,
-                               "Added source #%d at cell (%d, %d)",
-                               idx,
-                               app.new_source_cell_i,
-                               app.new_source_cell_j);
-                } else {
-                    ui_log_add(&app,
-                               "Cannot add source: maximum number of sources (%d) reached.",
-                               MAX_SRC);
-                }
-
-                app.placing_source = false;
-                app.new_source_modal_open = false;
-                new_source_popup_open = false;
-                ImGui::CloseCurrentPopup();
-            }
-
-            if (want_cancel) {
-                app.placing_source = false;
-                app.new_source_modal_open = false;
-                new_source_popup_open = false;
-                ImGui::CloseCurrentPopup();
-            }
-
-            ImGui::EndPopup();
-        }
-        if ((!popup_open_flag || !new_source_popup_open) && app.new_source_modal_open) {
-            app.new_source_modal_open = false;
-            app.placing_source = false;
-            paused = app.new_source_pause_was_paused;
-        }
+        // (New Source modal moved to end of frame to avoid input blocking)
 
         ImGui::SetNextWindowPos(host_pos);
         ImGui::SetNextWindowSize(host_size);
@@ -9770,6 +9576,202 @@ int main(int argc, char** argv) {
 
         draw_sparameter_window(&app);
         draw_smith_chart(&app);
+
+        // -----------------------------------------------------------------
+        // Toolbar: New Source modal (opened from source tool)
+        // Moved to end of frame to ensure it is on top of DockSpace/overlays
+        // -----------------------------------------------------------------
+        if (app.new_source_request_open) {
+            ImGui::OpenPopup("New Source");
+            app.new_source_modal_open = true;
+            app.new_source_request_open = false;
+        }
+        bool new_source_popup_open = ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId);
+        if (new_source_popup_open) {
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(main_viewport->Pos.x + main_viewport->Size.x * 0.5f,
+                                           main_viewport->Pos.y + main_viewport->Size.y * 0.5f),
+                                    ImGuiCond_FirstUseEver,
+                                    ImVec2(0.5f, 0.5f));
+        }
+        bool popup_open_flag = true;
+        if (ImGui::BeginPopupModal("New Source",
+                                   &popup_open_flag,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::Text("Place new source");
+            ImGui::Separator();
+            ImGui::Text("Cell: (%d, %d)",
+                        app.new_source_cell_i,
+                        app.new_source_cell_j);
+
+            int field_idx = app.new_source_field;
+            ImGui::Separator();
+            ImGui::Text("Field:");
+            ImGui::SameLine();
+            ImGui::RadioButton("Ez", &field_idx, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton("Hx", &field_idx, 1);
+            ImGui::SameLine();
+            ImGui::RadioButton("Hy", &field_idx, 2);
+            if (field_idx < 0 || field_idx > 2) field_idx = 0;
+            app.new_source_field = field_idx;
+
+            if (ImGui::BeginTabBar("NewSourceTabs")) {
+                if (ImGui::BeginTabItem("Basic")) {
+                    app.new_source_tab = 0;
+                    const char* type_names[] = {"Continuous wave", "Gaussian pulse", "Ricker wavelet"};
+                    int type_idx = app.new_source_type;
+                    if (type_idx < 0 || type_idx > 2) type_idx = 0;
+                    ImGui::Combo("Type", &type_idx, type_names, IM_ARRAYSIZE(type_names));
+                    app.new_source_type = type_idx;
+
+                    ImGui::SliderFloat("Amplitude A", &app.new_source_amp, 0.0f, 10.0f, "%.3f");
+                    float f_ghz = app.new_source_freq_ghz;
+                    if (f_ghz <= 0.0f) f_ghz = 1.0f;
+                    if (ImGui::SliderFloat("Frequency f (GHz)", &f_ghz, 0.001f, 20.0f, "%.3f", ImGuiSliderFlags_Logarithmic)) {
+                        if (f_ghz <= 0.0f) f_ghz = 0.001f;
+                        app.new_source_freq_ghz = f_ghz;
+                    }
+                    ImGui::SliderFloat("Phase (deg)", &app.new_source_phase_deg, -180.0f, 180.0f, "%.1f");
+                    ImGui::SliderFloat("Sigma^2 (footprint)", &app.new_source_sigma2, 0.1f, 10.0f, "%.2f");
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Basic parameters feed both classic CW/pulse types and the\n"
+                                        "A, f parameters in expression mode.");
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Expression")) {
+                    app.new_source_tab = 1;
+                    const char* tmpl_names[] = {
+                        "A * sin(2*pi*f*t)",
+                        "A * sin(omega*t)",
+                        "Gaussian envelope",
+                        "Ricker wavelet",
+                        "Custom (blank)"
+                    };
+                    int tmpl = app.new_source_template;
+                    if (tmpl < 0 || tmpl >= 5) tmpl = 0;
+                    if (ImGui::Combo("Template", &tmpl, tmpl_names, IM_ARRAYSIZE(tmpl_names))) {
+                        app.new_source_template = tmpl;
+                        switch (tmpl) {
+                            case 0:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * sin(2*pi*f*t)");
+                                break;
+                            case 1:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * sin(omega*t)");
+                                break;
+                            case 2:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * exp(-((t - t0)/tau)^2) * sin(2*pi*f*(t - t0))");
+                                break;
+                            case 3:
+                                std::snprintf(app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              "A * (1 - 2*(pi*f*(t - t0))^2) * exp(-(pi*f*(t - t0))^2)");
+                                break;
+                            default:
+                                app.new_source_expr[0] = '\0';
+                                break;
+                        }
+                    }
+                    ImGui::TextDisabled("Variables: t (s), A (amplitude), f (Hz), omega = 2*pi*f.\n"
+                                        "Optional t0 and tau may be used in templates.");
+                    ImGui::InputTextMultiline("##src_expr",
+                                              app.new_source_expr,
+                                              sizeof(app.new_source_expr),
+                                              ImVec2(480.0f, 140.0f));
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+
+            ImGui::Separator();
+            bool want_add = false;
+            bool want_cancel = false;
+            if (ImGui::Button("Add", ImVec2(120.0f, 0.0f))) {
+                want_add = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+                want_cancel = true;
+            }
+
+            if (want_add) {
+                if (sim && wizard.cfg.source_count < MAX_SRC) {
+                    int idx = wizard.cfg.source_count;
+                    SourceConfigSpec* spec = &wizard.cfg.source_configs[idx];
+                    spec->active = 1;
+                    spec->amp = (double)app.new_source_amp;
+                    spec->freq = (double)app.new_source_freq_ghz * 1e9;
+                    spec->sigma2 = (double)app.new_source_sigma2;
+                    int fidx = app.new_source_field;
+                    if (fidx < 0 || fidx > 2) fidx = 0;
+                    spec->field = (SourceFieldType)fidx;
+
+                    int ix = app.new_source_cell_i;
+                    int iy = app.new_source_cell_j;
+                    if (ix < 0) ix = 0;
+                    if (iy < 0) iy = 0;
+                    if (ix >= sim->nx) ix = sim->nx - 1;
+                    if (iy >= sim->ny) iy = sim->ny - 1;
+                    double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
+                    double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
+                    spec->x = (double)ix / nx1;
+                    spec->y = (double)iy / ny1;
+
+                    if (app.new_source_expr[0] != '\0') {
+                        spec->type = SRC_EXPR;
+                        std::strncpy(spec->expr, app.new_source_expr, SOURCE_EXPR_MAX_LEN - 1);
+                        spec->expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
+                    } else {
+                        int t = app.new_source_type;
+                        if (t < 0 || t > (int)SRC_RICKER) t = (int)SRC_CW;
+                        spec->type = (SourceType)t;
+                        spec->expr[0] = '\0';
+                    }
+
+                    wizard.cfg.source_count = idx + 1;
+                    apply_source_spec_to_runtime(sim, idx, spec);
+                    sim->sources[idx].active = 1;
+                    source_reparam(&sim->sources[idx]);
+                    app.selected_source = idx;
+                    app.show_sources_panel = true;
+                    ui_log_add(&app,
+                               "Added source #%d at cell (%d, %d)",
+                               idx,
+                               app.new_source_cell_i,
+                               app.new_source_cell_j);
+                } else {
+                    ui_log_add(&app,
+                               "Cannot add source: maximum number of sources (%d) reached.",
+                               MAX_SRC);
+                }
+
+                app.placing_source = false;
+                app.new_source_modal_open = false;
+                new_source_popup_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            if (want_cancel) {
+                app.placing_source = false;
+                app.new_source_modal_open = false;
+                new_source_popup_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+        if ((!popup_open_flag || !new_source_popup_open) && app.new_source_modal_open) {
+            app.new_source_modal_open = false;
+            app.placing_source = false;
+            paused = app.new_source_pause_was_paused;
+        }
 
         if (frame_counter <= 120) {
             debug_logf("frame %d: before imgui render", frame_counter);
