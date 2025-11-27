@@ -17,6 +17,7 @@ typedef struct {
     double amp, freq;
     double t0, tau;     /* pulse parameters */
     double sigma2;      /* spatial footprint variance in cells^2 */
+    double place_time;  /* simulation time when (re)param’d */
     char expr_text[SOURCE_EXPR_MAX_LEN];
     void* expr_program;  /* opaque pointer to compiled expression, if any */
 } Source;

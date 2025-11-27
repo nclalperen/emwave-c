@@ -22,12 +22,22 @@ static int normalized_to_cell(double frac, int n, int pad) {
     return idx;
 }
 
+static inline double current_time_from_state(const SimulationState* state) {
+    if (!state) return 0.0;
+    return (double)state->timestep * state->dt;
+}
+
 static void source_free_expr(Source* s) {
     if (!s || !s->expr_program) {
         return;
     }
     expr_free((ExprProgram*)s->expr_program);
     s->expr_program = NULL;
+}
+
+void source_note_place_time(Source* s, double current_time) {
+    if (!s) return;
+    s->place_time = current_time;
 }
 
 static void source_compile_expr(Source* s) {
@@ -82,7 +92,7 @@ void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) 
             s->type = spec->type;
             s->amp = spec->amp;
             s->freq = spec->freq;
-            s->sigma2 = spec->sigma2;
+            s->sigma2 = (spec->sigma2 < 1.0) ? 1.0 : spec->sigma2; /* keep footprint reasonable */
             s->field = spec->field;
             s->expr_text[0] = '\0';
             s->expr_program = NULL;
@@ -92,7 +102,7 @@ void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) 
             }
             s->ix = normalized_to_cell(spec->x, nx, pad);
             s->iy = normalized_to_cell(spec->y, ny, pad);
-            source_reparam(s);
+            source_reparam_at_time(s, 0.0);
             source_compile_expr(s);
         }
         for (int k = cfg->source_count; k < MAX_SRC; k++) {
@@ -104,22 +114,36 @@ void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg) 
 
 /* Recompute pulse parameters based on frequency */
 void source_reparam(Source* s) {
+    /* Default: assume current time = 0 */
+    source_reparam_at_time(s, 0.0);
+}
+
+void source_reparam_at_time(Source* s, double current_time) {
+    if (!s) return;
+    /* Guard against zero/negative frequency */
+    if (s->freq <= 0.0) {
+        s->freq = 1e9; /* 1 GHz fallback */
+    }
+
     if (s->type == SRC_GAUSS_PULSE || s->type == SRC_RICKER) {
-        double cycles_t0 = 6.0;
-        double cycles_tau = 2.0;
-        s->t0 = (s->freq > 0) ? (cycles_t0 / s->freq) : 0.0;
+        // Visible pulse with a small delay/width in carrier cycles
+        double cycles_t0 = 1.0;   // center the pulse after ~1 period
+        double cycles_tau = 1.0;  // envelope width ~1 period
+        s->t0 = current_time + ((s->freq > 0) ? (cycles_t0 / s->freq) : 0.0);
         s->tau = (s->freq > 0) ? (cycles_tau / s->freq) : 1e-9;
+        s->place_time = current_time;
     } else {
         s->t0 = 0.0;
         s->tau = 1e-9;
+        s->place_time = current_time;
     }
 }
 
 /* Set frequency for all sources */
-void sources_set_freq(Source* sources, double f) {
+void sources_set_freq(Source* sources, double f, double current_time) {
     for (int k = 0; k < MAX_SRC; k++) {
         sources[k].freq = f;
-        source_reparam(&sources[k]);
+        source_reparam_at_time(&sources[k], current_time);
     }
 }
 
@@ -131,7 +155,7 @@ void sources_cycle_type(Source* sources) {
         }
         int next = ((int)sources[k].type + 1) % (int)SRC_EXPR; /* cycle CW/Gauss/Ricker */
         sources[k].type = (SourceType)next;
-        source_reparam(&sources[k]);
+        source_reparam_at_time(&sources[k], 0.0);
         source_compile_expr(&sources[k]);
     }
 }

@@ -287,7 +287,8 @@ static void apply_paint(UIState* ui, SimulationState* sim, int mx, int my, int s
 static void update_frequency_from_slider(UIState* ui, SimulationState* sim) {
     double freq = freq_from_slider(ui->freq_slider.value, FREQ_MIN, FREQ_MAX);
     fdtd_update_grid_for_freq(sim, freq);
-    sources_set_freq(sim->sources, freq);
+    double current_time = (double)sim->timestep * sim->dt;
+    sources_set_freq(sim->sources, freq, current_time);
     ui->held_vmax = 0.0;
 }
 

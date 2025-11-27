@@ -15,7 +15,9 @@ extern "C" {
 void sources_init(Source* sources, int nx, int ny, const SimulationConfig* cfg);
 void sources_shutdown(Source* sources);
 void source_reparam(Source* s);
-void sources_set_freq(Source* sources, double f);
+void source_reparam_at_time(Source* s, double current_time);
+void source_note_place_time(Source* s, double current_time);
+void sources_set_freq(Source* sources, double f, double current_time);
 void sources_cycle_type(Source* sources);
 
 /* Source injection */

@@ -375,6 +375,20 @@ struct AppState {
     bool block_first_set;
     int block_first_i;
     int block_first_j;
+    bool new_block_modal_open;
+    bool new_block_request_open;
+    float new_block_x0;
+    float new_block_y0;
+    float new_block_x1;
+    float new_block_y1;
+    float new_block_epsr;
+    float new_block_sigma;
+    int new_block_tag; // 0=dielectric,1=PEC,2=PMC
+    float new_block_cell_w;
+    float new_block_cell_h;
+    // Region picker (composer)
+    bool pick_region_active;
+    int pick_region_viewport;
     int last_click_i;
     int last_click_j;
     bool show_scope_window;
@@ -3699,9 +3713,12 @@ static void free_source_expression(Source* s) {
     s->expr_program = NULL;
 }
 
-static void apply_source_spec_to_runtime(SimulationState* sim,
-                                         int idx,
-                                         const SourceConfigSpec* spec) {
+static void clear_runtime_source(SimulationState* sim, int idx);
+
+static void apply_source_spec_to_runtime_at_time(SimulationState* sim,
+                                                 int idx,
+                                                 const SourceConfigSpec* spec,
+                                                 double current_time) {
     if (!sim || !spec) return;
     if (idx < 0 || idx >= MAX_SRC) return;
     Source* dst = &sim->sources[idx];
@@ -3710,13 +3727,13 @@ static void apply_source_spec_to_runtime(SimulationState* sim,
     dst->field = spec->field;
     dst->amp = spec->amp;
     dst->freq = spec->freq;
-    dst->sigma2 = (spec->sigma2 > 0.01) ? spec->sigma2 : 0.01;
+    dst->sigma2 = (spec->sigma2 < 1.0) ? 1.0 : spec->sigma2;
     dst->ix = normalized_to_cell_index(spec->x, sim->nx);
     dst->iy = normalized_to_cell_index(spec->y, sim->ny);
     std::strncpy(dst->expr_text, spec->expr, SOURCE_EXPR_MAX_LEN);
     dst->expr_text[SOURCE_EXPR_MAX_LEN - 1] = '\0';
     free_source_expression(dst);
-    source_reparam(dst);
+    source_reparam_at_time(dst, current_time);
     if (dst->type == SRC_EXPR && dst->expr_text[0] != '\0') {
         ExprProgram* prog = NULL;
         char errbuf[128];
@@ -3728,6 +3745,34 @@ static void apply_source_spec_to_runtime(SimulationState* sim,
                          idx,
                          (errbuf[0] != '\0') ? errbuf : "unknown error");
         }
+    }
+}
+
+static void apply_source_spec_to_runtime(SimulationState* sim,
+                                         int idx,
+                                         const SourceConfigSpec* spec) {
+    double current_time = sim ? ((double)sim->timestep * sim->dt) : 0.0;
+    apply_source_spec_to_runtime_at_time(sim, idx, spec, current_time);
+}
+
+static void toggle_source_active(SimulationState* sim, WizardState* wizard, int idx) {
+    if (!sim || !wizard) return;
+    if (idx < 0 || idx >= wizard->cfg.source_count) return;
+    SourceConfigSpec* spec = &wizard->cfg.source_configs[idx];
+    spec->active = spec->active ? 0 : 1;
+    apply_source_spec_to_runtime(sim, idx, spec);
+}
+
+static void reapply_all_sources(SimulationState* sim, WizardState* wizard) {
+    if (!sim || !wizard) return;
+    int count = wizard->cfg.source_count;
+    if (count < 0) count = 0;
+    if (count > MAX_SRC) count = MAX_SRC;
+    for (int i = 0; i < count; ++i) {
+        apply_source_spec_to_runtime(sim, i, &wizard->cfg.source_configs[i]);
+    }
+    for (int k = count; k < MAX_SRC; ++k) {
+        clear_runtime_source(sim, k);
     }
 }
 
@@ -4059,8 +4104,8 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
         if (type_idx < 0 || type_idx >= (int)IM_ARRAYSIZE(types)) type_idx = 0;
         if (ImGui::Combo("Type", &type_idx, types, IM_ARRAYSIZE(types))) {
             spec.type = (SourceType)type_idx;
-            apply_source_spec_to_runtime(sim, idx, &spec);
-        }
+                    apply_source_spec_to_runtime(sim, idx, &spec);
+                }
 
         const char* field_items[] = {"Ez", "Hx", "Hy"};
         int field_idx = (int)spec.field;
@@ -4082,6 +4127,14 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
         }
         const Source& runtime_src = sim->sources[idx];
         ImGui::TextDisabled("Grid cell: (%d, %d)", runtime_src.ix, runtime_src.iy);
+        // Runtime debug for pulse troubleshooting
+        double sample_val = source_time_value(&runtime_src, sim->timestep, sim->dt);
+        ImGui::TextDisabled("Runtime: type=%s f=%.3e Hz t0=%.3e tau=%.3e sample=%.3e",
+                            source_type_label(runtime_src.type),
+                            runtime_src.freq,
+                            runtime_src.t0,
+                            runtime_src.tau,
+                            sample_val);
 
         double amp = spec.amp;
         if (ImGui::InputDouble("Amplitude", &amp, 0.1, 1.0, "%.3f")) {
@@ -4098,14 +4151,14 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
 
         if (spec.type == SRC_GAUSS_PULSE || spec.type == SRC_RICKER) {
             double sigma = spec.sigma2;
-            if (ImGui::InputDouble("Sigma^2 (cells^2)", &sigma, 0.1, 1.0, "%.3f")) {
-                if (sigma < 0.1) sigma = 0.1;
-                spec.sigma2 = sigma;
-                apply_source_spec_to_runtime(sim, idx, &spec);
-            }
-        } else {
-            ImGui::TextDisabled("Sigma^2 applies to Gaussian/Ricker pulses.");
+        if (ImGui::InputDouble("Sigma^2 (cells^2)", &sigma, 0.1, 1.0, "%.3f")) {
+            if (sigma < 0.1) sigma = 0.1;
+            spec.sigma2 = sigma;
+            apply_source_spec_to_runtime(sim, idx, &spec);
         }
+    } else {
+        ImGui::TextDisabled("Sigma^2 applies to Gaussian/Ricker pulses.");
+    }
 
         if (spec.type == SRC_EXPR) {
             if (ImGui::InputTextMultiline("Expression",
@@ -5899,6 +5952,20 @@ int main(int argc, char** argv) {
     app.composer_request_animation = false;
     debug_logf("init: sim grid %dx%d", sim->nx, sim->ny);
     ui_log_add(&app, "Simulation started");
+    app.placing_block = false;
+    app.block_first_set = false;
+    app.block_first_i = app.block_first_j = -1;
+    app.new_block_modal_open = false;
+    app.new_block_request_open = false;
+    app.new_block_x0 = app.new_block_y0 = 0.0f;
+    app.new_block_x1 = app.new_block_y1 = 0.0f;
+    app.new_block_epsr = 4.0f;
+    app.new_block_sigma = 0.0f;
+    app.new_block_tag = 0;
+    app.new_block_cell_w = 1.0f;
+    app.new_block_cell_h = 1.0f;
+    app.pick_region_active = false;
+    app.pick_region_viewport = -1;
     app.viewports[0].viz_mode = VIEWPORT_VIZ_EZ;
     app.viewports[1].viz_mode = VIEWPORT_VIZ_EZ;
     app.viewports[2].viz_mode = VIEWPORT_VIZ_EZ;
@@ -6206,6 +6273,11 @@ int main(int argc, char** argv) {
                         } else if (app.placing_source) {
                             app.placing_source = false;
                             ui_log_add(&app, "Source tool: cancelled.");
+                            handled_globally = true;
+                        } else if (app.placing_block) {
+                            app.placing_block = false;
+                            app.block_first_set = false;
+                            ui_log_add(&app, "Block tool: cancelled.");
                             handled_globally = true;
                         } else if (app.area_mode) {
                             app.area_mode = false;
@@ -6566,13 +6638,27 @@ int main(int argc, char** argv) {
 
                         // Source toggles
                         case SDLK_1:
-                            if (MAX_SRC > 0) sim->sources[0].active = !sim->sources[0].active;
+                            if (MAX_SRC > 0) toggle_source_active(sim, &wizard, 0);
                             break;
                         case SDLK_2:
-                            if (MAX_SRC > 1) sim->sources[1].active = !sim->sources[1].active;
+                            if (MAX_SRC > 1) toggle_source_active(sim, &wizard, 1);
                             break;
                         case SDLK_3:
-                            if (MAX_SRC > 2) sim->sources[2].active = !sim->sources[2].active;
+                            if (MAX_SRC > 2) toggle_source_active(sim, &wizard, 2);
+                            break;
+
+                        // Delete selected source
+                        case SDLK_DELETE:
+                        case SDLK_BACKSPACE:
+                            if (app.selected_source >= 0 && app.selected_source < wizard.cfg.source_count) {
+                                delete_source_at(&wizard, sim, &app, app.selected_source);
+                                int count = wizard.cfg.source_count;
+                                if (count <= 0) {
+                                    app.selected_source = -1;
+                                } else if (app.selected_source >= count) {
+                                    app.selected_source = count - 1;
+                                }
+                            }
                             break;
 
                         // Source type cycling
@@ -6631,6 +6717,7 @@ int main(int argc, char** argv) {
                             if (mod & KMOD_CTRL) {
                                 fdtd_reset(sim);
                                 scope_clear(&scope);
+                                reapply_all_sources(sim, &wizard);
                                 ui_log_add(&app, "Simulation reset");
                             } else {
                                 app.ruler_mode = !app.ruler_mode;
@@ -6639,11 +6726,12 @@ int main(int argc, char** argv) {
                                            app.ruler_mode ? "ON (click two points)" : "OFF");
                             }
                             break;
-                        case SDLK_c:
-                            fdtd_clear_fields(sim);
-                            scope_clear(&scope);
-                            ui_log_add(&app, "Fields cleared");
-                            break;
+                    case SDLK_c:
+                        fdtd_clear_fields(sim);
+                        scope_clear(&scope);
+                        reapply_all_sources(sim, &wizard);
+                        ui_log_add(&app, "Fields cleared");
+                        break;
 
                         // Auto-rescale modes
                     case SDLK_a:
@@ -6974,6 +7062,25 @@ int main(int argc, char** argv) {
                         app.current_area.vertices.push_back(ImVec2((float)ix, (float)iy));
                         continue;
                     }
+                    if (app.placing_block) {
+                        if (!app.block_first_set) {
+                            app.block_first_set = true;
+                            app.block_first_i = ix;
+                            app.block_first_j = iy;
+                        }
+                        continue;
+                    }
+                    if (app.pick_region_active) {
+                        app.composer_pick_region_active = true;
+                        app.composer_pick_region_viewport = app.active_viewport_idx;
+                        app.composer_pick_region_start_norm = ImVec2((float)ix / (float)sim->nx,
+                                                                     (float)iy / (float)sim->ny);
+                        app.composer_pick_region_end_norm = app.composer_pick_region_start_norm;
+                        app.composer_pick_region_dragging = true;
+                        app.pick_region_active = false;
+                        ui_log_add(&app, "Region tool: drag to size region (viewport %d)", app.active_viewport_idx + 1);
+                        continue;
+                    }
                     if (app.ruler_mode) {
                         ImVec2 grid_pt((float)ix, (float)iy);
                         if (!app.ruler_first_point_set) {
@@ -7013,23 +7120,47 @@ int main(int argc, char** argv) {
                         app.new_source_cell_i = ix;
                         app.new_source_cell_j = iy;
                         app.new_source_field = 0; // default Ez
-                        app.new_source_type = (int)SRC_CW;
-                        app.new_source_tab = 0;
-                        // Use simulation frequency if available
-                        float f_ghz = (sim->freq > 0.0) ? (float)(sim->freq * 1e-9) : 1.0f;
-                        if (f_ghz <= 0.0f) f_ghz = 1.0f;
-                        app.new_source_amp = 1.0f;
-                        app.new_source_freq_ghz = f_ghz;
-                        app.new_source_phase_deg = 0.0f;
+                    app.new_source_type = (int)SRC_CW;
+                    app.new_source_tab = 0;
+                    // Use simulation frequency if available
+                    float f_ghz = (sim->freq > 0.0) ? (float)(sim->freq * 1e-9) : 1.0f;
+                    if (f_ghz <= 0.0f) f_ghz = 1.0f;
+                    app.new_source_amp = 1.0f;
+                    app.new_source_freq_ghz = f_ghz;
+                    app.new_source_phase_deg = 0.0f;
                         app.new_source_sigma2 = 4.0f;
-                        // Default expression template uses A and f parameters
-                        std::snprintf(app.new_source_expr,
-                                      sizeof(app.new_source_expr),
-                                      "A * sin(2*pi*f*t)");
+                        app.new_source_expr[0] = '\0'; // start empty; templates filled only in Expression tab
                         app.new_source_pause_was_paused = paused;
                         paused = true;
                         app.new_source_request_open = true;
                         app.new_source_modal_open = true;
+                        continue;
+                    }
+
+                    // Toolbar block placement tool
+                    if (app.placing_block) {
+                        if (!app.block_first_set && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                            app.block_first_set = true;
+                            app.block_first_i = ix;
+                            app.block_first_j = iy;
+                        } else if (app.block_first_set && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                            int i0 = app.block_first_i;
+                            int j0 = app.block_first_j;
+                            int i1 = ix;
+                            int j1 = iy;
+                            if (i1 < i0) std::swap(i0, i1);
+                            if (j1 < j0) std::swap(j0, j1);
+                            double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
+                            double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
+                            app.new_block_x0 = (float)i0 / (float)nx1;
+                            app.new_block_y0 = (float)j0 / (float)ny1;
+                            app.new_block_x1 = (float)i1 / (float)nx1;
+                            app.new_block_y1 = (float)j1 / (float)ny1;
+                            app.new_block_request_open = true;
+                            app.new_block_modal_open = true;
+                            app.placing_block = false;
+                            app.block_first_set = false;
+                        }
                         continue;
                     }
 
@@ -7261,6 +7392,47 @@ int main(int argc, char** argv) {
                     }
                     dragging_source = false;
                     dragged_source_idx = -1;
+                }
+
+                // Finalize block placement on mouse up if we have a start cell
+                if (app.placing_block && app.block_first_set && app.viewport_valid) {
+                    int mx = e.button.x;
+                    int my = e.button.y;
+                    int hit = get_viewport_at_mouse(app, mx, my);
+                    if (hit >= 0) app.active_viewport_idx = hit;
+                    ViewportInstance* vp = ensure_active_viewport();
+                    if (vp) {
+                        int scale_local = (int)std::lround(vp->zoom);
+                        if (scale_local < 1) scale_local = 1;
+                        float local_x = (float)mx - (app.viewport_pos.x + vp->pos.x);
+                        float local_y = (float)my - (app.viewport_pos.y + vp->pos.y);
+                        if (local_x >= 0.0f && local_y >= 0.0f &&
+                            local_x < vp->size.x && local_y < vp->size.y) {
+                            ImVec2 viewport_offset = compute_viewport_offset(*vp, sim, scale_local);
+                            float field_x = local_x - viewport_offset.x;
+                            float field_y = local_y - viewport_offset.y;
+                            int ix = (int)(field_x / (float)scale_local);
+                            int iy = (int)(field_y / (float)scale_local);
+                            if (ix >= 0 && iy >= 0 && ix < sim->nx && iy < sim->ny) {
+                                int i0 = app.block_first_i;
+                                int j0 = app.block_first_j;
+                                int i1 = ix;
+                                int j1 = iy;
+                                if (i1 < i0) std::swap(i0, i1);
+                                if (j1 < j0) std::swap(j0, j1);
+                                double nx1 = (sim->nx > 1) ? (double)(sim->nx - 1) : 1.0;
+                                double ny1 = (sim->ny > 1) ? (double)(sim->ny - 1) : 1.0;
+                                app.new_block_x0 = (float)i0 / (float)nx1;
+                                app.new_block_y0 = (float)j0 / (float)ny1;
+                                app.new_block_x1 = (float)(i1 + 1) / (float)nx1;
+                                app.new_block_y1 = (float)(j1 + 1) / (float)ny1;
+                                app.new_block_request_open = true;
+                                app.new_block_modal_open = true;
+                            }
+                        }
+                    }
+                    app.block_first_set = false;
+                    app.placing_block = false;
                 }
             }
         }
@@ -7675,6 +7847,7 @@ int main(int argc, char** argv) {
                     app.placing_source = !app.placing_source;
                     if (app.placing_source) {
                         paint_mode = false;
+                        app.placing_block = false;
                         app.area_mode = false;
                         app.ruler_mode = false;
                         ui_log_add(&app,
@@ -7683,8 +7856,27 @@ int main(int argc, char** argv) {
                         ui_log_add(&app, "Source tool: cancelled.");
                     }
                 }
-                if (IconButton(ICON_BLOCK_ADD, "Blocks / Materials")) app.show_blocks_panel = true;
-                if (IconButton(ICON_REGION, "Grid & Domain / Region")) app.show_grid_panel = true;
+                if (IconButton(ICON_BLOCK_ADD, "Add Block", app.placing_block)) {
+                    app.placing_block = !app.placing_block;
+                    if (app.placing_block) {
+                        app.placing_source = false;
+                        paint_mode = false;
+                        app.block_first_set = false;
+                        app.block_first_i = app.block_first_j = -1;
+                        ui_log_add(&app, "Block tool: click in viewport to place a 1-cell block (Esc to cancel).");
+                        app.show_blocks_panel = true;
+                    } else {
+                        ui_log_add(&app, "Block tool: cancelled.");
+                    }
+                }
+                if (IconButton(ICON_REGION, "Pick Region (Composer)", app.pick_region_active)) {
+                    app.pick_region_active = !app.pick_region_active;
+                    if (app.pick_region_active) {
+                        ui_log_add(&app, "Region tool: drag in a viewport to capture region (Esc to cancel).");
+                    } else {
+                        ui_log_add(&app, "Region tool: cancelled.");
+                    }
+                }
                 if (IconButton(ICON_SNAP, "Snap / Probes")) {
                     app.show_probes_panel = true;
                 }
@@ -7782,7 +7974,8 @@ int main(int argc, char** argv) {
                         double new_freq = (double)freq_ghz * 1e9;
                         if (new_freq > 0.0) {
                             fdtd_update_grid_for_freq(sim, new_freq);
-                            sources_set_freq(sim->sources, new_freq);
+                            double current_time = (double)sim->timestep * sim->dt;
+                            sources_set_freq(sim->sources, new_freq, current_time);
                         }
                     }
                     if (ImGui::IsItemHovered()) {
@@ -8091,6 +8284,7 @@ int main(int argc, char** argv) {
                 SDL_SetWindowSize(render->window, width, height);
                 app.window_width = width;
                 app.window_height = height;
+                reapply_all_sources(sim, &wizard);
                 ui_log_add(&app, "%s", restart_msg);
             } else {
                 ui_log_add(&app, "Failed to rebootstrap simulation");
@@ -8496,8 +8690,9 @@ int main(int argc, char** argv) {
 
         // Viewport content (image + overlay toolbar)
         bool channel_na_flags[4] = {false, false, false, false};
-        app.toolbar_valid = false;
-        if (app.viewport_valid && viewport_texture) {
+    app.toolbar_valid = false;
+    const bool block_overlay_for_popup = ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId);
+    if (app.viewport_valid && viewport_texture && !block_overlay_for_popup) {
             if (frame_counter <= 120) {
                 debug_logf("frame %d: entering viewport overlay window", frame_counter);
             }
@@ -8722,20 +8917,49 @@ int main(int argc, char** argv) {
                                        (float)(r.y0 * (double)sim->ny * (double)vp_scale);
                             float y1 = p0.y + viewport_offset.y +
                                        (float)(r.y1 * (double)sim->ny * (double)vp_scale);
-                            ImVec2 b0(x0, y0);
-                            ImVec2 b1(x1, y1);
-                            bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
-                            ImU32 bcol = block_col;
-                            if (i == app.selected_block) {
-                                bcol = block_sel_col;
-                            } else if (mat_match) {
-                                bcol = IM_COL32(0, 200, 255, 200);
-                            }
-                            overlay_dl->AddRect(b0, b1, bcol, 0.0f, 0, 1.5f);
-                            char blabel[16];
-                            std::snprintf(blabel, sizeof(blabel), "B%d", i);
-                            overlay_dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), bcol, blabel);
+                    ImVec2 b0(x0, y0);
+                    ImVec2 b1(x1, y1);
+                    bool mat_match = overlay_sel_mat && rect_matches_material(r, overlay_sel_mat);
+                    ImU32 bcol = block_col;
+                    if (i == app.selected_block) {
+                        bcol = block_sel_col;
+                    } else if (mat_match) {
+                        bcol = IM_COL32(0, 200, 255, 200);
+                    }
+                    overlay_dl->AddRect(b0, b1, bcol, 0.0f, 0, 1.5f);
+                    char blabel[16];
+                    std::snprintf(blabel, sizeof(blabel), "B%d", i);
+                    overlay_dl->AddText(ImVec2(x0 + 4.0f, y0 + 4.0f), bcol, blabel);
+                }
+
+                // Block placement preview (click-drag)
+                if (app.placing_block && app.block_first_set && app.active_viewport_idx == vp_idx) {
+                    float local_x = io.MousePos.x - p0.x;
+                    float local_y = io.MousePos.y - p0.y;
+                    if (local_x >= 0.0f && local_y >= 0.0f &&
+                        local_x < vp.size.x && local_y < vp.size.y) {
+                        float field_x = local_x - viewport_offset.x;
+                        float field_y = local_y - viewport_offset.y;
+                        int ix = (int)(field_x / (float)vp_scale);
+                        int iy = (int)(field_y / (float)vp_scale);
+                        if (ix >= 0 && ix < sim->nx && iy >= 0 && iy < sim->ny) {
+                            int i0 = app.block_first_i;
+                            int j0 = app.block_first_j;
+                            int i1 = ix;
+                            int j1 = iy;
+                            if (i1 < i0) std::swap(i0, i1);
+                            if (j1 < j0) std::swap(j0, j1);
+                            float x0 = p0.x + viewport_offset.x + (float)i0 * (float)vp_scale;
+                            float x1 = p0.x + viewport_offset.x + ((float)i1 + 1.0f) * (float)vp_scale;
+                            float y0 = p0.y + viewport_offset.y + (float)j0 * (float)vp_scale;
+                            float y1 = p0.y + viewport_offset.y + ((float)j1 + 1.0f) * (float)vp_scale;
+                            overlay_dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1),
+                                                IM_COL32(0, 200, 255, 255), 0.0f, 0, 2.0f);
+                            overlay_dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1),
+                                                      IM_COL32(0, 200, 255, 40));
                         }
+                    }
+                }
 
                         // Preview marker for toolbar source tool
                         if (app.placing_source && app.active_viewport_idx == vp_idx) {
@@ -9585,6 +9809,7 @@ int main(int argc, char** argv) {
         if (app.new_source_request_open) {
             ImGui::OpenPopup("New Source");
             app.new_source_modal_open = true;
+            app.placing_source = false; // stop placement preview while the modal is up
             app.new_source_request_open = false;
         }
         bool new_source_popup_open = ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId);
@@ -9600,6 +9825,20 @@ int main(int argc, char** argv) {
                                    &popup_open_flag,
                                    ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings)) {
+            // Force-enable this window in case any disabled scope leaked in
+            ImGui::PushItemFlag(ImGuiItemFlags_Disabled, false);
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
+
+            // Instrumentation: report ImGui state to diagnose frozen modal
+            ImGuiIO& io = ImGui::GetIO();
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            ImGui::TextDisabled("Debug: DisabledStack=%d Focused=%d Hovered=%d CaptureMouse=%d CaptureKeyboard=%d",
+                                g.DisabledStackSize,
+                                ImGui::IsWindowFocused() ? 1 : 0,
+                                ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) ? 1 : 0,
+                                io.WantCaptureMouse ? 1 : 0,
+                                io.WantCaptureKeyboard ? 1 : 0);
+
             ImGui::Text("Place new source");
             ImGui::Separator();
             ImGui::Text("Cell: (%d, %d)",
@@ -9621,6 +9860,8 @@ int main(int argc, char** argv) {
             if (ImGui::BeginTabBar("NewSourceTabs")) {
                 if (ImGui::BeginTabItem("Basic")) {
                     app.new_source_tab = 0;
+                    // ensure expression is ignored when using Basic tab
+                    app.new_source_expr[0] = '\0';
                     const char* type_names[] = {"Continuous wave", "Gaussian pulse", "Ricker wavelet"};
                     int type_idx = app.new_source_type;
                     if (type_idx < 0 || type_idx > 2) type_idx = 0;
@@ -9713,6 +9954,7 @@ int main(int argc, char** argv) {
                     int fidx = app.new_source_field;
                     if (fidx < 0 || fidx > 2) fidx = 0;
                     spec->field = (SourceFieldType)fidx;
+                    bool use_expr = (app.new_source_tab == 1);
 
                     int ix = app.new_source_cell_i;
                     int iy = app.new_source_cell_j;
@@ -9725,7 +9967,7 @@ int main(int argc, char** argv) {
                     spec->x = (double)ix / nx1;
                     spec->y = (double)iy / ny1;
 
-                    if (app.new_source_expr[0] != '\0') {
+                    if (use_expr && app.new_source_expr[0] != '\0') {
                         spec->type = SRC_EXPR;
                         std::strncpy(spec->expr, app.new_source_expr, SOURCE_EXPR_MAX_LEN - 1);
                         spec->expr[SOURCE_EXPR_MAX_LEN - 1] = '\0';
@@ -9737,9 +9979,9 @@ int main(int argc, char** argv) {
                     }
 
                     wizard.cfg.source_count = idx + 1;
-                    apply_source_spec_to_runtime(sim, idx, spec);
+                    double current_time = (double)sim->timestep * sim->dt;
+                    apply_source_spec_to_runtime_at_time(sim, idx, spec, current_time);
                     sim->sources[idx].active = 1;
-                    source_reparam(&sim->sources[idx]);
                     app.selected_source = idx;
                     app.show_sources_panel = true;
                     ui_log_add(&app,
@@ -9756,6 +9998,7 @@ int main(int argc, char** argv) {
                 app.placing_source = false;
                 app.new_source_modal_open = false;
                 new_source_popup_open = false;
+                paused = app.new_source_pause_was_paused;
                 ImGui::CloseCurrentPopup();
             }
 
@@ -9763,15 +10006,104 @@ int main(int argc, char** argv) {
                 app.placing_source = false;
                 app.new_source_modal_open = false;
                 new_source_popup_open = false;
+                paused = app.new_source_pause_was_paused;
                 ImGui::CloseCurrentPopup();
             }
 
+            ImGui::PopStyleVar();
+            ImGui::PopItemFlag();
             ImGui::EndPopup();
         }
         if ((!popup_open_flag || !new_source_popup_open) && app.new_source_modal_open) {
             app.new_source_modal_open = false;
             app.placing_source = false;
+            app.placing_block = false;
             paused = app.new_source_pause_was_paused;
+        }
+
+        // -----------------------------------------------------------------
+        // Toolbar: New Block modal (opened after drag)
+        // -----------------------------------------------------------------
+        if (app.new_block_request_open) {
+            ImGui::OpenPopup("New Block");
+            app.new_block_modal_open = true;
+            app.new_block_request_open = false;
+        }
+        bool new_block_popup_open = ImGui::IsPopupOpen("New Block", ImGuiPopupFlags_AnyPopupId);
+        if (new_block_popup_open) {
+            ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_FirstUseEver);
+        }
+        bool block_popup_flag = true;
+        if (ImGui::BeginPopupModal("New Block",
+                                   &block_popup_flag,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings)) {
+            float x0 = std::min(app.new_block_x0, app.new_block_x1);
+            float x1 = std::max(app.new_block_x0, app.new_block_x1);
+            float y0 = std::min(app.new_block_y0, app.new_block_y1);
+            float y1 = std::max(app.new_block_y0, app.new_block_y1);
+            ImGui::Text("Bounds (norm): x=%.3f..%.3f  y=%.3f..%.3f", x0, x1, y0, y1);
+            ImGui::Separator();
+            const char* block_types[] = {"Dielectric", "PEC", "PMC"};
+            int type_idx = app.new_block_tag;
+            if (type_idx < 0 || type_idx > 2) type_idx = 0;
+            if (ImGui::Combo("Type", &type_idx, block_types, IM_ARRAYSIZE(block_types))) {
+                app.new_block_tag = type_idx;
+            }
+            if (app.new_block_tag == 0) {
+                ImGui::InputFloat("Epsr", &app.new_block_epsr, 0.1f, 1.0f, "%.3f");
+                if (app.new_block_epsr < 1.0f) app.new_block_epsr = 1.0f;
+                ImGui::InputFloat("Sigma", &app.new_block_sigma, 0.0f, 0.1f, "%.4g");
+                if (app.new_block_sigma < 0.0f) app.new_block_sigma = 0.0f;
+            } else {
+                ImGui::TextDisabled("Conductors ignore epsr/sigma inputs.");
+            }
+            ImGui::Separator();
+            bool add_block = false;
+            bool cancel_block = false;
+            if (ImGui::Button("Add", ImVec2(120.0f, 0.0f))) add_block = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) cancel_block = true;
+
+            if (add_block) {
+                if (wizard.cfg.material_rect_count < CONFIG_MAX_MATERIAL_RECTS) {
+                    int idx = wizard.cfg.material_rect_count;
+                    MaterialRectSpec& r = wizard.cfg.material_rects[idx];
+                    r.x0 = x0;
+                    r.y0 = y0;
+                    r.x1 = x1;
+                    r.y1 = y1;
+                    if (app.new_block_tag == 1) {
+                        r.tag = 1; // PEC
+                        r.epsr = 1.0;
+                        r.sigma = 1e7;
+                    } else if (app.new_block_tag == 2) {
+                        r.tag = 2; // PMC
+                        r.epsr = 1.0;
+                        r.sigma = 0.0;
+                    } else {
+                        r.tag = 0;
+                        r.epsr = app.new_block_epsr;
+                        r.sigma = app.new_block_sigma;
+                    }
+                    wizard.cfg.material_rect_count = idx + 1;
+                    apply_wizard_materials_to_sim(wizard, &bootstrap, sim);
+                    app.selected_block = idx;
+                    ui_log_add(&app, "Added block #%d", idx);
+                } else {
+                    ui_log_add(&app, "Max blocks reached (%d)", CONFIG_MAX_MATERIAL_RECTS);
+                }
+                app.new_block_modal_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            if (cancel_block) {
+                app.new_block_modal_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if ((!block_popup_flag || !new_block_popup_open) && app.new_block_modal_open) {
+            app.new_block_modal_open = false;
         }
 
         if (frame_counter <= 120) {
