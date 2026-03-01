@@ -1,4 +1,4 @@
-# Prompt #34: Grid Overlay Enhancements
+# Work Item #34: Grid Overlay Enhancements
 
 **Phase:** 2.75C (Polish - Week 3)
 **Effort:** ~3 hours

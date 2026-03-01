@@ -7,7 +7,7 @@
 
 ## Verified Hotkeys
 
-### Multi-Viewport Layouts (Prompt #37)
+### Multi-Viewport Layouts (Work Item #37)
 | Hotkey | Layout | Code Location | Log Message |
 |--------|--------|---------------|-------------|
 | **Alt+1** | Single full viewport | main_imgui.cpp:3527 | "Layout: Single viewport" |
@@ -15,7 +15,7 @@
 | **Alt+3** | Vertical split (left/right) | main_imgui.cpp:3543 | "Layout: Vertical split" |
 | **Alt+4** | Quad view (2×2 grid) | main_imgui.cpp:3551 | "Layout: Quad view" |
 
-### Advanced Measurements (Prompt #39)
+### Advanced Measurements (Work Item #39)
 | Hotkey | Function | Code Location | Popup/UI |
 |--------|----------|---------------|----------|
 | **Shift+A** | Toggle area measurement mode | main_imgui.cpp:3907 | Log: "Area mode: ON/OFF" |

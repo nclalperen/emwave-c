@@ -53,7 +53,7 @@ static inline float  sqrf   (float x){ return x*x; }
  * Compute a stable Courant–Friedrichs–Lewy time step.  Use a slightly
  * smaller safety factor (0.95) than the classic 0.99 to provide more
  * margin when lossy materials or coarse meshes are active.  A too‑aggressive
- * CFL can destabilise the solver when sigma>0.  See other AI review.
+ * CFL can destabilise the solver when sigma>0.  See earlier review.
  */
 static inline double cfl_dt(double dx_, double dy_){
     return 0.95 / (c0 * sqrt(1.0/(dx_*dx_) + 1.0/(dy_*dy_)));
@@ -301,7 +301,7 @@ static inline void inject_source_into_Ez(Source* s, double (*Ezf)[NY], int t, do
     /*
      * Soft source injection: instead of directly setting Ez = Ez + A*w
      * (hard source), which can cause spurious reflections, inject the
-     * source via a saturating form.  See other AI suggestion: dividing
+     * source via a saturating form.  See earlier suggestion: dividing
      * by (1+|A*w|*0.1) gently limits the perturbation when the source
      * amplitude is large.  This keeps reflections small while still
      * approximating a hard source for small amplitudes.
@@ -862,7 +862,7 @@ static void cpml_build_coeffs(double dt_){
         /*
          * Compute the fractional distance into the PML region.  Use cell
          * centres aligned with Yee grid axes rather than offset by 0.5
-         * cells as in some references.  See other AI notes: the 0.5 offset
+         * cells as in some references.  See earlier notes: the 0.5 offset
          * mismatches the Yee staggering and reduces absorption.  We simply
          * normalise the integer distance [0..N] to [0..1].
          */
@@ -2073,7 +2073,7 @@ int main(void){
     if (probe_out) fclose(probe_out);
     /*
      * Free port sampling buffers.  These buffers are allocated during
-     * initialisation and otherwise leak at exit.  See other AI notes.
+     * initialisation and otherwise leak at exit.  See earlier notes.
      */
     for (int p=0; p<MAX_PORTS; ++p){
         if (ports[p].V){ free(ports[p].V); ports[p].V = NULL; }

@@ -195,9 +195,9 @@ Success checklist (high level):
 - Total effort contained to 20 hours with minimal disruption to existing Phase 2.75A-C code.
 
 Next steps:
-1. Follow prompts #37-39 for implementation details.  
+1. Follow Work Items #37-39 for implementation details.  
 2. Use the 43 test cases in the master guide to validate each feature.  
-3. Update user-facing help once features land (short how-to per prompt).  
+3. Update user-facing help once features land (short how-to per Work Item).  
 4. Capture before/after screenshots for release notes.
 
 ---

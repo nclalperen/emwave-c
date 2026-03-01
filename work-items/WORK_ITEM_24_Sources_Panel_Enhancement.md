@@ -1,4 +1,4 @@
-# Prompt #24: Sources Panel Enhancement with Expression Editor
+# Work Item #24: Sources Panel Enhancement with Expression Editor
 
 **Phase:** 2.5 (Wizard Integration - Week 1)
 **Effort:** ~6 hours
@@ -501,4 +501,4 @@ Content:
 
 **Ready for implementation!** 
 
-Hand this prompt to your implementation agent and proceed with Week 1.
+Hand this Work Item to your Developer and proceed with Week 1.

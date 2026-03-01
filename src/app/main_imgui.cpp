@@ -389,6 +389,11 @@ struct AppState {
     // Region picker (composer)
     bool pick_region_active;
     int pick_region_viewport;
+    bool region_capture_ready;
+    bool region_capture_modal_open;
+    int region_capture_viewport;
+    int region_capture_page;
+    ImVec4 region_capture_norm; // x0,y0,x1,y1 in 0..1
     int last_click_i;
     int last_click_j;
     bool show_scope_window;
@@ -483,7 +488,7 @@ struct AppState {
     bool sync_zoom;
     bool sync_pan;
 
-    // Measurements (Prompt #39)
+    // Measurements (Work Item #39)
     bool area_mode;
     AreaMeasurement current_area;
     bool annotation_mode;
@@ -2248,17 +2253,11 @@ static bool composer_generate_preview(AppState* app,
     return true;
 }
 
-static void draw_print_composer(AppState* app, SDL_Renderer* renderer, SimulationState* sim, Scope* scope, RenderContext* render_ctx) {
-    if (!app || !app->show_print_composer) return;
+static void draw_print_composer_contents(AppState* app, SDL_Renderer* renderer, SimulationState* sim, Scope* scope, RenderContext* render_ctx) {
+    if (!app) return;
     ensure_composer_initialized(app);
-    if (!ImGui::Begin("Print Composer", &app->show_print_composer)) {
-        ImGui::End();
-        return;
-    }
-
     if (app->composer_pages.empty()) {
         ImGui::TextUnformatted("No pages defined.");
-        ImGui::End();
         return;
     }
     if (app->composer_active_page >= (int)app->composer_pages.size()) {
@@ -4213,7 +4212,9 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
         if (ImGui::Button("Delete Source")) {
             ImGui::OpenPopup("delete_source_popup");
         }
-        if (ImGui::BeginPopupModal("delete_source_popup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        bool delete_popup_open =
+            ImGui::BeginPopupModal("delete_source_popup", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        if (delete_popup_open) {
             ImGui::Text("Delete source #%d?", idx);
             if (ImGui::Button("Delete", ImVec2(120, 0))) {
                 delete_source_at(&wizard, sim, app, idx);
@@ -4223,7 +4224,9 @@ static void draw_sources_panel(SimulationState* sim, WizardState& wizard, AppSta
             if (ImGui::Button("Cancel", ImVec2(120, 0))) {
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            if (ImGui::IsPopupOpen("delete_source_popup", ImGuiPopupFlags_AnyPopupId)) {
+                ImGui::EndPopup();
+            }
         }
         ImGui::Unindent();
     }
@@ -5532,6 +5535,7 @@ static void draw_blocks_panel(WizardState& wizard,
         ImGui::OpenPopup("AddBlockMaterialPopup");
     }
     if (!can_add) ImGui::EndDisabled();
+
     if (ImGui::BeginPopup("AddBlockMaterialPopup")) {
         ImGui::TextUnformatted("Select material:");
         ImGui::Separator();
@@ -5559,7 +5563,9 @@ static void draw_blocks_panel(WizardState& wizard,
                 ImGui::CloseCurrentPopup();
             }
         }
-        ImGui::EndPopup();
+        if (ImGui::IsPopupOpen("AddBlockMaterialPopup", ImGuiPopupFlags_AnyPopupId)) {
+            ImGui::EndPopup();
+        }
     }
     ImGui::Separator();
 
@@ -5966,6 +5972,11 @@ int main(int argc, char** argv) {
     app.new_block_cell_h = 1.0f;
     app.pick_region_active = false;
     app.pick_region_viewport = -1;
+    app.region_capture_ready = false;
+    app.region_capture_modal_open = false;
+    app.region_capture_viewport = 0;
+    app.region_capture_page = 0;
+    app.region_capture_norm = ImVec4(0, 0, 1, 1);
     app.viewports[0].viz_mode = VIEWPORT_VIZ_EZ;
     app.viewports[1].viz_mode = VIEWPORT_VIZ_EZ;
     app.viewports[2].viz_mode = VIEWPORT_VIZ_EZ;
@@ -6278,6 +6289,12 @@ int main(int argc, char** argv) {
                             app.placing_block = false;
                             app.block_first_set = false;
                             ui_log_add(&app, "Block tool: cancelled.");
+                            handled_globally = true;
+                        } else if (app.composer_pick_region_active) {
+                            app.composer_pick_region_active = false;
+                            app.composer_pick_region_dragging = false;
+                            app.pick_region_active = false;
+                            ui_log_add(&app, "Region tool: cancelled.");
                             handled_globally = true;
                         } else if (app.area_mode) {
                             app.area_mode = false;
@@ -7070,14 +7087,23 @@ int main(int argc, char** argv) {
                         }
                         continue;
                     }
-                    if (app.pick_region_active) {
-                        app.composer_pick_region_active = true;
+                    if (app.composer_pick_region_active) {
+                        ensure_composer_initialized(&app);
                         app.composer_pick_region_viewport = app.active_viewport_idx;
+                        if (!app.composer_pages.empty()) {
+                            int cap = (int)app.composer_pages.size() - 1;
+                            if (cap < 0) cap = 0;
+                            if (app.composer_active_page < 0) app.composer_active_page = 0;
+                            if (app.composer_active_page > cap) app.composer_active_page = cap;
+                            app.composer_pick_region_page = app.composer_active_page;
+                        } else {
+                            app.composer_pick_region_page = 0;
+                        }
+                        app.composer_pick_region_target_item = -1;
                         app.composer_pick_region_start_norm = ImVec2((float)ix / (float)sim->nx,
                                                                      (float)iy / (float)sim->ny);
                         app.composer_pick_region_end_norm = app.composer_pick_region_start_norm;
                         app.composer_pick_region_dragging = true;
-                        app.pick_region_active = false;
                         ui_log_add(&app, "Region tool: drag to size region (viewport %d)", app.active_viewport_idx + 1);
                         continue;
                     }
@@ -7869,9 +7895,23 @@ int main(int argc, char** argv) {
                         ui_log_add(&app, "Block tool: cancelled.");
                     }
                 }
-                if (IconButton(ICON_REGION, "Pick Region (Composer)", app.pick_region_active)) {
-                    app.pick_region_active = !app.pick_region_active;
-                    if (app.pick_region_active) {
+                if (IconButton(ICON_REGION, "Pick Region (Composer)", app.composer_pick_region_active)) {
+                    ensure_composer_initialized(&app);
+                    app.composer_pick_region_active = !app.composer_pick_region_active;
+                    app.composer_pick_region_dragging = false;
+                    app.composer_pick_region_viewport = std::clamp(app.active_viewport_idx, 0, 3);
+                    if (!app.composer_pages.empty()) {
+                        int cap = (int)app.composer_pages.size() - 1;
+                        if (cap < 0) cap = 0;
+                        if (app.composer_active_page < 0) app.composer_active_page = 0;
+                        if (app.composer_active_page > cap) app.composer_active_page = cap;
+                        app.composer_pick_region_page = app.composer_active_page;
+                    } else {
+                        app.composer_pick_region_page = 0;
+                    }
+                    app.composer_pick_region_target_item = -1;
+                    app.pick_region_active = app.composer_pick_region_active;
+                    if (app.composer_pick_region_active) {
                         ui_log_add(&app, "Region tool: drag in a viewport to capture region (Esc to cancel).");
                     } else {
                         ui_log_add(&app, "Region tool: cancelled.");
@@ -8238,16 +8278,27 @@ int main(int argc, char** argv) {
             draw_measurement_history_panel(&app);
         }
 
+        // Print Composer as a standalone (non-dockable) window
         if (app.show_print_composer) {
-            draw_print_composer(&app, render->renderer, sim, &scope, render);
+            ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowSize(ImVec2(960.0f, 540.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(main_viewport->Pos.x + main_viewport->Size.x * 0.5f,
+                                           main_viewport->Pos.y + main_viewport->Size.y * 0.5f),
+                                    ImGuiCond_FirstUseEver,
+                                    ImVec2(0.5f, 0.5f));
+            ImGuiWindowFlags composer_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
+            if (ImGui::Begin("Print Composer", &app.show_print_composer, composer_flags)) {
+                draw_print_composer_contents(&app, render->renderer, sim, &scope, render);
+            }
+            ImGui::End();
         }
-
 
         if (app.annotation_mode) {
             ImGui::OpenPopup("AddAnnotation");
             app.annotation_mode = false;
         }
-        if (ImGui::BeginPopup("AddAnnotation")) {
+        bool annotation_popup_open = ImGui::BeginPopup("AddAnnotation");
+        if (annotation_popup_open) {
             ImGui::InputText("Text", app.temp_annotation.text, IM_ARRAYSIZE(app.temp_annotation.text));
             ImGui::ColorEdit3("Color", (float*)&app.temp_annotation.color);
             ImGui::SliderFloat("Size", &app.temp_annotation.font_size, 8.0f, 28.0f, "%.0f px");
@@ -8262,7 +8313,9 @@ int main(int argc, char** argv) {
                 ImGui::CloseCurrentPopup();
                 app.annotation_mode = false;
             }
-            ImGui::EndPopup();
+            if (ImGui::IsPopupOpen("AddAnnotation", ImGuiPopupFlags_AnyPopupId)) {
+                ImGui::EndPopup();
+            }
         }
 
         if (app.request_rebootstrap) {
@@ -8807,63 +8860,63 @@ int main(int argc, char** argv) {
                             } else if (app.composer_pick_region_dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                                 app.composer_pick_region_end_norm = to_norm(local_x, local_y);
                             } else if (app.composer_pick_region_dragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-                                app.composer_pick_region_dragging = false;
-                                ImVec2 a = app.composer_pick_region_start_norm;
-                                ImVec2 b = app.composer_pick_region_end_norm;
-                                float x0 = std::clamp(std::min(a.x, b.x), 0.0f, 1.0f);
-                                float y0 = std::clamp(std::min(a.y, b.y), 0.0f, 1.0f);
-                                float x1 = std::clamp(std::max(a.x, b.x), 0.0f, 1.0f);
-                                float y1 = std::clamp(std::max(a.y, b.y), 0.0f, 1.0f);
-                                const float min_delta = 1.0f / std::max(4.0f, (float)std::min(sim->nx, sim->ny));
-                                if (x1 - x0 < min_delta) x1 = x0 + min_delta;
-                                if (y1 - y0 < min_delta) y1 = y0 + min_delta;
-                                if (x1 > 1.0f) x1 = 1.0f;
-                                if (y1 > 1.0f) y1 = 1.0f;
+                            app.composer_pick_region_dragging = false;
+                            ImVec2 a = app.composer_pick_region_start_norm;
+                            ImVec2 b = app.composer_pick_region_end_norm;
+                            float x0 = std::clamp(std::min(a.x, b.x), 0.0f, 1.0f);
+                            float y0 = std::clamp(std::min(a.y, b.y), 0.0f, 1.0f);
+                            float x1 = std::clamp(std::max(a.x, b.x), 0.0f, 1.0f);
+                            float y1 = std::clamp(std::max(a.y, b.y), 0.0f, 1.0f);
+                            const float min_delta = 1.0f / std::max(4.0f, (float)std::min(sim->nx, sim->ny));
+                            if (x1 - x0 < min_delta) x1 = x0 + min_delta;
+                            if (y1 - y0 < min_delta) y1 = y0 + min_delta;
+                            if (x1 > 1.0f) x1 = 1.0f;
+                            if (y1 > 1.0f) y1 = 1.0f;
 
-                                bool updated = false;
-                                if (app.composer_pick_region_page >= 0 &&
-                                    app.composer_pick_region_page < (int)app.composer_pages.size()) {
-                                    ComposerPage& pg = app.composer_pages[app.composer_pick_region_page];
-                                    if (app.composer_pick_region_target_item >= 0) {
-                                        for (auto& it : pg.items) {
-                                            if (it.id == app.composer_pick_region_target_item &&
-                                                it.type == COMPOSER_REGION) {
-                                                it.region_norm = ImVec4(x0, y0, x1, y1);
-                                                it.viewport_idx = app.composer_pick_region_viewport;
-                                                updated = true;
-                                                break;
-                                            }
+                            bool updated = false;
+                            if (app.composer_pick_region_page >= 0 &&
+                                app.composer_pick_region_page < (int)app.composer_pages.size()) {
+                                ComposerPage& pg = app.composer_pages[app.composer_pick_region_page];
+                                if (app.composer_pick_region_target_item >= 0) {
+                                    for (auto& it : pg.items) {
+                                        if (it.id == app.composer_pick_region_target_item &&
+                                            it.type == COMPOSER_REGION) {
+                                            it.region_norm = ImVec4(x0, y0, x1, y1);
+                                            it.viewport_idx = app.composer_pick_region_viewport;
+                                            updated = true;
+                                            break;
                                         }
-                                    }
-                                    if (!updated) {
-                                        float region_w = x1 - x0;
-                                        float region_h = y1 - y0;
-                                        float aspect = region_h > 1e-6f ? (region_w / region_h) : 1.0f;
-                                        float target_w = pg.res_w * 0.45f;
-                                        float target_h = target_w / aspect;
-                                        if (target_h > pg.res_h * 0.8f) {
-                                            target_h = pg.res_h * 0.8f;
-                                            target_w = target_h * aspect;
-                                        }
-                                        ImVec2 pos(pg.res_w * 0.05f, pg.res_h * 0.1f);
-                                        composer_add_item(&app,
-                                                          pg,
-                                                          COMPOSER_REGION,
-                                                          app.composer_pick_region_viewport,
-                                                          pos,
-                                                          ImVec2(target_w, target_h));
-                                        pg.items.back().region_norm = ImVec4(x0, y0, x1, y1);
-                                        updated = true;
                                     }
                                 }
-                                app.composer_pick_region_active = false;
-                                std::snprintf(app.composer_status,
-                                              sizeof(app.composer_status),
-                                              updated ? "Region captured (viewport %d)" : "Region capture failed",
-                                              app.composer_pick_region_viewport + 1);
+                                if (!updated) {
+                                    float region_w = x1 - x0;
+                                    float region_h = y1 - y0;
+                                    float aspect = region_h > 1e-6f ? (region_w / region_h) : 1.0f;
+                                    float target_w = pg.res_w * 0.45f;
+                                    float target_h = target_w / aspect;
+                                    if (target_h > pg.res_h * 0.8f) {
+                                        target_h = pg.res_h * 0.8f;
+                                        target_w = target_h * aspect;
+                                    }
+                                    ImVec2 pos(pg.res_w * 0.05f, pg.res_h * 0.1f);
+                                    composer_add_item(&app,
+                                                      pg,
+                                                      COMPOSER_REGION,
+                                                      app.composer_pick_region_viewport,
+                                                      pos,
+                                                      ImVec2(target_w, target_h));
+                                    pg.items.back().region_norm = ImVec4(x0, y0, x1, y1);
+                                    updated = true;
+                                }
                             }
+                            app.composer_pick_region_active = false;
+                            std::snprintf(app.composer_status,
+                                          sizeof(app.composer_status),
+                                          updated ? "Region captured (viewport %d)" : "Region capture failed",
+                                          app.composer_pick_region_viewport + 1);
+                        }
 
-                            if (app.composer_pick_region_dragging || picking_this_vp) {
+                        if (app.composer_pick_region_dragging || picking_this_vp) {
                                 ImVec2 a = app.composer_pick_region_dragging ? app.composer_pick_region_start_norm
                                                                              : app.composer_pick_region_start_norm;
                                 ImVec2 b = app.composer_pick_region_dragging ? app.composer_pick_region_end_norm
@@ -9074,7 +9127,8 @@ int main(int argc, char** argv) {
                                 if (ImGui::Button("Cfg", ImVec2(36.0f, 0.0f))) {
                                     ImGui::OpenPopup("ViewportCfgPopup");
                                 }
-                                if (ImGui::BeginPopup("ViewportCfgPopup")) {
+                                bool cfg_popup_open = ImGui::BeginPopup("ViewportCfgPopup");
+                                if (cfg_popup_open) {
                                     if (active_vp) {
                                         const char* viz_options[] = {"Ez", "|Ez|", "Hx", "Hy", "|H|", "Sx", "Sy", "|S|", "Ex (n/a)", "Ey (n/a)", "Hz (n/a)", "Material", "Overlay"};
                                         int v = (int)active_vp->viz_mode;
@@ -9089,7 +9143,10 @@ int main(int argc, char** argv) {
                                     ImGui::Separator();
                                     ImGui::Checkbox("Sync Zoom", &app.sync_zoom);
                                     ImGui::Checkbox("Sync Pan", &app.sync_pan);
-                                    ImGui::EndPopup();
+                                    if (ImGui::IsPopupOpen("ViewportCfgPopup", ImGuiPopupFlags_AnyPopupId)) {
+                                        ImGui::EndPopup();
+                                    }
+                                }
                             }
                             ImVec2 focus = active_vp ? ImVec2(active_vp->size.x * 0.5f, active_vp->size.y * 0.5f)
                                                      : ImVec2(app.viewport_size.x * 0.5f, app.viewport_size.y * 0.5f);
@@ -9290,7 +9347,12 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
 
-                // HUD badges
+                {
+                // HUD badges and overlays (local scope)
+                ViewportInstance* active_vp = ensure_active_viewport();
+                int active_scale = active_vp ? (int)std::lround(active_vp->zoom) : 1;
+                if (active_scale < 1) active_scale = 1;
+
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 hud_pos = active_vp ? ImVec2(app.viewport_pos.x + active_vp->pos.x + 12.0f,
                                                  app.viewport_pos.y + active_vp->pos.y + 12.0f)
@@ -9643,7 +9705,8 @@ int main(int argc, char** argv) {
                     ImGui::SetNextWindowPos(app.context_menu_pos, ImGuiCond_Always);
                     app.show_context_menu = false; // consume request
                 }
-                if (ImGui::BeginPopup("ViewportContextMenu")) {
+                bool context_popup_open = ImGui::BeginPopup("ViewportContextMenu");
+                if (context_popup_open) {
                     int cx = app.context_menu_cell_i;
                     int cy = app.context_menu_cell_j;
                     ImGui::Text("Cell (%d, %d)", cx, cy);
@@ -9784,7 +9847,9 @@ int main(int argc, char** argv) {
                         std::snprintf(buf, sizeof(buf), "(%d, %d)", cx, cy);
                         SDL_SetClipboardText(buf);
                     }
-                    ImGui::EndPopup();
+                    if (ImGui::IsPopupOpen("ViewportContextMenu", ImGuiPopupFlags_AnyPopupId)) {
+                        ImGui::EndPopup();
+                    }
                 } else {
                     app.show_context_menu = false;
                 }
@@ -9821,10 +9886,11 @@ int main(int argc, char** argv) {
                                     ImVec2(0.5f, 0.5f));
         }
         bool popup_open_flag = true;
-        if (ImGui::BeginPopupModal("New Source",
-                                   &popup_open_flag,
-                                   ImGuiWindowFlags_AlwaysAutoResize |
-                                   ImGuiWindowFlags_NoSavedSettings)) {
+        bool new_source_begin = ImGui::BeginPopupModal("New Source",
+                                                       &popup_open_flag,
+                                                       ImGuiWindowFlags_AlwaysAutoResize |
+                                                       ImGuiWindowFlags_NoSavedSettings);
+        if (new_source_begin) {
             // Force-enable this window in case any disabled scope leaked in
             ImGui::PushItemFlag(ImGuiItemFlags_Disabled, false);
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1.0f);
@@ -10012,7 +10078,9 @@ int main(int argc, char** argv) {
 
             ImGui::PopStyleVar();
             ImGui::PopItemFlag();
-            ImGui::EndPopup();
+            if (ImGui::IsPopupOpen("New Source", ImGuiPopupFlags_AnyPopupId)) {
+                ImGui::EndPopup();
+            }
         }
         if ((!popup_open_flag || !new_source_popup_open) && app.new_source_modal_open) {
             app.new_source_modal_open = false;
@@ -10100,7 +10168,9 @@ int main(int argc, char** argv) {
                 app.new_block_modal_open = false;
                 ImGui::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            if (ImGui::IsPopupOpen("New Block", ImGuiPopupFlags_AnyPopupId)) {
+                ImGui::EndPopup();
+            }
         }
         if ((!block_popup_flag || !new_block_popup_open) && app.new_block_modal_open) {
             app.new_block_modal_open = false;

@@ -1,10 +1,10 @@
-# Prompt #33: Layout Presets & Save/Load
+# Work Item #33: Layout Presets & Save/Load
 
 **Phase:** 2.75B (Docking UI - Week 2 - Final)
 **Effort:** ~3 hours
 **Priority:** MEDIUM - User convenience
 **Status:** Ready for implementation
-**Dependencies:** Prompt #32 (DockSpace)
+**Dependencies:** Work Item #32 (DockSpace)
 
 ---
 

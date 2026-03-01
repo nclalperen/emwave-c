@@ -1,4 +1,4 @@
-# Prompt #35: Measurement Tools & Context Menu
+# Work Item #35: Measurement Tools & Context Menu
 
 **Phase:** 2.75C (Polish - Week 3)
 **Effort:** ~6 hours

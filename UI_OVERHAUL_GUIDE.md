@@ -148,36 +148,36 @@ Communication: WebSockets or REST API
 
 ---
 
-## 🧠 Prompt Library for Complete UI/UX Redesigns
+## 🧠 Work Item Library for Complete UI/UX Redesigns
 
-Use the following prompt packs verbatim (or as starting points) when ideating in Midjourney, Stable Diffusion, Figma AI, Galileo, v0, or any other design co-pilot. Each one encodes the instrumentation, physics context, and ergonomic requirements of emwave-c so the generated concepts remain grounded in the simulator's capabilities.
+Use the following Work Item packs verbatim (or as starting points) during design workshops and mockup iterations. Each one encodes the instrumentation, physics context, and ergonomic requirements of emwave-c so the resulting concepts remain grounded in the simulator's capabilities.
 
-### Prompt 1 – Vision & Design Language
+### Work Item 1 – Vision & Design Language
 ```
 Design a premium desktop scientific visualization dashboard for “emwave-c”, a real-time 2D electromagnetic FDTD simulator. Focus on a dark, high-contrast laboratory aesthetic with subtle neon gradients inspired by wave interference. Pair bold typography (Space Grotesk / IBM Plex) with ultra-crisp vector icons, depth via frosted glass cards, and glowing accent lines that suggest field propagation. Include a persistent frequency readout (GHz) and grid size indicator. Convey precision, calm control, and zero visual clutter while keeping the viewport hero-sized.
 ```
 
-### Prompt 2 – Main Workspace Layout
+### Work Item 2 – Main Workspace Layout
 ```
 Create the primary simulation screen for emwave-c. Center a 2D field viewport rendered as a heatmap with smooth interpolation, adaptive color bar, and ghosted grid. Surround it with dockable panels: left column for paint tools (PEC, PMC, dielectric), brushes, and layer visibility; right column for live material legend, boundary toggles (Mur vs CPML), and probe summaries. Add resizable bottom tray housing transport controls (Play/Pause, Step, Reset), timestep scrubber, and FPS indicator. The UI must support mouse + tablet input with large touch targets and haptic-style feedback cues.
 ```
 
-### Prompt 3 – Instrumentation & Scopes
+### Work Item 3 – Instrumentation & Scopes
 ```
 Visualize a high-end instrumentation stack for emwave-c featuring dual probes, waveform scopes, and FFT charts. Use synchronized cards that show Probe A/B amplitude vs time, peak/hold annotations, logarithmic frequency axes, and export buttons. Integrate tooltips for Auto-P99 and smoothing options. Allow the cards to undock and float over the viewport while maintaining minimal latency aesthetics (micro animations, neon scanlines). Emphasize data legibility on dark backgrounds.
 ```
 
-### Prompt 4 – Control Console & Scene Browser
+### Work Item 4 – Control Console & Scene Browser
 ```
 Design a right-side control console that surfaces configuration JSONs from /configs, scene presets (waveguide, cpw_filter, cavities), and runtime overrides (nx, ny, tmax). Include expandable accordions for source settings (CW, Gaussian, Ricker), frequency sliders with numeric entry, and boundary/material toggles. Provide a mini preview thumbnail per scene, drag-and-drop ordering, and a “batch/headless” switch. The console should feel like a mission panel with glowing outlines, magnetic snapping, and accessible keyboard shortcuts displayed inline.
 ```
 
-### Prompt 5 – Onboarding, Status & Help Overlay
+### Work Item 5 – Onboarding, Status & Help Overlay
 ```
 Create an in-app onboarding overlay for emwave-c that highlights controls (Space pause/resume, M boundary toggle, numeric paint modes). Use contextual callouts anchored to UI elements, a condensed cheat sheet, and animated arrows showing gesture paths. Include system status badges (solver stable, boundary reflections < -60 dB, export complete) in the lower-right corner. Blend the overlay seamlessly with the dark neon theme using translucent panels and soft drop shadows.
 ```
 
-Mix and match these prompts to cover alternate styles (e.g., lighter palettes, web-first layouts) while keeping the simulator’s scientific instrumentation front and center.
+Mix and match these Work Items to cover alternate styles (e.g., lighter palettes, web-first layouts) while keeping the simulator’s scientific instrumentation front and center.
 
 ---
 

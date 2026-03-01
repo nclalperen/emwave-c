@@ -7,10 +7,10 @@
 
 ---
 
-## 📋 All Prompts Created
+## 📋 All Work Items Created
 
 ### Phase 2.75A: Essential Modernization (16h)
-| Prompt | Feature | Effort | Priority | Status |
+| Work Item | Feature | Effort | Priority | Status |
 |--------|---------|--------|----------|--------|
 | **#28** | Window Resizability & Infrastructure | 2h | CRITICAL | ✅ Ready |
 | **#29** | Mouse Wheel Zoom (Zoom-to-Cursor) | 4h | HIGH | ✅ Ready |
@@ -19,14 +19,14 @@
 | | **Subtotal** | **16h** | | |
 
 ### Phase 2.75B: Docking UI (9h)
-| Prompt | Feature | Effort | Priority | Status |
+| Work Item | Feature | Effort | Priority | Status |
 |--------|---------|--------|----------|--------|
 | **#32** | Full DockSpace Layout Conversion | 6h | HIGH | ✅ Ready |
 | **#33** | Layout Presets & Save/Load | 3h | MEDIUM | ✅ Ready |
 | | **Subtotal** | **9h** | | |
 
 ### Phase 2.75C: Polish (13h)
-| Prompt | Feature | Effort | Priority | Status |
+| Work Item | Feature | Effort | Priority | Status |
 |--------|---------|--------|----------|--------|
 | **#34** | Grid Overlay Enhancements | 3h | LOW | ✅ Ready |
 | **#35** | Measurement Tools & Context Menu | 6h | MEDIUM | ✅ Ready |
@@ -43,23 +43,23 @@
 **Implement in order #28 → #36**
 
 **Benefits:**
-- Each prompt builds on previous
+- Each Work Item builds on previous
 - Test as you go
 - Can stop at any phase boundary
 
 **Timeline:**
-- Week 1: Prompts #28-31 (Phase 2.75A) → Essential features
-- Week 2: Prompts #32-33 (Phase 2.75B) → Docking UI
-- Week 3: Prompts #34-36 (Phase 2.75C) → Polish
+- Week 1: Work Items #28-31 (Phase 2.75A) → Essential features
+- Week 2: Work Items #32-33 (Phase 2.75B) → Docking UI
+- Week 3: Work Items #34-36 (Phase 2.75C) → Polish
 
 ---
 
 ### Option B: Parallel (Advanced)
 **Multiple developers can work simultaneously**
 
-**Group 1:** Prompts #28-30 (Resize/Zoom/Pan foundation)
-**Group 2:** Prompt #32 (DockSpace conversion)
-**Group 3:** Prompts #34-36 (Visual polish)
+**Group 1:** Work Items #28-30 (Resize/Zoom/Pan foundation)
+**Group 2:** Work Item #32 (DockSpace conversion)
+**Group 3:** Work Items #34-36 (Visual polish)
 
 Then merge and integrate.
 
@@ -79,12 +79,12 @@ Then merge and integrate.
 
 ---
 
-## 📝 How to Use These Prompts
+## 📝 How to Use These Work Items
 
-### For Each Prompt:
+### For Each Work Item:
 
-1. **Read the prompt document** - Understand objective and requirements
-2. **Check dependencies** - Ensure previous prompts complete
+1. **Read the Work Item document** - Understand objective and requirements
+2. **Check dependencies** - Ensure previous Work Items complete
 3. **Copy code snippets** - Use provided implementations as templates
 4. **Test thoroughly** - Use the testing checklist
 5. **Verify success criteria** - All checkboxes must pass
@@ -95,8 +95,8 @@ Then merge and integrate.
 ## 🔧 Files You'll Modify
 
 ### Core Files:
-- `src/ui/ui_render.c` - Window creation (Prompt #28)
-- `src/app/main_imgui.cpp` - Most changes (all prompts)
+- `src/ui/ui_render.c` - Window creation (Work Item #28)
+- `src/app/main_imgui.cpp` - Most changes (all Work Items)
   - AppState struct (~lines 35-102)
   - Event loop (~lines 2150-2800)
   - Layout/rendering (~lines 2856-3200)
@@ -195,12 +195,12 @@ Then merge and integrate.
 
 ## 🐛 Known Issues & Solutions
 
-### Issue 1: Integer Scale Quantization (Prompt #29)
+### Issue 1: Integer Scale Quantization (Work Item #29)
 **Problem:** Zoom jumps between 1×, 2×, 3× (not perfectly smooth)
 **Solution:** Use `viewport_zoom` float for accumulation, quantize to `scale` int
 **Impact:** Low (zoom feels smooth enough)
 
-### Issue 2: Pan Drift (Prompt #30)
+### Issue 2: Pan Drift (Work Item #30)
 **Problem:** Float→Int conversion may cause 1px drift
 **Solution:** Round pan offsets after calculation
 **Impact:** Negligible (<1 pixel)
@@ -216,29 +216,29 @@ Then merge and integrate.
 
 After implementation, update these user guide sections:
 
-1. **Window Management** (Prompt #28)
+1. **Window Management** (Work Item #28)
    - Resizing window
    - Multi-monitor setup
    - Minimum size requirements
 
-2. **Viewport Navigation** (Prompts #29-30)
+2. **Viewport Navigation** (Work Items #29-30)
    - Mouse wheel zoom
    - Middle mouse pan
    - Keyboard shortcuts
    - Zoom-to-cursor behavior
 
-3. **Layout Customization** (Prompts #32-33)
+3. **Layout Customization** (Work Items #32-33)
    - Docking panels
    - Creating tabbed groups
    - Preset layouts (F2/F3/F4)
    - Saving custom layouts
 
-4. **Measurement Tools** (Prompt #35)
+4. **Measurement Tools** (Work Item #35)
    - Ruler tool (R key)
    - Distance and angle measurement
    - Context menu actions
 
-5. **Appearance** (Prompt #36)
+5. **Appearance** (Work Item #36)
    - Theme selection
    - 4K display support
    - Accessibility options
@@ -247,23 +247,23 @@ After implementation, update these user guide sections:
 
 ## 🎬 Quick Start (Copy-Paste Guide)
 
-### 1. Start with Prompt #28 (2 hours)
+### 1. Start with Work Item #28 (2 hours)
 ```
-📄 Open: prompts/PROMPT_28_Window_Resizability.md
+📄 Open: Work Items/WORK_ITEM_28_Window_Resizability.md
 🎯 Goal: Make window resizable
 📝 Change: Add SDL_WINDOW_RESIZABLE flag
 ✅ Test: Resize window, verify UI reflows
 ```
 
-### 2. Continue to Prompt #29 (4 hours)
+### 2. Continue to Work Item #29 (4 hours)
 ```
-📄 Open: prompts/PROMPT_29_Mouse_Wheel_Zoom.md
+📄 Open: Work Items/WORK_ITEM_29_Mouse_Wheel_Zoom.md
 🎯 Goal: Mouse wheel zoom with zoom-to-cursor
 📝 Change: Add SDL_MOUSEWHEEL handler, pan offset math
 ✅ Test: Zoom to 0.5×, 32×, verify cursor stays fixed
 ```
 
-### 3. Proceed through remaining prompts...
+### 3. Proceed through remaining Work Items...
 
 ---
 
@@ -272,21 +272,21 @@ After implementation, update these user guide sections:
 Use this checklist as you implement:
 
 **Phase 2.75A: Essential Modernization**
-- [ ] Prompt #28: Window Resizability (2h)
-- [ ] Prompt #29: Mouse Wheel Zoom (4h)
-- [ ] Prompt #30: Middle Mouse Pan (3h)
-- [ ] Prompt #31: Viewport Toolbar (3h)
+- [ ] Work Item #28: Window Resizability (2h)
+- [ ] Work Item #29: Mouse Wheel Zoom (4h)
+- [ ] Work Item #30: Middle Mouse Pan (3h)
+- [ ] Work Item #31: Viewport Toolbar (3h)
 - [ ] **Phase 2.75A Complete** ✅
 
 **Phase 2.75B: Docking UI**
-- [ ] Prompt #32: Full DockSpace (6h)
-- [ ] Prompt #33: Layout Presets (3h)
+- [ ] Work Item #32: Full DockSpace (6h)
+- [ ] Work Item #33: Layout Presets (3h)
 - [ ] **Phase 2.75B Complete** ✅
 
 **Phase 2.75C: Polish**
-- [ ] Prompt #34: Grid Enhancements (3h)
-- [ ] Prompt #35: Measurement Tools (6h)
-- [ ] Prompt #36: Theme Customization (4h)
+- [ ] Work Item #34: Grid Enhancements (3h)
+- [ ] Work Item #35: Measurement Tools (6h)
+- [ ] Work Item #36: Theme Customization (4h)
 - [ ] **Phase 2.75C Complete** ✅
 
 **🎉 UI MODERNIZATION COMPLETE!** 🎉
@@ -313,11 +313,11 @@ Use this checklist as you implement:
 
 ---
 
-## 💡 Tips for Implementation Agent
+## 💡 Tips for Developer
 
-1. **Test frequently** - After each prompt, run the app and test
-2. **Commit after each prompt** - Easier to rollback if needed
-3. **Use existing code** - Prompts provide copy-paste templates
+1. **Test frequently** - After each Work Item, run the app and test
+2. **Commit after each Work Item** - Easier to rollback if needed
+3. **Use existing code** - Work Items provide copy-paste templates
 4. **Ask questions** - If unclear, clarify before implementing
 5. **Document changes** - Update comments in code
 6. **Keep backups** - Save working state before major changes
@@ -326,7 +326,7 @@ Use this checklist as you implement:
 
 ## 🎯 My Recommendation
 
-**Start with Phase 2.75A (Prompts #28-31) - 16 hours**
+**Start with Phase 2.75A (Work Items #28-31) - 16 hours**
 
 **Why:**
 - Biggest impact per hour
@@ -341,12 +341,12 @@ Use this checklist as you implement:
 
 ---
 
-**Status:** ✅ ALL PROMPTS READY
-**Next Step:** Hand to implementation agent
+**Status:** ✅ ALL Work Items READY
+**Next Step:** Hand to Developer
 **Timeline:** 1-3 weeks depending on scope
 
 ---
 
 *Created: 2025-11-20 by Planning Assistant*
 *Status: Ready for Implementation*
-*Total Prompts: 9 (Prompts #28-36)*
+*Total Work Items: 9 (Work Items #28-36)*

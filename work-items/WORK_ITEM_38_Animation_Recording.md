@@ -1,10 +1,10 @@
-# Prompt #38: Animation Recording and Export
+# Work Item #38: Animation Recording and Export
 
 **Phase:** 2.75D (Week 2)  
 **Effort:** ~7 hours  
 **Priority:** Medium (publication/presentation)  
 **Status:** Ready to implement  
-**Dependencies:** Prompt #37 viewport rendering in place; Phase 2.75A-C complete
+**Dependencies:** Work Item #37 viewport rendering in place; Phase 2.75A-C complete
 
 ---
 

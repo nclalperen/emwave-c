@@ -7685,7 +7685,7 @@ raising it by +5 dB causes clipping for 6 samples, etc.
 @anchor{whisper}
 @section whisper
 
-It runs automatic speech recognition using the OpenAI's Whisper model.
+It runs automatic speech recognition using the Whisper model.
 
 It requires the whisper.cpp library (https://github.com/ggml-org/whisper.cpp)
 as a prerequisite. After installing the library it can be enabled using:

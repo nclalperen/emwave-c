@@ -1,4 +1,4 @@
-# Prompt #28: Window Resizability & Base Infrastructure
+# Work Item #28: Window Resizability & Base Infrastructure
 
 **Phase:** 2.75A (Essential Modernization - Week 1)
 **Effort:** ~2 hours
@@ -15,7 +15,7 @@ Make the application window resizable and establish the infrastructure for dynam
 **Strategic Value:**
 - **User expectation:** Modern apps must be resizable
 - **Multi-monitor support:** Essential for professional workflows
-- **Foundation:** Enables zoom/pan in subsequent prompts
+- **Foundation:** Enables zoom/pan in subsequent Work Items
 - **Quick win:** Simple change, huge impact
 
 ---
@@ -142,7 +142,7 @@ ImGui::SetNextWindowSize(viewport->Size);
 struct AppState {
     // ... existing fields ...
 
-    // Viewport transformation (for Prompts #29, #30)
+    // Viewport transformation (for Work Items #29, #30)
     float viewport_zoom;        // Zoom level (1.0 = normal, 2.0 = 2x, 0.5 = half)
     float viewport_pan_x;       // Pan offset in pixels (for future use)
     float viewport_pan_y;
@@ -324,7 +324,7 @@ Content:
 2. **Multi-Monitor Setup:**
    - Drag window to secondary monitor
    - DPI scaling handled automatically
-   - Panels can be undocked (in future prompts)
+   - Panels can be undocked (in future Work Items)
 
 3. **Keyboard Shortcuts:**
    - Alt+Enter: Toggle fullscreen (future)
@@ -348,19 +348,19 @@ Content:
 ✅ Maximize to full screen
 ✅ UI reflows smoothly
 ✅ Works on any monitor size
-✅ Foundation for zoom/pan (Prompts #29-30)
+✅ Foundation for zoom/pan (Work Items #29-30)
 ```
 
 ---
 
 ## Next Steps
 
-**After this prompt:**
+**After this Work Item:**
 1. ✅ Window is resizable
 2. ✅ AppState has zoom/pan infrastructure
-3. ➡️ **Prompt #29:** Implement mouse wheel zoom
-4. ➡️ **Prompt #30:** Implement middle mouse pan
-5. ➡️ **Prompt #31:** Add viewport toolbar & zoom UI
+3. ➡️ **Work Item #29:** Implement mouse wheel zoom
+4. ➡️ **Work Item #30:** Implement middle mouse pan
+5. ➡️ **Work Item #31:** Add viewport toolbar & zoom UI
 
 **Testing before moving on:**
 - Verify resize works on target platforms (Windows/Linux/macOS)
@@ -371,7 +371,7 @@ Content:
 
 **Ready for implementation!** 🚀
 
-Hand this prompt to your implementation agent and proceed with Phase 2.75A Step 1.
+Hand this Work Item to your Developer and proceed with Phase 2.75A Step 1.
 
 ---
 

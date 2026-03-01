@@ -1,4 +1,4 @@
-# Prompt #36: Theme & Style Customization
+# Work Item #36: Theme & Style Customization
 
 **Phase:** 2.75C (Polish - Week 3 - Final)
 **Effort:** ~4 hours
@@ -188,7 +188,7 @@ ImGui::ColorEdit3("Accent Color", (float*)&app.accent_color);
 **🎉 Phase 2.75C COMPLETE!**
 **🎉 UI MODERNIZATION COMPLETE!**
 
-**Total: Prompts #28-36 (9 prompts, ~44 hours)**
+**Total: Work Items #28-36 (9 Work Items, ~44 hours)**
 
 ---
 

@@ -1,10 +1,10 @@
-# Prompt #31: Viewport Toolbar & Zoom Controls UI
+# Work Item #31: Viewport Toolbar & Zoom Controls UI
 
 **Phase:** 2.75A (Essential Modernization - Week 1 - Final)
 **Effort:** ~3 hours
 **Priority:** MEDIUM - UI polish for zoom/pan controls
 **Status:** Ready for implementation
-**Dependencies:** Prompts #28-30 (Resize/Zoom/Pan)
+**Dependencies:** Work Items #28-30 (Resize/Zoom/Pan)
 
 ---
 
@@ -189,7 +189,7 @@ if (show_help_overlay && app.viewport_valid) {
 
 ---
 
-**Phase 2.75A COMPLETE after this prompt!**
+**Phase 2.75A COMPLETE after this Work Item!**
 
 Next: Phase 2.75B (Docking UI)
 

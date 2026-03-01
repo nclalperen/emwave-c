@@ -1,4 +1,4 @@
-# Prompt #32: Full DockSpace Layout Conversion
+# Work Item #32: Full DockSpace Layout Conversion
 
 **Phase:** 2.75B (Docking UI - Week 2)
 **Effort:** ~6 hours
@@ -112,7 +112,7 @@ ImGui::Begin("Viewport", nullptr,
              ImGuiWindowFlags_NoScrollWithMouse);
 
 // SDL field rendering happens here (existing code)
-// Viewport overlay toolbar (from Prompt #31)
+// Viewport overlay toolbar (from Work Item #31)
 
 ImGui::End();
 ImGui::PopStyleVar();
@@ -219,7 +219,7 @@ if (ImGui::BeginMenuBar()) {
 
 ---
 
-**Next: Prompt #33 (Layout Presets)**
+**Next: Work Item #33 (Layout Presets)**
 
 ---
 

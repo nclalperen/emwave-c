@@ -1,10 +1,10 @@
-# Prompt #30: Middle Mouse Pan & Keyboard Navigation
+# Work Item #30: Middle Mouse Pan & Keyboard Navigation
 
 **Phase:** 2.75A (Essential Modernization - Week 1)
 **Effort:** ~3 hours
 **Priority:** HIGH - Complete viewport interaction trinity (resize/zoom/pan)
 **Status:** Ready for implementation
-**Dependencies:** Prompts #28 (Resizability), #29 (Zoom)
+**Dependencies:** Work Items #28 (Resizability), #29 (Zoom)
 
 ---
 
@@ -178,7 +178,7 @@ if (event.type == SDL_KEYDOWN) {
             break;
 
         case SDLK_HOME:
-            // Reset pan and zoom (already in Prompt #29)
+            // Reset pan and zoom (already in Work Item #29)
             app.viewport_pan_x = 0.0f;
             app.viewport_pan_y = 0.0f;
             app.viewport_zoom = 1.0f;
@@ -383,7 +383,7 @@ This matches Blender behavior (viewport follows drag, not camera).
 
 ### Performance:
 - Pan only updates offset values (cheap)
-- Rendering already supports offset (from Prompt #29)
+- Rendering already supports offset (from Work Item #29)
 - No texture recreation needed
 - 60 FPS maintained during pan
 
@@ -486,11 +486,11 @@ Pan Left:               Pan Right:              Pan Up/Down:
 
 ## Next Steps
 
-**After this prompt:**
-1. ✅ Window resizable (Prompt #28)
-2. ✅ Mouse wheel zoom (Prompt #29)
-3. ✅ Middle mouse pan (Prompt #30)
-4. ➡️ **Prompt #31:** Add viewport toolbar with zoom/pan UI
+**After this Work Item:**
+1. ✅ Window resizable (Work Item #28)
+2. ✅ Mouse wheel zoom (Work Item #29)
+3. ✅ Middle mouse pan (Work Item #30)
+4. ➡️ **Work Item #31:** Add viewport toolbar with zoom/pan UI
 5. ➡️ **Phase 2.75A COMPLETE!**
 
 **Testing before moving on:**
@@ -503,7 +503,7 @@ Pan Left:               Pan Right:              Pan Up/Down:
 
 **Ready for implementation!** 🚀
 
-Hand this prompt to your implementation agent and proceed with Phase 2.75A Step 3.
+Hand this Work Item to your Developer and proceed with Phase 2.75A Step 3.
 
 ---
 

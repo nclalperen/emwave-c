@@ -1,10 +1,10 @@
-# Prompt #29: Mouse Wheel Zoom (Zoom-to-Cursor)
+# Work Item #29: Mouse Wheel Zoom (Zoom-to-Cursor)
 
 **Phase:** 2.75A (Essential Modernization - Week 1)
 **Effort:** ~4 hours
 **Priority:** HIGH - Core viewport interaction
 **Status:** Ready for implementation
-**Dependencies:** Prompt #28 (Window Resizability)
+**Dependencies:** Work Item #28 (Window Resizability)
 
 ---
 
@@ -216,7 +216,7 @@ SDL_RenderFillRect(renderer, &rect);
 
 **Solution:** Use two variables:
 ```cpp
-// In AppState (from Prompt #28)
+// In AppState (from Work Item #28)
 float viewport_zoom;    // Float: 0.5 to 32.0 (smooth)
 int scale;              // Int: Quantized for SDL rendering
 
@@ -364,7 +364,7 @@ app.viewport_pan_y = clamp(app.viewport_pan_y, min_pan_y, max_pan_y);
 - Use `SDL_RenderSetScale()` for smooth float zoom
 - Requires OpenGL/DirectX backend
 - More complex but smoother visuals
-- Consider for Prompt #35 (Polish)
+- Consider for Work Item #35 (Polish)
 
 ---
 
@@ -374,7 +374,7 @@ app.viewport_pan_y = clamp(app.viewport_pan_y, min_pan_y, max_pan_y);
 **Problem:** Scale jumps between 1×, 2×, 3× (not smooth)
 **Impact:** Low (zoom accumulation in `viewport_zoom` helps)
 **Workaround:** Use `viewport_zoom` float for accumulation, quantize to `scale` int
-**Future Fix:** Migrate to ImGui::Image with float scaling (Prompt #36+)
+**Future Fix:** Migrate to ImGui::Image with float scaling (Work Item #36+)
 
 ### Issue 2: High Zoom Aliasing
 **Problem:** At 16×-32×, individual pixels very large (blocky)
@@ -458,11 +458,11 @@ At 2× (default):     At 8× (zoomed in):    At 0.5× (zoomed out):
 
 ## Next Steps
 
-**After this prompt:**
+**After this Work Item:**
 1. ✅ Mouse wheel zoom working
 2. ✅ Zoom-to-cursor behavior implemented
-3. ➡️ **Prompt #30:** Implement middle mouse pan
-4. ➡️ **Prompt #31:** Add viewport toolbar with zoom UI
+3. ➡️ **Work Item #30:** Implement middle mouse pan
+4. ➡️ **Work Item #31:** Add viewport toolbar with zoom UI
 
 **Testing before moving on:**
 - Zoom at various levels (0.5× to 32×)
@@ -474,7 +474,7 @@ At 2× (default):     At 8× (zoomed in):    At 0.5× (zoomed out):
 
 **Ready for implementation!** 🚀
 
-Hand this prompt to your implementation agent and proceed with Phase 2.75A Step 2.
+Hand this Work Item to your Developer and proceed with Phase 2.75A Step 2.
 
 ---
 

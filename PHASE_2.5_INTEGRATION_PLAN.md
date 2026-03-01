@@ -22,7 +22,7 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 ## Integration Roadmap
 
 ### **Week 1: Sources Panel Enhancement** (~6h)
-**Prompt #24**
+**Work Item #24**
 
 **Objective:** Transform Sources panel from basic display into full source editor with expression support
 
@@ -89,7 +89,7 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 ---
 
 ### **Week 2: Material Blocks Integration** (~4h)
-**Prompt #25**
+**Work Item #25**
 
 **Objective:** Integrate structured material rectangles with Phase 2 material library
 
@@ -176,7 +176,7 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 ---
 
 ### **Week 3: Simulation Setup Panel** (~3h)
-**Prompt #26**
+**Work Item #26**
 
 **Objective:** Expose grid/domain/boundary configuration without full wizard
 
@@ -252,7 +252,7 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 ---
 
 ### **Phase 3: Analysis & Automation** (~8h)
-**Prompt #27** (Future)
+**Work Item #27** (Future)
 
 **Objective:** In-app frequency sweep launcher and result viewer
 
@@ -275,7 +275,7 @@ After completing Phase 2 (Professional Transformation), we identified that valua
 
 ## Implementation Schedule
 
-| Week | Prompt | Feature | Effort | Priority |
+| Week | Work Item | Feature | Effort | Priority |
 |------|--------|---------|--------|----------|
 | **Week 1** | #24 | Sources Panel Enhancement | 6h | 🔴 HIGH |
 | **Week 2** | #25 | Material Blocks Integration | 4h | 🔴 HIGH |
@@ -456,4 +456,4 @@ After Phase 2.5 completion:
 ---
 
 *Created: 2025-11-19*
-*Status: Ready for Prompt #24 (Week 1)*
+*Status: Ready for Work Item #24 (Week 1)*

@@ -1,10 +1,10 @@
-# Prompt #39: Advanced Measurement Tools
+# Work Item #39: Advanced Measurement Tools
 
 **Phase:** 2.75D (Week 2)  
 **Effort:** ~5 hours  
 **Priority:** Medium (research/documentation)  
 **Status:** Ready to implement  
-**Dependencies:** Prompt #35 ruler baseline; Prompt #37 viewport focus for correct hit-tests
+**Dependencies:** Work Item #35 ruler baseline; Work Item #37 viewport focus for correct hit-tests
 
 ---
 
@@ -235,7 +235,7 @@ static void export_measurements_csv(const AppState* app, const char* path) {
 2. Reliable annotation creation with configurable color and size.  
 3. History panel allows review/delete of all measurement types.  
 4. CSV export produces clean, analysis-ready data.  
-5. Overlays render correctly across all viewport layouts from Prompt #37.  
+5. Overlays render correctly across all viewport layouts from Work Item #37.  
 6. Performance remains smooth with dense measurement sets.
 
 *Estimated effort: 5 hours*  

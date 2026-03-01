@@ -1,4 +1,4 @@
-# Prompt #37: Multi-Viewport Split View
+# Work Item #37: Multi-Viewport Split View
 
 **Phase:** 2.75D (Week 1)  
 **Effort:** ~8 hours  
