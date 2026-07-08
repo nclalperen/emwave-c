@@ -45,6 +45,14 @@ scenes headlessly from the command line to script S-parameter sweeps.
 
 ## Quick start
 
+Dear ImGui is vendored as a git submodule, so clone with submodules (or
+fetch them into an existing clone):
+
+```bash
+git clone --recurse-submodules https://github.com/nclalperen/emwave-c.git
+# existing clone: git submodule update --init
+```
+
 ### Linux / macOS
 
 ```bash

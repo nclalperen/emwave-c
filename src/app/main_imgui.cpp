@@ -46,6 +46,9 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <direct.h>
+#else
+#include <strings.h>
+#define _stricmp strcasecmp
 #endif
 
 // Minimal PNG write (embedded, trimmed from stb_image_write for PNG-only)
