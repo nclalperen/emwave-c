@@ -5,6 +5,7 @@
 [![CI](https://github.com/nclalperen/emwave-c/actions/workflows/ci.yml/badge.svg)](https://github.com/nclalperen/emwave-c/actions/workflows/ci.yml)
 ![Language](https://img.shields.io/badge/language-C11-blue)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-green)](LICENSE)
 
 emwave-c solves Maxwell's equations on a 2D Yee grid using the finite-difference
 time-domain (FDTD) method and renders the field live at interactive frame rates.
@@ -142,6 +143,11 @@ step and sweep mode) on every push and pull request.
 - Multi-threaded/tiled field updates beyond OpenMP loops
 - More bundled scenes (patch antenna, photonic crystal)
 - 2.5D extensions and richer dispersive material models
+
+## License
+
+[GPL-3.0](LICENSE). Vendored third-party components (Dear ImGui, ImPlot,
+jsmn, DejaVu fonts) remain under their own licenses in `third_party/`.
 
 ---
 
